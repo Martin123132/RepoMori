@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repomori"
+version = "0.1.0"
+description = "Machine-readable repository packs for AI agents and local tools."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Martin Ollett" }]
+license = { text = "Private" }
+
+[project.scripts]
+repomori = "repomori.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["repomori*"]
