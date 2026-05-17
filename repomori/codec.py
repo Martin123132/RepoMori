@@ -300,6 +300,142 @@ def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, 
     return sorted(results, key=lambda item: (-item["score"], item["path"]))[:limit]
 
 
+def build_context_bundle(
+    pack: Path | str,
+    question: str,
+    limit: int = 8,
+    snippet_lines: int = 12,
+) -> dict[str, Any]:
+    """Build a compact source-backed context bundle for an AI agent."""
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    if snippet_lines <= 0:
+        raise ValueError("snippet_lines must be greater than zero")
+
+    pack_info = info_pack(pack)
+    selected = query_pack(pack, question, limit=limit)
+    sources = []
+    for result in selected:
+        snippets, status = _snippets_for_result(pack, question, result, snippet_lines)
+        source = {
+            "path": result["path"],
+            "language": result.get("language"),
+            "size": result.get("size"),
+            "sha256": result.get("sha256"),
+            "score": result.get("score"),
+            "why": result.get("why", []),
+            "summary": result.get("summary", {}),
+            "snippet_status": status,
+            "snippets": snippets,
+        }
+        sources.append(source)
+
+    return {
+        "schema_version": "repomori.context.v1",
+        "question": question,
+        "pack": {
+            "schema_version": pack_info.get("schema_version"),
+            "repo_path": pack_info.get("repo_path"),
+            "pack_path": pack_info.get("pack_path"),
+            "created_at": pack_info.get("created_at"),
+            "logical_bytes": pack_info.get("logical_bytes"),
+            "pack_bytes": pack_info.get("pack_bytes"),
+            "counts": pack_info.get("counts", {}),
+        },
+        "selection": {
+            "limit": limit,
+            "snippet_lines": snippet_lines,
+            "selected_count": len(sources),
+        },
+        "sources": sources,
+        "source_manifest": [
+            {
+                "path": source["path"],
+                "sha256": source["sha256"],
+                "size": source["size"],
+                "snippet_count": len(source["snippets"]),
+                "snippet_status": source["snippet_status"],
+            }
+            for source in sources
+        ],
+    }
+
+
+def format_context_markdown(bundle: dict[str, Any]) -> str:
+    """Render a context bundle as source-backed Markdown."""
+
+    pack = bundle.get("pack", {})
+    selection = bundle.get("selection", {})
+    sources = bundle.get("sources", [])
+    lines = [
+        "# RepoMori Agent Context",
+        "",
+        f"Question: {bundle.get('question', '')}",
+        "",
+        "## Pack",
+        "",
+        f"- Schema: `{pack.get('schema_version')}`",
+        f"- Repository: `{pack.get('repo_path')}`",
+        f"- Pack: `{pack.get('pack_path')}`",
+        f"- Logical bytes: `{pack.get('logical_bytes')}`",
+        f"- Pack bytes: `{pack.get('pack_bytes')}`",
+        f"- Selected sources: `{selection.get('selected_count', len(sources))}`",
+        "",
+        "## Selected Sources",
+        "",
+    ]
+    if not sources:
+        lines.extend(["No matching sources were found.", ""])
+    for source in sources:
+        summary = source.get("summary", {})
+        lines.extend(
+            [
+                f"### {source.get('path')}",
+                "",
+                f"- Score: `{source.get('score')}`",
+                f"- Language: `{source.get('language') or 'unknown'}`",
+                f"- Size: `{source.get('size')}`",
+                f"- SHA-256: `{source.get('sha256')}`",
+                f"- Match reasons: `{', '.join(source.get('why', [])) or 'none'}`",
+                f"- Snippet status: `{source.get('snippet_status')}`",
+                "",
+            ]
+        )
+        top_terms = summary.get("top_terms") or []
+        if top_terms:
+            lines.extend([f"- Top terms: `{', '.join(top_terms)}`", ""])
+        snippets = source.get("snippets", [])
+        if not snippets:
+            lines.extend(["No text snippets available.", ""])
+            continue
+        for snippet in snippets:
+            language = source.get("language") or ""
+            lines.extend(
+                [
+                    f"Lines {snippet['start_line']}-{snippet['end_line']} ({snippet['matched']}):",
+                    "",
+                    f"```{_markdown_fence_language(language)}",
+                    snippet["text"],
+                    "```",
+                    "",
+                ]
+            )
+
+    lines.extend(["## Source Manifest", ""])
+    manifest = bundle.get("source_manifest", [])
+    if not manifest:
+        lines.extend(["No sources selected.", ""])
+    else:
+        for item in manifest:
+            lines.append(
+                f"- `{item.get('path')}` sha256=`{item.get('sha256')}` "
+                f"size=`{item.get('size')}` snippets=`{item.get('snippet_count')}`"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def get_file_bytes(pack: Path | str, repo_path: str) -> bytes:
     """Restore one file from a pack and return its bytes."""
 
@@ -325,6 +461,92 @@ def get_file_bytes(pack: Path | str, repo_path: str) -> bytes:
             raise ValueError(f"Unsupported compressor: {compressor}")
         parts.append(zlib.decompress(row["data"]))
     return b"".join(parts)
+
+
+def _snippets_for_result(
+    pack: Path | str,
+    question: str,
+    result: dict[str, Any],
+    snippet_lines: int,
+) -> tuple[list[dict[str, Any]], str]:
+    data = get_file_bytes(pack, str(result["path"]))
+    text = _decode_text(data)
+    if text is None:
+        return [], "binary_or_undecodable"
+    lines = text.splitlines()
+    if not lines:
+        return [], "empty_text"
+
+    anchors = _snippet_anchors(question, result, lines)
+    snippets = []
+    seen_ranges: set[tuple[int, int]] = set()
+    for line_no, matched in anchors:
+        start, end = _snippet_range(line_no, len(lines), snippet_lines)
+        if (start, end) in seen_ranges:
+            continue
+        seen_ranges.add((start, end))
+        snippets.append(
+            {
+                "start_line": start,
+                "end_line": end,
+                "matched": matched,
+                "text": "\n".join(lines[start - 1 : end]),
+            }
+        )
+        if len(snippets) >= 2:
+            break
+    return snippets, "text" if snippets else "no_snippet"
+
+
+def _snippet_anchors(
+    question: str,
+    result: dict[str, Any],
+    lines: list[str],
+) -> list[tuple[int, str]]:
+    anchors: list[tuple[int, str]] = []
+    tokens = _query_tokens(question)
+    for index, line in enumerate(lines, start=1):
+        lowered = line.lower()
+        for token in tokens:
+            if token in lowered:
+                anchors.append((index, f"query:{token}"))
+                break
+
+    summary = result.get("summary", {})
+    for field in ("symbols", "headings", "imports"):
+        for item in summary.get(field, []):
+            line = int(item.get("line", 0) or 0)
+            if line > 0:
+                label = item.get("name") or item.get("text") or item.get("target") or field
+                anchors.append((line, f"{field}:{label}"))
+
+    if not anchors:
+        for index, line in enumerate(lines, start=1):
+            if line.strip():
+                anchors.append((index, "fallback:first-useful-line"))
+                break
+    return _dedupe_anchors(anchors, len(lines))
+
+
+def _dedupe_anchors(anchors: list[tuple[int, str]], line_count: int) -> list[tuple[int, str]]:
+    seen = set()
+    deduped = []
+    for line, matched in anchors:
+        safe_line = min(max(1, line), line_count)
+        key = (safe_line, matched)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((safe_line, matched))
+    return deduped
+
+
+def _snippet_range(anchor_line: int, line_count: int, snippet_lines: int) -> tuple[int, int]:
+    half = max(0, snippet_lines // 2)
+    start = max(1, anchor_line - half)
+    end = min(line_count, start + snippet_lines - 1)
+    start = max(1, end - snippet_lines + 1)
+    return start, end
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
@@ -716,6 +938,21 @@ def _field_weight(field: str) -> float:
         "language": 2.0,
         "term": 1.0,
     }.get(field, 1.0)
+
+
+def _markdown_fence_language(language: str | None) -> str:
+    return {
+        "batch": "bat",
+        "csharp": "csharp",
+        "javascript": "javascript",
+        "json": "json",
+        "markdown": "markdown",
+        "powershell": "powershell",
+        "python": "python",
+        "shell": "bash",
+        "typescript": "typescript",
+        "yaml": "yaml",
+    }.get(language or "", "")
 
 
 def _compact_summary(summary: dict[str, Any]) -> dict[str, Any]:

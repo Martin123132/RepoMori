@@ -7,7 +7,16 @@ import json
 import sys
 from pathlib import Path
 
-from .codec import BuildOptions, build_pack, get_file_bytes, info_pack, query_pack, tree_pack
+from .codec import (
+    BuildOptions,
+    build_context_bundle,
+    build_pack,
+    format_context_markdown,
+    get_file_bytes,
+    info_pack,
+    query_pack,
+    tree_pack,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,6 +48,14 @@ def main(argv: list[str] | None = None) -> int:
     query.add_argument("--limit", type=int, default=10)
     query.add_argument("--json", action="store_true")
 
+    context = sub.add_parser("context", help="Build source-backed agent context.")
+    context.add_argument("pack", type=Path)
+    context.add_argument("question")
+    context.add_argument("--limit", type=int, default=8)
+    context.add_argument("--snippet-lines", type=int, default=12)
+    context.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    context.add_argument("--out", type=Path, help="Write the context bundle to this file.")
+
     get = sub.add_parser("get", help="Restore one exact file from the pack.")
     get.add_argument("pack", type=Path)
     get.add_argument("path")
@@ -61,6 +78,24 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "query":
         _print(query_pack(args.pack, args.text, limit=args.limit), args.json)
+        return 0
+    if args.command == "context":
+        bundle = build_context_bundle(
+            args.pack,
+            args.question,
+            limit=args.limit,
+            snippet_lines=args.snippet_lines,
+        )
+        output = (
+            json.dumps(bundle, indent=2)
+            if args.format == "json"
+            else format_context_markdown(bundle)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
         return 0
     if args.command == "get":
         data = get_file_bytes(args.pack, args.path)
