@@ -8,6 +8,7 @@ from .codec import (
     get_file_bytes,
     info_pack,
     query_pack,
+    verify_pack,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "get_file_bytes",
     "info_pack",
     "query_pack",
+    "verify_pack",
 ]

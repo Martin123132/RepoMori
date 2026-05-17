@@ -16,6 +16,7 @@ from .codec import (
     info_pack,
     query_pack,
     tree_pack,
+    verify_pack,
 )
 
 
@@ -52,9 +53,17 @@ def main(argv: list[str] | None = None) -> int:
     context.add_argument("pack", type=Path)
     context.add_argument("question")
     context.add_argument("--limit", type=int, default=8)
+    context.add_argument("--max-files", type=int, help="Alias for --limit.")
     context.add_argument("--snippet-lines", type=int, default=12)
+    context.add_argument("--snippets-per-file", type=int, default=2)
+    context.add_argument("--max-bytes", type=int, help="Maximum total snippet text bytes.")
+    context.add_argument("--no-source", action="store_true", help="Return rankings and metadata without snippets.")
     context.add_argument("--format", choices=("markdown", "json"), default="markdown")
     context.add_argument("--out", type=Path, help="Write the context bundle to this file.")
+
+    verify = sub.add_parser("verify", help="Verify pack chunks, hashes, and source recovery.")
+    verify.add_argument("pack", type=Path)
+    verify.add_argument("--json", action="store_true")
 
     get = sub.add_parser("get", help="Restore one exact file from the pack.")
     get.add_argument("pack", type=Path)
@@ -80,11 +89,15 @@ def main(argv: list[str] | None = None) -> int:
         _print(query_pack(args.pack, args.text, limit=args.limit), args.json)
         return 0
     if args.command == "context":
+        limit = args.max_files if args.max_files is not None else args.limit
         bundle = build_context_bundle(
             args.pack,
             args.question,
-            limit=args.limit,
+            limit=limit,
             snippet_lines=args.snippet_lines,
+            max_bytes=args.max_bytes,
+            snippets_per_file=args.snippets_per_file,
+            include_source=not args.no_source,
         )
         output = (
             json.dumps(bundle, indent=2)
@@ -97,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0
+    if args.command == "verify":
+        result = verify_pack(args.pack)
+        _print(result, args.json)
+        return 0 if result["verified"] else 1
     if args.command == "get":
         data = get_file_bytes(args.pack, args.path)
         if args.out:

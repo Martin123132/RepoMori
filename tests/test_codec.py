@@ -16,6 +16,7 @@ from repomori.codec import (
     info_pack,
     query_pack,
     tree_pack,
+    verify_pack,
 )
 
 
@@ -63,8 +64,31 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("### app.py", markdown)
             self.assertIn("SHA-256:", markdown)
             self.assertIn("Score:", markdown)
+            self.assertIn("Source bytes:", markdown)
             self.assertIn("Lines 1-", markdown)
             self.assertIn("sqlite3.connect", markdown)
+
+    def test_context_size_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            bundle = build_context_bundle(
+                pack,
+                "sqlite Store",
+                limit=3,
+                snippet_lines=6,
+                max_bytes=20,
+                snippets_per_file=1,
+            )
+            self.assertEqual(bundle["selection"]["max_bytes"], 20)
+            self.assertEqual(bundle["selection"]["snippets_per_file"], 1)
+            self.assertLessEqual(bundle["selection"]["source_bytes"], 20)
+            for source in bundle["sources"]:
+                self.assertLessEqual(len(source["snippets"]), 1)
+
+            metadata_only = build_context_bundle(pack, "sqlite Store", include_source=False)
+            self.assertEqual(metadata_only["selection"]["include_source"], False)
+            self.assertTrue(all(source["snippet_status"] == "source_omitted" for source in metadata_only["sources"]))
 
     def test_binary_context_source_has_metadata_without_snippets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -75,6 +99,16 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(bundle["sources"][0]["snippet_status"], "binary_or_undecodable")
             self.assertEqual(bundle["sources"][0]["snippets"], [])
             self.assertEqual(bundle["source_manifest"][0]["snippet_count"], 0)
+
+    def test_verify_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            result = verify_pack(pack)
+            self.assertTrue(result["verified"])
+            self.assertEqual(result["schema_version"], "repomori.verify.v1")
+            self.assertEqual(result["checked_files"], 3)
+            self.assertEqual(result["error_count"], 0)
 
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -89,6 +123,10 @@ class RepoMoriCodecTests(unittest.TestCase):
                     "sqlite Store",
                     "--format",
                     "json",
+                    "--max-files",
+                    "1",
+                    "--max-bytes",
+                    "40",
                 ],
                 cwd=Path(__file__).resolve().parents[1],
                 text=True,
@@ -97,7 +135,29 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(output)
             self.assertEqual(payload["question"], "sqlite Store")
             self.assertEqual(payload["sources"][0]["path"], "app.py")
+            self.assertEqual(payload["selection"]["limit"], 1)
+            self.assertLessEqual(payload["selection"]["source_bytes"], 40)
             self.assertIn("source_manifest", payload)
+
+    def test_cli_verify_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "verify",
+                    str(pack),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertTrue(payload["verified"])
+            self.assertEqual(payload["error_count"], 0)
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

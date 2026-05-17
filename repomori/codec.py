@@ -244,6 +244,178 @@ def tree_pack(pack: Path | str, limit: int = 200) -> list[dict[str, Any]]:
     return [_row_dict(row) for row in rows]
 
 
+def verify_pack(pack: Path | str) -> dict[str, Any]:
+    """Verify compressed chunks, file hashes, and source recovery for a pack."""
+
+    pack_path = Path(pack)
+    started = time.time()
+    errors: list[dict[str, Any]] = []
+    checked_file_bytes = 0
+    checked_chunk_raw_bytes = 0
+
+    with closing(_open_pack(pack_path)) as conn:
+        metadata = _metadata(conn)
+        pack_schema = metadata.get("schema_version")
+        if pack_schema != SCHEMA_VERSION:
+            _add_verify_error(
+                errors,
+                "metadata",
+                None,
+                "Unexpected pack schema version.",
+                expected=SCHEMA_VERSION,
+                actual=pack_schema,
+            )
+
+        chunk_rows = conn.execute(
+            "SELECT id, compressor, raw_size, compressed_size, data FROM chunks ORDER BY id"
+        ).fetchall()
+        for row in chunk_rows:
+            chunk_id = row["id"]
+            data = row["data"]
+            if len(data) != row["compressed_size"]:
+                _add_verify_error(
+                    errors,
+                    "chunk",
+                    chunk_id,
+                    "Compressed chunk size does not match stored metadata.",
+                    expected=row["compressed_size"],
+                    actual=len(data),
+                )
+            try:
+                block = _decompress_chunk(row["compressor"], data)
+            except (ValueError, zlib.error) as exc:
+                _add_verify_error(errors, "chunk", chunk_id, f"Chunk decompression failed: {exc}")
+                continue
+            checked_chunk_raw_bytes += len(block)
+            if len(block) != row["raw_size"]:
+                _add_verify_error(
+                    errors,
+                    "chunk",
+                    chunk_id,
+                    "Raw chunk size does not match stored metadata.",
+                    expected=row["raw_size"],
+                    actual=len(block),
+                )
+            actual_chunk_id = hashlib.sha256(block).hexdigest()
+            if actual_chunk_id != chunk_id:
+                _add_verify_error(
+                    errors,
+                    "chunk",
+                    chunk_id,
+                    "Chunk id does not match decompressed bytes.",
+                    expected=chunk_id,
+                    actual=actual_chunk_id,
+                )
+
+        file_rows = conn.execute(
+            "SELECT path, size, sha256, chunk_count FROM files ORDER BY path"
+        ).fetchall()
+        for row in file_rows:
+            path = row["path"]
+            chunk_links = conn.execute(
+                """
+                SELECT
+                    fc.chunk_index,
+                    fc.chunk_id,
+                    fc.raw_size AS file_raw_size,
+                    fc.sha256 AS file_sha256,
+                    c.compressor,
+                    c.data
+                FROM file_chunks fc
+                LEFT JOIN chunks c ON c.id = fc.chunk_id
+                WHERE fc.path=?
+                ORDER BY fc.chunk_index
+                """,
+                (path,),
+            ).fetchall()
+            if len(chunk_links) != row["chunk_count"]:
+                _add_verify_error(
+                    errors,
+                    "file",
+                    path,
+                    "File chunk count does not match stored metadata.",
+                    expected=row["chunk_count"],
+                    actual=len(chunk_links),
+                )
+
+            parts = []
+            for chunk in chunk_links:
+                if chunk["data"] is None:
+                    _add_verify_error(errors, "file", path, "File references a missing chunk.")
+                    continue
+                try:
+                    block = _decompress_chunk(chunk["compressor"], chunk["data"])
+                except (ValueError, zlib.error) as exc:
+                    _add_verify_error(errors, "file", path, f"File chunk decompression failed: {exc}")
+                    continue
+                block_hash = hashlib.sha256(block).hexdigest()
+                if len(block) != chunk["file_raw_size"]:
+                    _add_verify_error(
+                        errors,
+                        "file",
+                        path,
+                        "File chunk raw size does not match link metadata.",
+                        expected=chunk["file_raw_size"],
+                        actual=len(block),
+                    )
+                if block_hash != chunk["file_sha256"]:
+                    _add_verify_error(
+                        errors,
+                        "file",
+                        path,
+                        "File chunk hash does not match link metadata.",
+                        expected=chunk["file_sha256"],
+                        actual=block_hash,
+                    )
+                if block_hash != chunk["chunk_id"]:
+                    _add_verify_error(
+                        errors,
+                        "file",
+                        path,
+                        "File chunk hash does not match referenced chunk id.",
+                        expected=chunk["chunk_id"],
+                        actual=block_hash,
+                    )
+                parts.append(block)
+
+            file_data = b"".join(parts)
+            checked_file_bytes += len(file_data)
+            if len(file_data) != row["size"]:
+                _add_verify_error(
+                    errors,
+                    "file",
+                    path,
+                    "Restored file size does not match stored metadata.",
+                    expected=row["size"],
+                    actual=len(file_data),
+                )
+            actual_file_hash = hashlib.sha256(file_data).hexdigest()
+            if actual_file_hash != row["sha256"]:
+                _add_verify_error(
+                    errors,
+                    "file",
+                    path,
+                    "Restored file hash does not match stored metadata.",
+                    expected=row["sha256"],
+                    actual=actual_file_hash,
+                )
+
+    elapsed = time.time() - started
+    return {
+        "schema_version": "repomori.verify.v1",
+        "pack_path": str(pack_path.resolve()),
+        "pack_schema_version": pack_schema,
+        "verified": not errors,
+        "error_count": len(errors),
+        "checked_files": len(file_rows),
+        "checked_chunks": len(chunk_rows),
+        "checked_file_bytes": checked_file_bytes,
+        "checked_chunk_raw_bytes": checked_chunk_raw_bytes,
+        "elapsed_seconds": round(elapsed, 4),
+        "errors": errors,
+    }
+
+
 def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, Any]]:
     """Query pack indexes and return scored matching files."""
 
@@ -305,6 +477,9 @@ def build_context_bundle(
     question: str,
     limit: int = 8,
     snippet_lines: int = 12,
+    max_bytes: int | None = None,
+    snippets_per_file: int = 2,
+    include_source: bool = True,
 ) -> dict[str, Any]:
     """Build a compact source-backed context bundle for an AI agent."""
 
@@ -312,12 +487,29 @@ def build_context_bundle(
         raise ValueError("limit must be greater than zero")
     if snippet_lines <= 0:
         raise ValueError("snippet_lines must be greater than zero")
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes must be zero or greater")
+    if snippets_per_file < 0:
+        raise ValueError("snippets_per_file must be zero or greater")
 
     pack_info = info_pack(pack)
     selected = query_pack(pack, question, limit=limit)
     sources = []
+    remaining_bytes = max_bytes
+    source_bytes = 0
     for result in selected:
-        snippets, status = _snippets_for_result(pack, question, result, snippet_lines)
+        snippets, status, used_bytes = _snippets_for_result(
+            pack,
+            question,
+            result,
+            snippet_lines,
+            snippets_per_file,
+            remaining_bytes,
+            include_source,
+        )
+        source_bytes += used_bytes
+        if remaining_bytes is not None:
+            remaining_bytes = max(0, remaining_bytes - used_bytes)
         source = {
             "path": result["path"],
             "language": result.get("language"),
@@ -327,6 +519,7 @@ def build_context_bundle(
             "why": result.get("why", []),
             "summary": result.get("summary", {}),
             "snippet_status": status,
+            "source_bytes": used_bytes,
             "snippets": snippets,
         }
         sources.append(source)
@@ -346,7 +539,11 @@ def build_context_bundle(
         "selection": {
             "limit": limit,
             "snippet_lines": snippet_lines,
+            "max_bytes": max_bytes,
+            "snippets_per_file": snippets_per_file,
+            "include_source": include_source,
             "selected_count": len(sources),
+            "source_bytes": source_bytes,
         },
         "sources": sources,
         "source_manifest": [
@@ -356,6 +553,7 @@ def build_context_bundle(
                 "size": source["size"],
                 "snippet_count": len(source["snippets"]),
                 "snippet_status": source["snippet_status"],
+                "source_bytes": source["source_bytes"],
             }
             for source in sources
         ],
@@ -381,6 +579,7 @@ def format_context_markdown(bundle: dict[str, Any]) -> str:
         f"- Logical bytes: `{pack.get('logical_bytes')}`",
         f"- Pack bytes: `{pack.get('pack_bytes')}`",
         f"- Selected sources: `{selection.get('selected_count', len(sources))}`",
+        f"- Source bytes: `{selection.get('source_bytes', 0)}`",
         "",
         "## Selected Sources",
         "",
@@ -399,6 +598,7 @@ def format_context_markdown(bundle: dict[str, Any]) -> str:
                 f"- SHA-256: `{source.get('sha256')}`",
                 f"- Match reasons: `{', '.join(source.get('why', [])) or 'none'}`",
                 f"- Snippet status: `{source.get('snippet_status')}`",
+                f"- Source bytes: `{source.get('source_bytes', 0)}`",
                 "",
             ]
         )
@@ -430,7 +630,8 @@ def format_context_markdown(bundle: dict[str, Any]) -> str:
         for item in manifest:
             lines.append(
                 f"- `{item.get('path')}` sha256=`{item.get('sha256')}` "
-                f"size=`{item.get('size')}` snippets=`{item.get('snippet_count')}`"
+                f"size=`{item.get('size')}` snippets=`{item.get('snippet_count')}` "
+                f"source_bytes=`{item.get('source_bytes', 0)}`"
             )
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -441,26 +642,30 @@ def get_file_bytes(pack: Path | str, repo_path: str) -> bytes:
 
     normalized = _normalize_repo_path(repo_path)
     with closing(_open_pack(pack)) as conn:
-        file_row = conn.execute("SELECT path FROM files WHERE path=?", (normalized,)).fetchone()
-        if not file_row:
-            raise KeyError(f"File not found in pack: {normalized}")
-        chunks = conn.execute(
-            """
-            SELECT c.compressor, c.data
-            FROM file_chunks fc
-            JOIN chunks c ON c.id = fc.chunk_id
-            WHERE fc.path=?
-            ORDER BY fc.chunk_index
-            """,
-            (normalized,),
-        ).fetchall()
-    parts = []
-    for row in chunks:
-        compressor = row["compressor"]
-        if compressor != "zlib":
-            raise ValueError(f"Unsupported compressor: {compressor}")
-        parts.append(zlib.decompress(row["data"]))
-    return b"".join(parts)
+        return _read_file_bytes(conn, normalized)
+
+
+def _read_file_bytes(conn: sqlite3.Connection, normalized: str) -> bytes:
+    file_row = conn.execute("SELECT path FROM files WHERE path=?", (normalized,)).fetchone()
+    if not file_row:
+        raise KeyError(f"File not found in pack: {normalized}")
+    chunks = conn.execute(
+        """
+        SELECT c.compressor, c.data
+        FROM file_chunks fc
+        JOIN chunks c ON c.id = fc.chunk_id
+        WHERE fc.path=?
+        ORDER BY fc.chunk_index
+        """,
+        (normalized,),
+    ).fetchall()
+    return b"".join(_decompress_chunk(row["compressor"], row["data"]) for row in chunks)
+
+
+def _decompress_chunk(compressor: str, data: bytes) -> bytes:
+    if compressor != "zlib":
+        raise ValueError(f"Unsupported compressor: {compressor}")
+    return zlib.decompress(data)
 
 
 def _snippets_for_result(
@@ -468,34 +673,48 @@ def _snippets_for_result(
     question: str,
     result: dict[str, Any],
     snippet_lines: int,
-) -> tuple[list[dict[str, Any]], str]:
+    snippets_per_file: int,
+    max_bytes: int | None,
+    include_source: bool,
+) -> tuple[list[dict[str, Any]], str, int]:
+    if not include_source:
+        return [], "source_omitted", 0
+    if snippets_per_file == 0:
+        return [], "snippet_limit_zero", 0
+    if max_bytes is not None and max_bytes <= 0:
+        return [], "budget_exhausted", 0
+
     data = get_file_bytes(pack, str(result["path"]))
     text = _decode_text(data)
     if text is None:
-        return [], "binary_or_undecodable"
+        return [], "binary_or_undecodable", 0
     lines = text.splitlines()
     if not lines:
-        return [], "empty_text"
+        return [], "empty_text", 0
 
     anchors = _snippet_anchors(question, result, lines)
     snippets = []
+    used_bytes = 0
+    remaining_bytes = max_bytes
     seen_ranges: set[tuple[int, int]] = set()
     for line_no, matched in anchors:
-        start, end = _snippet_range(line_no, len(lines), snippet_lines)
+        snippet = _make_snippet(lines, line_no, matched, snippet_lines, remaining_bytes)
+        if snippet is None:
+            continue
+        start = snippet["start_line"]
+        end = snippet["end_line"]
         if (start, end) in seen_ranges:
             continue
         seen_ranges.add((start, end))
-        snippets.append(
-            {
-                "start_line": start,
-                "end_line": end,
-                "matched": matched,
-                "text": "\n".join(lines[start - 1 : end]),
-            }
-        )
-        if len(snippets) >= 2:
+        snippets.append(snippet)
+        snippet_bytes = int(snippet["byte_count"])
+        used_bytes += snippet_bytes
+        if remaining_bytes is not None:
+            remaining_bytes = max(0, remaining_bytes - snippet_bytes)
+        if len(snippets) >= snippets_per_file:
             break
-    return snippets, "text" if snippets else "no_snippet"
+    status = "text" if snippets else ("budget_exhausted" if max_bytes is not None else "no_snippet")
+    return snippets, status, used_bytes
 
 
 def _snippet_anchors(
@@ -547,6 +766,56 @@ def _snippet_range(anchor_line: int, line_count: int, snippet_lines: int) -> tup
     end = min(line_count, start + snippet_lines - 1)
     start = max(1, end - snippet_lines + 1)
     return start, end
+
+
+def _make_snippet(
+    lines: list[str],
+    anchor_line: int,
+    matched: str,
+    snippet_lines: int,
+    max_bytes: int | None,
+) -> dict[str, Any] | None:
+    widths = [snippet_lines]
+    if max_bytes is not None:
+        widths.extend(range(min(snippet_lines - 1, len(lines)), 0, -1))
+
+    seen_widths = set()
+    for width in widths:
+        if width in seen_widths:
+            continue
+        seen_widths.add(width)
+        start, end = _snippet_range(anchor_line, len(lines), width)
+        text = "\n".join(lines[start - 1 : end])
+        byte_count = len(text.encode("utf-8"))
+        if max_bytes is not None and byte_count > max_bytes:
+            continue
+        return {
+            "start_line": start,
+            "end_line": end,
+            "matched": matched,
+            "byte_count": byte_count,
+            "text": text,
+        }
+    return None
+
+
+def _add_verify_error(
+    errors: list[dict[str, Any]],
+    scope: str,
+    path: str | None,
+    message: str,
+    *,
+    expected: Any = None,
+    actual: Any = None,
+) -> None:
+    error = {"scope": scope, "message": message}
+    if path is not None:
+        error["path"] = path
+    if expected is not None:
+        error["expected"] = expected
+    if actual is not None:
+        error["actual"] = actual
+    errors.append(error)
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
