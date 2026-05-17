@@ -2,6 +2,7 @@
 
 from .codec import (
     SCHEMA_VERSION,
+    build_capsule,
     build_context_bundle,
     build_pack,
     evaluate_pack,
@@ -15,6 +16,7 @@ from .codec import (
 
 __all__ = [
     "SCHEMA_VERSION",
+    "build_capsule",
     "build_context_bundle",
     "build_pack",
     "evaluate_pack",

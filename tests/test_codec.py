@@ -9,6 +9,7 @@ from pathlib import Path
 
 from repomori.codec import (
     BuildOptions,
+    build_capsule,
     build_context_bundle,
     build_pack,
     evaluate_pack,
@@ -37,6 +38,12 @@ class RepoMoriCodecTests(unittest.TestCase):
             results = query_pack(pack, "sqlite Store", limit=3)
             self.assertEqual(results[0]["path"], "app.py")
             self.assertIn("symbol", results[0]["why"])
+            self.assertIn("exact-symbol", results[0]["why"])
+            self.assertIn("all-query-terms", results[0]["why"])
+
+            path_results = query_pack(pack, "readme", limit=1)
+            self.assertEqual(path_results[0]["path"], "README.md")
+            self.assertIn("exact-basename", path_results[0]["why"])
 
             restored = get_file_bytes(pack, "app.py")
             self.assertEqual(restored, (repo / "app.py").read_bytes())
@@ -131,6 +138,25 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("sqlite Store", markdown)
             self.assertIn("Suggested Improvements", markdown)
 
+    def test_capsule_export(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            capsule = build_capsule(pack, max_files=2, top_terms=5)
+            self.assertEqual(capsule["schema_version"], "repomori.capsule.v1")
+            self.assertEqual(capsule["selection"]["included_files"], 2)
+            self.assertEqual(capsule["selection"]["total_files"], 3)
+            self.assertTrue(capsule["selection"]["truncated"])
+            self.assertIn("terms", capsule["dictionary"])
+            self.assertEqual(len(capsule["manifest"]), 2)
+
+            app_record = next(item for item in capsule["files"] if item["p"] == "app.py")
+            self.assertEqual(app_record["l"], "python")
+            self.assertIn("s", app_record)
+            self.assertIn("i", app_record)
+            self.assertNotIn("text", app_record)
+            self.assertNotIn("snippets", app_record)
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -205,6 +231,28 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.eval.v1")
             self.assertEqual(payload["summary"]["question_count"], 1)
             self.assertEqual(payload["questions"][0]["selected_sources"][0]["path"], "app.py")
+
+    def test_cli_capsule_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "capsule",
+                    str(pack),
+                    "--max-files",
+                    "1",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.capsule.v1")
+            self.assertEqual(payload["selection"]["included_files"], 1)
+            self.assertIn("key", payload)
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

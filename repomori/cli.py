@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .codec import (
     BuildOptions,
+    build_capsule,
     build_context_bundle,
     build_pack,
     evaluate_pack,
@@ -79,6 +80,12 @@ def main(argv: list[str] | None = None) -> int:
     eval_cmd.add_argument("--no-source", action="store_true", help="Evaluate rankings and metadata without snippets.")
     eval_cmd.add_argument("--format", choices=("markdown", "json"), default="markdown")
     eval_cmd.add_argument("--out", type=Path, help="Write the eval report to this file.")
+
+    capsule = sub.add_parser("capsule", help="Export a dense machine-readable capsule.")
+    capsule.add_argument("pack", type=Path)
+    capsule.add_argument("--max-files", type=int, help="Maximum files to include.")
+    capsule.add_argument("--top-terms", type=int, default=128, help="Vocabulary terms to include.")
+    capsule.add_argument("--out", type=Path, help="Write capsule JSON to this file.")
 
     get = sub.add_parser("get", help="Restore one exact file from the pack.")
     get.add_argument("pack", type=Path)
@@ -151,6 +158,15 @@ def main(argv: list[str] | None = None) -> int:
             args.out.write_text(output, encoding="utf-8")
         else:
             print(output, end="" if output.endswith("\n") else "\n")
+        return 0
+    if args.command == "capsule":
+        capsule = build_capsule(args.pack, max_files=args.max_files, top_terms=args.top_terms)
+        output = json.dumps(capsule, separators=(",", ":"))
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output + "\n", encoding="utf-8")
+        else:
+            print(output)
         return 0
     if args.command == "get":
         data = get_file_bytes(args.pack, args.path)

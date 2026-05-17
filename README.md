@@ -21,6 +21,7 @@ python -m repomori query C:\path\to\repo.repomori storage
 python -m repomori context C:\path\to\repo.repomori "where is storage handled?" --out context.md
 python -m repomori verify C:\path\to\repo.repomori
 python -m repomori eval C:\path\to\repo.repomori --out eval.md
+python -m repomori capsule C:\path\to\repo.repomori --out repo.capsule.json
 python -m repomori get C:\path\to\repo.repomori path\inside\repo.py --out restored.py
 ```
 
@@ -47,6 +48,7 @@ repomori query <pack> <text>
 repomori context <pack> <question> [--format markdown|json] [--max-files n] [--max-bytes n] [--no-source] [--out file]
 repomori verify <pack>
 repomori eval <pack> [--question text] [--format markdown|json] [--out file]
+repomori capsule <pack> [--max-files n] [--top-terms n] [--out file]
 repomori get <pack> <path> [--out file]
 ```
 
@@ -62,6 +64,10 @@ files still match their recorded sizes and SHA-256 hashes.
 `eval` runs representative questions through the context builder and reports
 selected files, snippet counts, source bytes, coverage, weak signals, and
 suggested ranking or extraction improvements.
+
+`capsule` exports the pack's machine summary as dense JSON: compact file
+records, symbol/import/heading graph data, vocabulary, and a verification
+manifest without embedding raw source text.
 
 You can run the same commands without installing the package:
 

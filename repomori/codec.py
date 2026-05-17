@@ -427,8 +427,10 @@ def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, 
     tokens = _query_tokens(query)
     if not tokens:
         return []
+    phrases = _query_phrases(query, tokens)
     scores: dict[str, float] = defaultdict(float)
     reasons: dict[str, set[str]] = defaultdict(set)
+    matched_tokens: dict[str, set[str]] = defaultdict(set)
 
     with closing(_open_pack(pack)) as conn:
         files = conn.execute(
@@ -436,23 +438,62 @@ def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, 
         ).fetchall()
         for row in files:
             path = row["path"]
-            haystack = f"{path} {row['language'] or ''}".lower()
-            for token in tokens:
-                if token in haystack:
-                    scores[path] += 4.0
-                    reasons[path].add("path/language")
+            _score_query_value(
+                path,
+                "path",
+                path,
+                tokens,
+                phrases,
+                _field_weight("path"),
+                scores,
+                reasons,
+                matched_tokens,
+            )
+            _score_query_value(
+                path,
+                "basename",
+                Path(path).stem,
+                tokens,
+                phrases,
+                _field_weight("basename"),
+                scores,
+                reasons,
+                matched_tokens,
+            )
+            if row["language"]:
+                _score_query_value(
+                    path,
+                    "language",
+                    str(row["language"]),
+                    tokens,
+                    phrases,
+                    _field_weight("language"),
+                    scores,
+                    reasons,
+                    matched_tokens,
+                )
 
         index_rows = conn.execute("SELECT path, field, value FROM search_index").fetchall()
         for row in index_rows:
-            value = str(row["value"] or "").lower()
-            for token in tokens:
-                if token in value:
-                    weight = _field_weight(str(row["field"]))
-                    scores[row["path"]] += weight
-                    reasons[row["path"]].add(str(row["field"]))
+            field = str(row["field"])
+            _score_query_value(
+                row["path"],
+                field,
+                str(row["value"] or ""),
+                tokens,
+                phrases,
+                _field_weight(field),
+                scores,
+                reasons,
+                matched_tokens,
+            )
 
         if not scores:
             return []
+        for path, matches in matched_tokens.items():
+            coverage = len(matches) / len(tokens)
+            scores[path] += coverage * 3.0
+            reasons[path].add("all-query-terms" if coverage == 1.0 else "partial-query-terms")
         placeholders = ",".join("?" for _ in scores)
         file_rows = conn.execute(
             f"SELECT path, language, size, sha256, summary_json FROM files WHERE path IN ({placeholders})",
@@ -844,6 +885,120 @@ def format_eval_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def build_capsule(
+    pack: Path | str,
+    max_files: int | None = None,
+    top_terms: int = 128,
+) -> dict[str, Any]:
+    """Build a dense machine-readable capsule from pack summaries."""
+
+    if max_files is not None and max_files <= 0:
+        raise ValueError("max_files must be greater than zero")
+    if top_terms < 0:
+        raise ValueError("top_terms must be zero or greater")
+
+    pack_info = info_pack(pack)
+    with closing(_open_pack(pack)) as conn:
+        rows = conn.execute(
+            """
+            SELECT path, language, size, sha256, is_text, line_count, token_count, summary_json
+            FROM files
+            ORDER BY path
+            """
+        ).fetchall()
+
+    total_files = len(rows)
+    selected_rows = rows[:max_files] if max_files is not None else rows
+    language_counts: Counter[str] = Counter()
+    term_counts: Counter[str] = Counter()
+    files = []
+    graph_symbols = []
+    graph_imports = []
+    graph_headings = []
+    manifest = []
+
+    for row in selected_rows:
+        path = row["path"]
+        language = row["language"] or "unknown"
+        summary = _safe_json(row["summary_json"], {})
+        terms = [str(term) for term in summary.get("top_terms", [])[:16]]
+        symbols = _capsule_symbols(summary.get("symbols", []), limit=32)
+        imports = _capsule_imports(summary.get("imports", []), limit=32)
+        headings = _capsule_headings(summary.get("headings", []), limit=24)
+
+        language_counts[language] += 1
+        term_counts.update(terms)
+        graph_symbols.extend([[path, *symbol] for symbol in symbols])
+        graph_imports.extend([[path, *item] for item in imports])
+        graph_headings.extend([[path, *heading] for heading in headings])
+
+        record: dict[str, Any] = {
+            "p": path,
+            "l": row["language"],
+            "b": row["size"],
+            "h": row["sha256"],
+            "x": bool(row["is_text"]),
+            "lc": row["line_count"],
+            "tc": row["token_count"],
+            "k": summary.get("kind"),
+        }
+        if terms:
+            record["tt"] = terms
+        if symbols:
+            record["s"] = symbols
+        if imports:
+            record["i"] = imports
+        if headings:
+            record["hd"] = headings
+        files.append(record)
+        manifest.append({"path": path, "sha256": row["sha256"], "size": row["size"]})
+
+    return {
+        "schema_version": "repomori.capsule.v1",
+        "pack": {
+            "schema_version": pack_info.get("schema_version"),
+            "repo_path": pack_info.get("repo_path"),
+            "pack_path": pack_info.get("pack_path"),
+            "created_at": pack_info.get("created_at"),
+            "logical_bytes": pack_info.get("logical_bytes"),
+            "pack_bytes": pack_info.get("pack_bytes"),
+            "counts": pack_info.get("counts", {}),
+        },
+        "selection": {
+            "max_files": max_files,
+            "included_files": len(files),
+            "total_files": total_files,
+            "truncated": len(files) < total_files,
+            "top_terms": top_terms,
+        },
+        "dictionary": {
+            "languages": [[language, count] for language, count in sorted(language_counts.items())],
+            "terms": [[term, count] for term, count in term_counts.most_common(top_terms)],
+        },
+        "files": files,
+        "graph": {
+            "symbols": graph_symbols,
+            "imports": graph_imports,
+            "headings": graph_headings,
+        },
+        "manifest": manifest,
+        "key": {
+            "p": "path",
+            "l": "language",
+            "b": "bytes",
+            "h": "sha256",
+            "x": "is_text",
+            "lc": "line_count",
+            "tc": "token_count",
+            "k": "kind",
+            "tt": "top_terms",
+            "s": "symbols[kind,name,line]",
+            "i": "imports[target,line]",
+            "hd": "headings[level,text,line]",
+        },
+    }
+
+
 def get_file_bytes(pack: Path | str, repo_path: str) -> bytes:
     """Restore one file from a pack and return its bytes."""
 
@@ -1018,6 +1173,31 @@ def _eval_source_summary(source: dict[str, Any]) -> dict[str, Any]:
         "snippet_count": len(source.get("snippets", [])),
         "source_bytes": source.get("source_bytes", 0),
     }
+
+
+def _capsule_symbols(items: list[dict[str, Any]], limit: int) -> list[list[Any]]:
+    return [
+        [str(item.get("kind", "")), str(item.get("name", "")), int(item.get("line", 0) or 0)]
+        for item in items[:limit]
+    ]
+
+
+def _capsule_imports(items: list[dict[str, Any]], limit: int) -> list[list[Any]]:
+    return [
+        [str(item.get("target", "")), int(item.get("line", 0) or 0)]
+        for item in items[:limit]
+    ]
+
+
+def _capsule_headings(items: list[dict[str, Any]], limit: int) -> list[list[Any]]:
+    return [
+        [
+            int(item.get("level", 0) or 0),
+            str(item.get("text", "")),
+            int(item.get("line", 0) or 0),
+        ]
+        for item in items[:limit]
+    ]
 
 
 def _eval_weak_signals(
@@ -1468,6 +1648,7 @@ def _query_tokens(query: str) -> list[str]:
 
 def _field_weight(field: str) -> float:
     return {
+        "basename": 7.0,
         "symbol": 8.0,
         "heading": 6.0,
         "import": 5.0,
@@ -1475,6 +1656,49 @@ def _field_weight(field: str) -> float:
         "language": 2.0,
         "term": 1.0,
     }.get(field, 1.0)
+
+
+def _query_phrases(query: str, tokens: list[str]) -> list[str]:
+    raw = re.sub(r"\s+", " ", query.lower()).strip()
+    token_phrase = " ".join(tokens).strip()
+    phrases = []
+    for phrase in (raw, token_phrase):
+        if " " in phrase and phrase not in phrases:
+            phrases.append(phrase)
+    return phrases
+
+
+def _score_query_value(
+    path: str,
+    field: str,
+    value: str,
+    tokens: list[str],
+    phrases: list[str],
+    weight: float,
+    scores: dict[str, float],
+    reasons: dict[str, set[str]],
+    matched_tokens: dict[str, set[str]],
+) -> None:
+    normalized = value.lower()
+    if not normalized:
+        return
+
+    value_terms = set(_query_tokens(value))
+    for phrase in phrases:
+        if phrase in normalized:
+            scores[path] += (weight * 2.0) + 4.0
+            reasons[path].add("phrase")
+            reasons[path].add(field)
+
+    for token in tokens:
+        if token not in normalized:
+            continue
+        scores[path] += weight
+        reasons[path].add(field)
+        matched_tokens[path].add(token)
+        if token in value_terms:
+            scores[path] += weight * 0.5
+            reasons[path].add(f"exact-{field}")
 
 
 def _markdown_fence_language(language: str | None) -> str:
