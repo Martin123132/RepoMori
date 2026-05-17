@@ -20,6 +20,7 @@ python -m repomori info C:\path\to\repo.repomori
 python -m repomori query C:\path\to\repo.repomori storage
 python -m repomori context C:\path\to\repo.repomori "where is storage handled?" --out context.md
 python -m repomori verify C:\path\to\repo.repomori
+python -m repomori eval C:\path\to\repo.repomori --out eval.md
 python -m repomori get C:\path\to\repo.repomori path\inside\repo.py --out restored.py
 ```
 
@@ -45,6 +46,7 @@ repomori tree <pack>
 repomori query <pack> <text>
 repomori context <pack> <question> [--format markdown|json] [--max-files n] [--max-bytes n] [--no-source] [--out file]
 repomori verify <pack>
+repomori eval <pack> [--question text] [--format markdown|json] [--out file]
 repomori get <pack> <path> [--out file]
 ```
 
@@ -56,6 +58,10 @@ exact source text goes into the context bundle.
 
 `verify` checks that stored chunks decompress, chunk hashes match, and restored
 files still match their recorded sizes and SHA-256 hashes.
+
+`eval` runs representative questions through the context builder and reports
+selected files, snippet counts, source bytes, coverage, weak signals, and
+suggested ranking or extraction improvements.
 
 You can run the same commands without installing the package:
 

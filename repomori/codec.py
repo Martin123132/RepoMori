@@ -23,6 +23,11 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = "repomori.pack.v1"
 DEFAULT_CHUNK_SIZE = 256 * 1024
+DEFAULT_EVAL_QUESTIONS = (
+    "Where is the command-line interface defined?",
+    "How are files stored, compressed, or restored?",
+    "What tests cover the project behavior?",
+)
 
 EXCLUDED_DIRS = {
     ".git",
@@ -637,6 +642,208 @@ def format_context_markdown(bundle: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def evaluate_pack(
+    pack: Path | str,
+    questions: Iterable[str] | None = None,
+    limit: int = 5,
+    snippet_lines: int = 10,
+    max_bytes: int | None = 4096,
+    snippets_per_file: int = 2,
+    include_source: bool = True,
+) -> dict[str, Any]:
+    """Evaluate whether a pack can build useful agent context."""
+
+    question_list = [question.strip() for question in (questions or DEFAULT_EVAL_QUESTIONS) if question.strip()]
+    if not question_list:
+        raise ValueError("at least one eval question is required")
+
+    started = time.time()
+    pack_info = info_pack(pack)
+    evaluations = []
+    unique_sources: dict[str, int] = {}
+    total_source_bytes = 0
+    total_snippets = 0
+    top_scores = []
+
+    for question in question_list:
+        bundle = build_context_bundle(
+            pack,
+            question,
+            limit=limit,
+            snippet_lines=snippet_lines,
+            max_bytes=max_bytes,
+            snippets_per_file=snippets_per_file,
+            include_source=include_source,
+        )
+        sources = bundle["sources"]
+        selected_count = len(sources)
+        source_bytes = int(bundle["selection"]["source_bytes"])
+        snippet_count = sum(len(source["snippets"]) for source in sources)
+        top_score = max((float(source["score"] or 0) for source in sources), default=0.0)
+        weak_signals = _eval_weak_signals(sources, selected_count, snippet_count, top_score)
+        suggestions = _eval_suggestions(weak_signals)
+
+        total_source_bytes += source_bytes
+        total_snippets += snippet_count
+        if selected_count:
+            top_scores.append(top_score)
+        for source in sources:
+            unique_sources.setdefault(str(source["path"]), int(source["size"] or 0))
+
+        evaluations.append(
+            {
+                "question": question,
+                "status": "pass" if not weak_signals else "weak",
+                "selected_count": selected_count,
+                "snippet_count": snippet_count,
+                "source_bytes": source_bytes,
+                "top_score": round(top_score, 2),
+                "weak_signals": weak_signals,
+                "suggestions": suggestions,
+                "selected_sources": [_eval_source_summary(source) for source in sources],
+            }
+        )
+
+    aggregate_suggestions = _unique_items(
+        suggestion
+        for evaluation in evaluations
+        for suggestion in evaluation["suggestions"]
+    )
+    pack_file_count = int(pack_info.get("counts", {}).get("files", 0) or 0)
+    logical_bytes = int(pack_info.get("logical_bytes", 0) or 0)
+    unique_source_bytes = sum(unique_sources.values())
+    elapsed = time.time() - started
+
+    return {
+        "schema_version": "repomori.eval.v1",
+        "pack": {
+            "schema_version": pack_info.get("schema_version"),
+            "repo_path": pack_info.get("repo_path"),
+            "pack_path": pack_info.get("pack_path"),
+            "logical_bytes": logical_bytes,
+            "pack_bytes": pack_info.get("pack_bytes"),
+            "counts": pack_info.get("counts", {}),
+        },
+        "settings": {
+            "limit": limit,
+            "snippet_lines": snippet_lines,
+            "max_bytes": max_bytes,
+            "snippets_per_file": snippets_per_file,
+            "include_source": include_source,
+        },
+        "summary": {
+            "question_count": len(evaluations),
+            "passed_questions": sum(1 for evaluation in evaluations if evaluation["status"] == "pass"),
+            "weak_questions": sum(1 for evaluation in evaluations if evaluation["status"] == "weak"),
+            "total_source_bytes": total_source_bytes,
+            "total_snippets": total_snippets,
+            "average_top_score": round(sum(top_scores) / len(top_scores), 2) if top_scores else 0.0,
+            "elapsed_seconds": round(elapsed, 4),
+        },
+        "coverage": {
+            "unique_files": sorted(unique_sources),
+            "unique_file_count": len(unique_sources),
+            "pack_file_count": pack_file_count,
+            "unique_file_percent": _percent(len(unique_sources), pack_file_count),
+            "unique_source_bytes": unique_source_bytes,
+            "logical_bytes": logical_bytes,
+            "unique_source_byte_percent": _percent(unique_source_bytes, logical_bytes),
+        },
+        "questions": evaluations,
+        "suggested_improvements": aggregate_suggestions,
+    }
+
+
+def format_eval_markdown(report: dict[str, Any]) -> str:
+    """Render an eval report as Markdown."""
+
+    pack = report.get("pack", {})
+    settings = report.get("settings", {})
+    summary = report.get("summary", {})
+    coverage = report.get("coverage", {})
+    lines = [
+        "# RepoMori Evaluation",
+        "",
+        "## Pack",
+        "",
+        f"- Repository: `{pack.get('repo_path')}`",
+        f"- Pack: `{pack.get('pack_path')}`",
+        f"- Schema: `{pack.get('schema_version')}`",
+        f"- Files: `{coverage.get('pack_file_count', 0)}`",
+        "",
+        "## Settings",
+        "",
+        f"- Limit: `{settings.get('limit')}`",
+        f"- Snippet lines: `{settings.get('snippet_lines')}`",
+        f"- Max bytes per question: `{settings.get('max_bytes')}`",
+        f"- Snippets per file: `{settings.get('snippets_per_file')}`",
+        f"- Include source: `{settings.get('include_source')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Questions: `{summary.get('question_count', 0)}`",
+        f"- Passed: `{summary.get('passed_questions', 0)}`",
+        f"- Weak: `{summary.get('weak_questions', 0)}`",
+        f"- Total source bytes: `{summary.get('total_source_bytes', 0)}`",
+        f"- Total snippets: `{summary.get('total_snippets', 0)}`",
+        f"- Average top score: `{summary.get('average_top_score', 0)}`",
+        "",
+        "## Coverage",
+        "",
+        f"- Unique selected files: `{coverage.get('unique_file_count', 0)}`",
+        f"- File coverage: `{coverage.get('unique_file_percent', 0)}%`",
+        f"- Unique selected bytes: `{coverage.get('unique_source_bytes', 0)}`",
+        f"- Byte coverage: `{coverage.get('unique_source_byte_percent', 0)}%`",
+        "",
+        "## Questions",
+        "",
+    ]
+
+    for index, evaluation in enumerate(report.get("questions", []), start=1):
+        lines.extend(
+            [
+                f"### {index}. {evaluation.get('question', '')}",
+                "",
+                f"- Status: `{evaluation.get('status')}`",
+                f"- Selected files: `{evaluation.get('selected_count', 0)}`",
+                f"- Snippets: `{evaluation.get('snippet_count', 0)}`",
+                f"- Source bytes: `{evaluation.get('source_bytes', 0)}`",
+                f"- Top score: `{evaluation.get('top_score', 0)}`",
+                f"- Weak signals: `{', '.join(evaluation.get('weak_signals', [])) or 'none'}`",
+                "",
+            ]
+        )
+        sources = evaluation.get("selected_sources", [])
+        if sources:
+            lines.append("Selected sources:")
+            for source in sources:
+                lines.append(
+                    f"- `{source.get('path')}` score=`{source.get('score')}` "
+                    f"snippets=`{source.get('snippet_count')}` "
+                    f"bytes=`{source.get('source_bytes')}` "
+                    f"status=`{source.get('snippet_status')}`"
+                )
+            lines.append("")
+        else:
+            lines.extend(["No sources selected.", ""])
+        suggestions = evaluation.get("suggestions", [])
+        if suggestions:
+            lines.append("Suggestions:")
+            for suggestion in suggestions:
+                lines.append(f"- {suggestion}")
+            lines.append("")
+
+    lines.extend(["## Suggested Improvements", ""])
+    suggestions = report.get("suggested_improvements", [])
+    if suggestions:
+        for suggestion in suggestions:
+            lines.append(f"- {suggestion}")
+    else:
+        lines.append("No immediate eval weaknesses detected.")
+    lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def get_file_bytes(pack: Path | str, repo_path: str) -> bytes:
     """Restore one file from a pack and return its bytes."""
 
@@ -797,6 +1004,67 @@ def _make_snippet(
             "text": text,
         }
     return None
+
+
+def _eval_source_summary(source: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": source.get("path"),
+        "language": source.get("language"),
+        "size": source.get("size"),
+        "sha256": source.get("sha256"),
+        "score": source.get("score"),
+        "why": source.get("why", []),
+        "snippet_status": source.get("snippet_status"),
+        "snippet_count": len(source.get("snippets", [])),
+        "source_bytes": source.get("source_bytes", 0),
+    }
+
+
+def _eval_weak_signals(
+    sources: list[dict[str, Any]],
+    selected_count: int,
+    snippet_count: int,
+    top_score: float,
+) -> list[str]:
+    signals = []
+    if selected_count == 0:
+        signals.append("no_sources")
+    if selected_count > 0 and snippet_count == 0:
+        signals.append("no_snippets")
+    if selected_count > 0 and top_score < 4.0:
+        signals.append("low_top_score")
+    statuses = {str(source.get("snippet_status")) for source in sources}
+    if "budget_exhausted" in statuses:
+        signals.append("budget_exhausted")
+    if selected_count > 0 and statuses == {"binary_or_undecodable"}:
+        signals.append("binary_only")
+    return signals
+
+
+def _eval_suggestions(weak_signals: list[str]) -> list[str]:
+    suggestion_map = {
+        "no_sources": "Add phrase matching, synonyms, or stronger path/symbol matching for questions with no selected files.",
+        "no_snippets": "Improve snippet anchors or increase the source budget so selected files produce usable evidence.",
+        "low_top_score": "Tune ranking weights for exact phrase hits, symbols, imports, and path matches.",
+        "budget_exhausted": "Increase --max-bytes or reduce --max-files / --snippets-per-file for tighter bundles.",
+        "binary_only": "Add binary-aware metadata or type-specific extractors for non-text assets.",
+    }
+    return [suggestion_map[signal] for signal in weak_signals if signal in suggestion_map]
+
+
+def _unique_items(items: Iterable[str]) -> list[str]:
+    seen = set()
+    result = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _percent(part: int, whole: int) -> float:
+    return round((part / whole) * 100, 2) if whole else 0.0
 
 
 def _add_verify_error(

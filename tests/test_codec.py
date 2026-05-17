@@ -11,6 +11,8 @@ from repomori.codec import (
     BuildOptions,
     build_context_bundle,
     build_pack,
+    evaluate_pack,
+    format_eval_markdown,
     format_context_markdown,
     get_file_bytes,
     info_pack,
@@ -110,6 +112,25 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(result["checked_files"], 3)
             self.assertEqual(result["error_count"], 0)
 
+    def test_eval_report_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            report = evaluate_pack(pack, questions=["sqlite Store", "missingzz"], limit=2)
+            self.assertEqual(report["schema_version"], "repomori.eval.v1")
+            self.assertEqual(report["summary"]["question_count"], 2)
+            self.assertEqual(report["summary"]["passed_questions"], 1)
+            self.assertEqual(report["summary"]["weak_questions"], 1)
+            self.assertEqual(report["questions"][0]["selected_sources"][0]["path"], "app.py")
+            self.assertIn("no_sources", report["questions"][1]["weak_signals"])
+            self.assertGreaterEqual(report["coverage"]["unique_file_count"], 1)
+            self.assertTrue(report["suggested_improvements"])
+
+            markdown = format_eval_markdown(report)
+            self.assertIn("# RepoMori Evaluation", markdown)
+            self.assertIn("sqlite Store", markdown)
+            self.assertIn("Suggested Improvements", markdown)
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -158,6 +179,32 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(output)
             self.assertTrue(payload["verified"])
             self.assertEqual(payload["error_count"], 0)
+
+    def test_cli_eval_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "eval",
+                    str(pack),
+                    "--question",
+                    "sqlite Store",
+                    "--format",
+                    "json",
+                    "--max-files",
+                    "1",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.eval.v1")
+            self.assertEqual(payload["summary"]["question_count"], 1)
+            self.assertEqual(payload["questions"][0]["selected_sources"][0]["path"], "app.py")
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

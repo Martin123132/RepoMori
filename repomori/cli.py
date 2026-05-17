@@ -11,7 +11,9 @@ from .codec import (
     BuildOptions,
     build_context_bundle,
     build_pack,
+    evaluate_pack,
     format_context_markdown,
+    format_eval_markdown,
     get_file_bytes,
     info_pack,
     query_pack,
@@ -65,6 +67,19 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("pack", type=Path)
     verify.add_argument("--json", action="store_true")
 
+    eval_cmd = sub.add_parser("eval", help="Evaluate context usefulness for a pack.")
+    eval_cmd.add_argument("pack", type=Path)
+    eval_cmd.add_argument("--question", action="append", help="Question to evaluate; repeat for more.")
+    eval_cmd.add_argument("--questions-file", type=Path, help="Read one eval question per line.")
+    eval_cmd.add_argument("--limit", type=int, default=5)
+    eval_cmd.add_argument("--max-files", type=int, help="Alias for --limit.")
+    eval_cmd.add_argument("--snippet-lines", type=int, default=10)
+    eval_cmd.add_argument("--snippets-per-file", type=int, default=2)
+    eval_cmd.add_argument("--max-bytes", type=int, default=4096, help="Maximum snippet text bytes per question.")
+    eval_cmd.add_argument("--no-source", action="store_true", help="Evaluate rankings and metadata without snippets.")
+    eval_cmd.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    eval_cmd.add_argument("--out", type=Path, help="Write the eval report to this file.")
+
     get = sub.add_parser("get", help="Restore one exact file from the pack.")
     get.add_argument("pack", type=Path)
     get.add_argument("path")
@@ -114,6 +129,29 @@ def main(argv: list[str] | None = None) -> int:
         result = verify_pack(args.pack)
         _print(result, args.json)
         return 0 if result["verified"] else 1
+    if args.command == "eval":
+        questions = _eval_questions(args.question, args.questions_file)
+        limit = args.max_files if args.max_files is not None else args.limit
+        report = evaluate_pack(
+            args.pack,
+            questions=questions,
+            limit=limit,
+            snippet_lines=args.snippet_lines,
+            max_bytes=args.max_bytes,
+            snippets_per_file=args.snippets_per_file,
+            include_source=not args.no_source,
+        )
+        output = (
+            json.dumps(report, indent=2)
+            if args.format == "json"
+            else format_eval_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0
     if args.command == "get":
         data = get_file_bytes(args.pack, args.path)
         if args.out:
@@ -138,6 +176,17 @@ def _print(value, as_json: bool) -> None:
             print(f"{key}: {item}")
         return
     print(value)
+
+
+def _eval_questions(questions: list[str] | None, questions_file: Path | None) -> list[str] | None:
+    values = list(questions or [])
+    if questions_file:
+        values.extend(
+            line.strip()
+            for line in questions_file.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+    return values or None
 
 
 def _format_row(row: dict) -> str:
