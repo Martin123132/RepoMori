@@ -25,9 +25,11 @@ from repomori.codec import (
     format_compare_markdown,
     format_eval_markdown,
     format_context_markdown,
+    format_snapshot_markdown,
     get_file_bytes,
     info_pack,
     query_pack,
+    snapshot_repo,
     tree_pack,
     verify_pack,
 )
@@ -276,6 +278,8 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             expected = {
                 "README.md",
+                "brief.json",
+                "brief.md",
                 "capsule.json",
                 "context.json",
                 "context.md",
@@ -287,6 +291,8 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(expected.issubset({path.name for path in out.iterdir()}))
 
             artifacts = {artifact["path"]: artifact for artifact in manifest["artifacts"]}
+            self.assertIn("brief.md", artifacts)
+            self.assertIn("brief.json", artifacts)
             self.assertIn("context.md", artifacts)
             self.assertIn("capsule.json", artifacts)
             for artifact in artifacts.values():
@@ -295,7 +301,7 @@ class RepoMoriCodecTests(unittest.TestCase):
                 self.assertEqual(artifact["size"], len(data))
                 self.assertEqual(artifact["sha256"], hashlib.sha256(data).hexdigest())
 
-            for name in ("context.json", "capsule.json", "eval.json", "verify.json"):
+            for name in ("context.json", "brief.json", "capsule.json", "eval.json", "verify.json"):
                 json.loads((out / name).read_text(encoding="utf-8"))
 
     def test_handoff_force_and_copy_pack(self) -> None:
@@ -328,8 +334,8 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             clean = check_handoff_package(out)
             self.assertTrue(clean["valid"])
-            self.assertEqual(clean["checked_artifacts"], 7)
-            self.assertEqual(clean["checked_json"], 4)
+            self.assertEqual(clean["checked_artifacts"], 9)
+            self.assertEqual(clean["checked_json"], 5)
 
             (out / "context.md").write_text("tampered\n", encoding="utf-8")
             broken = check_handoff_package(out)
@@ -350,17 +356,48 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(report["summary"]["handoff_passed"])
             self.assertTrue((out / "bench.json").exists())
             self.assertTrue((out / "bench.md").exists())
+            self.assertTrue((out / "brief.json").exists())
+            self.assertTrue((out / "brief.md").exists())
             self.assertTrue((out / "handoff" / "manifest.json").exists())
+            self.assertTrue((out / "handoff" / "brief.json").exists())
             self.assertEqual(json.loads((out / "bench.json").read_text(encoding="utf-8")), report)
 
             markdown = format_benchmark_markdown(report)
             self.assertIn("# RepoMori Benchmark", markdown)
             self.assertIn("sqlite Store", markdown)
+            self.assertIn("Brief key files", markdown)
 
             with self.assertRaises(FileExistsError):
                 benchmark_repo(repo, out, question="sqlite Store")
             forced = benchmark_repo(repo, out, question="sqlite Store", force=True)
             self.assertEqual(forced["status"], "pass")
+
+    def test_snapshot_repo_builds_latest_and_compares_previous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            first = snapshot_repo(repo, out)
+            self.assertEqual(first["schema_version"], "repomori.snapshot.v1")
+            self.assertEqual(first["status"], "pass")
+            self.assertIsNone(first["comparison"])
+            self.assertTrue((out / "latest.repomori").exists())
+            self.assertTrue((out / first["artifacts"]["snapshot_json"]).exists())
+            self.assertTrue((out / first["artifacts"]["snapshot_markdown"]).exists())
+
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            second = snapshot_repo(repo, out)
+            self.assertEqual(second["schema_version"], "repomori.snapshot.v1")
+            self.assertEqual(second["status"], "pass")
+            self.assertIsNotNone(second["comparison"])
+            self.assertEqual(second["comparison"]["summary"]["added_count"], 1)
+            self.assertIn("compare_json", second["artifacts"])
+            self.assertIn("compare_markdown", second["artifacts"])
+
+            markdown = format_snapshot_markdown(second)
+            self.assertIn("# RepoMori Snapshot", markdown)
+            self.assertIn("## Comparison", markdown)
+            self.assertIn("Added", markdown)
 
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -611,6 +648,31 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "pass")
             self.assertTrue((out / "bench.json").exists())
             self.assertTrue((out / "handoff" / "manifest.json").exists())
+
+    def test_cli_snapshot_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshot-cli"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "snapshot",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.snapshot.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertTrue((out / "latest.repomori").exists())
+            self.assertTrue((out / payload["artifacts"]["snapshot_json"]).exists())
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

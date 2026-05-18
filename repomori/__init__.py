@@ -17,9 +17,11 @@ from .codec import (
     format_compare_markdown,
     format_context_markdown,
     format_eval_markdown,
+    format_snapshot_markdown,
     get_file_bytes,
     info_pack,
     query_pack,
+    snapshot_repo,
     verify_pack,
 )
 
@@ -40,8 +42,10 @@ __all__ = [
     "format_compare_markdown",
     "format_context_markdown",
     "format_eval_markdown",
+    "format_snapshot_markdown",
     "get_file_bytes",
     "info_pack",
     "query_pack",
+    "snapshot_repo",
     "verify_pack",
 ]

@@ -26,8 +26,10 @@ from .codec import (
     get_file_bytes,
     info_pack,
     query_pack,
+    snapshot_repo,
     tree_pack,
     verify_pack,
+    format_snapshot_markdown,
 )
 
 
@@ -44,6 +46,14 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--chunk-size", type=int, default=256 * 1024)
     build.add_argument("--force", action="store_true", help="Overwrite an existing pack.")
     build.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    snapshot = sub.add_parser("snapshot", help="Build a timestamped pack snapshot.")
+    snapshot.add_argument("repo", type=Path)
+    snapshot.add_argument("--out-dir", type=Path, required=True, help="Directory for snapshot packs and reports.")
+    snapshot.add_argument("--chunk-size", type=int, default=256 * 1024)
+    snapshot.add_argument("--no-compare", action="store_true", help="Do not compare against latest.repomori.")
+    snapshot.add_argument("--compare-limit", type=int, default=50)
+    snapshot.add_argument("--json", action="store_true", help="Print snapshot JSON.")
 
     info = sub.add_parser("info", help="Show pack metadata.")
     info.add_argument("pack", type=Path)
@@ -173,6 +183,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         _print(result, args.json)
         return 0
+    if args.command == "snapshot":
+        report = snapshot_repo(
+            args.repo,
+            args.out_dir,
+            chunk_size=args.chunk_size,
+            compare=not args.no_compare,
+            compare_limit=args.compare_limit,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(format_snapshot_markdown(report), end="")
+        return 0 if report["status"] == "pass" else 1
     if args.command == "info":
         _print(info_pack(args.pack), args.json)
         return 0

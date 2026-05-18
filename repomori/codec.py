@@ -130,6 +130,7 @@ STOPWORDS = {
 class BuildOptions:
     chunk_size: int = DEFAULT_CHUNK_SIZE
     force: bool = False
+    exclude_paths: tuple[Path | str, ...] = ()
 
 
 def build_pack(repo: Path | str, output: Path | str, options: BuildOptions | None = None) -> dict[str, Any]:
@@ -176,7 +177,7 @@ def build_pack(repo: Path | str, output: Path | str, options: BuildOptions | Non
                 "chunk_size": opts.chunk_size,
             },
         )
-        for path in _iter_repo_files(repo_path, output_path):
+        for path in _iter_repo_files(repo_path, output_path, opts.exclude_paths):
             file_stats = _ingest_file(conn, repo_path, path, opts.chunk_size)
             for key, value in file_stats.items():
                 stats[key] += value
@@ -1576,6 +1577,14 @@ def build_handoff_package(
     artifacts.append(_artifact_record(out_path, context_json, "context_json"))
     artifacts.append(_artifact_record(out_path, context_md, "context_markdown"))
 
+    brief = build_repo_brief(pack_path, max_files=max_files, top_terms=top_terms, top_symbols=top_terms)
+    brief_json = out_path / "brief.json"
+    brief_md = out_path / "brief.md"
+    _write_json(brief_json, brief)
+    brief_md.write_text(format_brief_markdown(brief), encoding="utf-8")
+    artifacts.append(_artifact_record(out_path, brief_json, "brief_json"))
+    artifacts.append(_artifact_record(out_path, brief_md, "brief_markdown"))
+
     capsule = build_capsule(pack_path, max_files=capsule_max_files, top_terms=top_terms)
     capsule_path = out_path / "capsule.json"
     _write_json(capsule_path, capsule, compact=True)
@@ -1669,7 +1678,14 @@ def check_handoff_package(handoff_dir: Path | str) -> dict[str, Any]:
         for artifact in artifacts:
             artifact_results.append(_check_handoff_artifact(root, artifact, errors))
 
-        for name in ("context.json", "capsule.json", "eval.json", "verify.json"):
+        json_names = ["context.json", "capsule.json", "eval.json", "verify.json"]
+        has_brief = (root / "brief.json").exists() or any(
+            isinstance(artifact, dict) and artifact.get("path") == "brief.json"
+            for artifact in artifacts
+        )
+        if has_brief:
+            json_names.insert(1, "brief.json")
+        for name in json_names:
             json_results.append(_check_handoff_json(root, name, errors))
 
         pack_artifact = next(
@@ -1739,6 +1755,11 @@ def benchmark_repo(
         max_bytes=max_bytes,
         snippets_per_file=snippets_per_file,
     )
+    brief = build_repo_brief(pack_path, max_files=max_files, top_terms=top_terms, top_symbols=top_terms)
+    brief_json = out_path / "brief.json"
+    brief_md = out_path / "brief.md"
+    _write_json(brief_json, brief)
+    brief_md.write_text(format_brief_markdown(brief), encoding="utf-8")
     handoff = build_handoff_package(
         pack_path,
         question,
@@ -1790,21 +1811,125 @@ def benchmark_repo(
             "eval_total_source_bytes": eval_report.get("summary", {}).get("total_source_bytes"),
             "eval_total_snippets": eval_report.get("summary", {}).get("total_snippets"),
             "eval_average_top_score": eval_report.get("summary", {}).get("average_top_score"),
+            "brief_key_files": len(brief.get("orientation", {}).get("key_files", [])),
         },
         "artifacts": {
             "pack": pack_path.name,
+            "brief_json": brief_json.name,
+            "brief_markdown": brief_md.name,
             "handoff": handoff_path.name,
             "bench_json": "bench.json",
             "bench_markdown": "bench.md",
         },
         "build": build,
         "verify": verify,
+        "brief": brief,
         "eval": eval_report,
         "handoff": handoff,
         "handoff_check": handoff_check,
     }
     _write_json(out_path / "bench.json", report)
     (out_path / "bench.md").write_text(format_benchmark_markdown(report), encoding="utf-8")
+    return report
+
+
+def snapshot_repo(
+    repo: Path | str,
+    out_dir: Path | str,
+    *,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    compare: bool = True,
+    compare_limit: int = 50,
+) -> dict[str, Any]:
+    """Build a timestamped pack snapshot and compare it with the previous latest pack."""
+
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than zero")
+    if compare_limit <= 0:
+        raise ValueError("compare_limit must be greater than zero")
+
+    started = time.time()
+    repo_path = Path(repo).resolve()
+    out_path = Path(out_dir).resolve()
+    if not repo_path.is_dir():
+        raise ValueError(f"Repository folder not found: {repo_path}")
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    stamp = _snapshot_stamp(started)
+    pack_path = _unique_snapshot_pack_path(out_path, repo_path.name, stamp)
+    latest_path = out_path / "latest.repomori"
+    previous_latest = latest_path if latest_path.exists() else None
+
+    build = build_pack(
+        repo_path,
+        pack_path,
+        BuildOptions(
+            chunk_size=chunk_size,
+            force=False,
+            exclude_paths=_snapshot_exclude_paths(repo_path, out_path),
+        ),
+    )
+    verify = verify_pack(pack_path)
+
+    comparison = None
+    compare_json = None
+    compare_md = None
+    if compare and previous_latest is not None:
+        comparison = compare_packs(previous_latest, pack_path, limit=compare_limit)
+        compare_json = out_path / f"{pack_path.stem}.compare.json"
+        compare_md = out_path / f"{pack_path.stem}.compare.md"
+        _write_json(compare_json, comparison)
+        compare_md.write_text(format_compare_markdown(comparison), encoding="utf-8")
+
+    if latest_path.resolve() != pack_path.resolve():
+        shutil.copy2(pack_path, latest_path)
+
+    elapsed = time.time() - started
+    snapshot_json = out_path / f"{pack_path.stem}.snapshot.json"
+    snapshot_md = out_path / f"{pack_path.stem}.snapshot.md"
+    report = {
+        "schema_version": "repomori.snapshot.v1",
+        "status": "pass" if verify.get("verified") else "fail",
+        "repo_path": str(repo_path),
+        "out_dir": str(out_path),
+        "created_at": int(started),
+        "settings": {
+            "chunk_size": chunk_size,
+            "compare": compare,
+            "compare_limit": compare_limit,
+        },
+        "summary": {
+            "elapsed_seconds": round(elapsed, 4),
+            "pack_path": str(pack_path),
+            "latest_pack": str(latest_path),
+            "previous_latest_pack": str(previous_latest) if previous_latest is not None else None,
+            "pack_bytes": build.get("pack_bytes"),
+            "logical_bytes": build.get("logical_bytes"),
+            "file_count": build.get("file_count"),
+            "text_file_count": build.get("text_file_count"),
+            "binary_file_count": build.get("binary_file_count"),
+            "verify_passed": verify.get("verified"),
+            "compared_with_previous": comparison is not None,
+            "changed_count": comparison.get("summary", {}).get("changed_count") if comparison else None,
+            "added_count": comparison.get("summary", {}).get("added_count") if comparison else None,
+            "removed_count": comparison.get("summary", {}).get("removed_count") if comparison else None,
+        },
+        "artifacts": {
+            "pack": pack_path.name,
+            "latest_pack": latest_path.name,
+            "snapshot_json": snapshot_json.name,
+            "snapshot_markdown": snapshot_md.name,
+        },
+        "build": build,
+        "verify": verify,
+        "comparison": comparison,
+    }
+    if compare_json is not None and compare_md is not None:
+        report["artifacts"]["compare_json"] = compare_json.name
+        report["artifacts"]["compare_markdown"] = compare_md.name
+
+    _write_json(snapshot_json, report)
+    snapshot_md.write_text(format_snapshot_markdown(report), encoding="utf-8")
     return report
 
 
@@ -1846,6 +1971,7 @@ def format_benchmark_markdown(report: dict[str, Any]) -> str:
         f"- Eval source bytes: `{summary.get('eval_total_source_bytes')}`",
         f"- Eval snippets: `{summary.get('eval_total_snippets')}`",
         f"- Eval average top score: `{summary.get('eval_average_top_score')}`",
+        f"- Brief key files: `{summary.get('brief_key_files')}`",
         f"- Elapsed seconds: `{summary.get('elapsed_seconds')}`",
         "",
         "## Coverage",
@@ -1867,6 +1993,58 @@ def format_benchmark_markdown(report: dict[str, Any]) -> str:
             lines.append(f"- {suggestion}")
     else:
         lines.append("No immediate eval weaknesses detected.")
+    lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def format_snapshot_markdown(report: dict[str, Any]) -> str:
+    """Render a snapshot report as Markdown."""
+
+    summary = report.get("summary", {})
+    comparison = report.get("comparison")
+    lines = [
+        "# RepoMori Snapshot",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Repository: `{report.get('repo_path')}`",
+        f"- Output: `{report.get('out_dir')}`",
+        "",
+        "## Snapshot",
+        "",
+        f"- Pack: `{summary.get('pack_path')}`",
+        f"- Latest pack: `{summary.get('latest_pack')}`",
+        f"- Previous latest: `{summary.get('previous_latest_pack')}`",
+        f"- Files: `{summary.get('file_count')}`",
+        f"- Text files: `{summary.get('text_file_count')}`",
+        f"- Binary files: `{summary.get('binary_file_count')}`",
+        f"- Logical bytes: `{summary.get('logical_bytes')}`",
+        f"- Pack bytes: `{summary.get('pack_bytes')}`",
+        f"- Verify passed: `{summary.get('verify_passed')}`",
+        f"- Elapsed seconds: `{summary.get('elapsed_seconds')}`",
+        "",
+        "## Comparison",
+        "",
+    ]
+    if comparison:
+        compare_summary = comparison.get("summary", {})
+        lines.extend(
+            [
+                f"- Added: `{compare_summary.get('added_count')}`",
+                f"- Removed: `{compare_summary.get('removed_count')}`",
+                f"- Changed: `{compare_summary.get('changed_count')}`",
+                f"- Unchanged: `{compare_summary.get('unchanged_count')}`",
+                f"- Byte delta: `{compare_summary.get('byte_delta')}`",
+                "",
+            ]
+        )
+    elif report.get("settings", {}).get("compare"):
+        lines.extend(["No previous `latest.repomori` snapshot was available to compare.", ""])
+    else:
+        lines.extend(["Comparison disabled for this snapshot.", ""])
+
+    lines.extend(["## Artifacts", ""])
+    for label, path in report.get("artifacts", {}).items():
+        lines.append(f"- {label}: `{path}`")
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -2154,11 +2332,12 @@ def _handoff_readme(question: str, copied_pack: bool) -> str:
         f"Question: {question}\n\n"
         "Use these files in order:\n\n"
         "1. `manifest.json` - artifact list, hashes, settings, and verification status.\n"
-        "2. `context.md` - compact source-backed context for quick reading.\n"
-        "3. `context.json` - raw context bundle for tools.\n"
-        "4. `capsule.json` - dense machine-readable repository state.\n"
-        "5. `eval.md` / `eval.json` - context quality report.\n"
-        "6. `verify.json` - pack integrity report.\n\n"
+        "2. `brief.md` - question-free repository orientation.\n"
+        "3. `context.md` - compact source-backed context for quick reading.\n"
+        "4. `context.json` - raw context bundle for tools.\n"
+        "5. `capsule.json` - dense machine-readable repository state.\n"
+        "6. `eval.md` / `eval.json` - context quality report.\n"
+        "7. `verify.json` - pack integrity report.\n\n"
         f"{pack_note}"
         "No AI provider, API key, or network call is required to consume this handoff.\n"
     )
@@ -2532,6 +2711,32 @@ def _append_brief_file_section(lines: list[str], title: str, files: list[dict[st
     lines.append("")
 
 
+def _snapshot_stamp(timestamp: float) -> str:
+    return time.strftime("%Y%m%d-%H%M%S", time.localtime(timestamp))
+
+
+def _unique_snapshot_pack_path(out_path: Path, repo_name: str, stamp: str) -> Path:
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", repo_name).strip(".-") or "repo"
+    base = out_path / f"{safe_name}-{stamp}.repomori"
+    if not base.exists():
+        return base
+    for index in range(1, 1000):
+        candidate = out_path / f"{safe_name}-{stamp}-{index}.repomori"
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"Could not allocate a snapshot pack name in {out_path}")
+
+
+def _snapshot_exclude_paths(repo_path: Path, out_path: Path) -> tuple[Path, ...]:
+    if out_path == repo_path:
+        return ()
+    try:
+        out_path.relative_to(repo_path)
+    except ValueError:
+        return ()
+    return (out_path,)
+
+
 def _percent(part: int, whole: int) -> float:
     return round((part / whole) * 100, 2) if whole else 0.0
 
@@ -2657,11 +2862,24 @@ def _open_pack(pack: Path | str) -> sqlite3.Connection:
     return conn
 
 
-def _iter_repo_files(repo_path: Path, output_path: Path) -> Iterable[Path]:
+def _iter_repo_files(
+    repo_path: Path,
+    output_path: Path,
+    exclude_paths: Iterable[Path | str] = (),
+) -> Iterable[Path]:
     output_resolved = output_path.resolve()
+    excluded_roots = tuple(Path(path).resolve() for path in exclude_paths)
     for root, dirs, files in os.walk(repo_path):
-        dirs[:] = sorted(d for d in dirs if d not in EXCLUDED_DIRS)
         root_path = Path(root)
+        kept_dirs = []
+        for dirname in sorted(dirs):
+            if dirname in EXCLUDED_DIRS:
+                continue
+            dir_path = (root_path / dirname).resolve()
+            if any(dir_path == excluded or excluded in dir_path.parents for excluded in excluded_roots):
+                continue
+            kept_dirs.append(dirname)
+        dirs[:] = kept_dirs
         for name in sorted(files):
             path = root_path / name
             if path.resolve() == output_resolved:

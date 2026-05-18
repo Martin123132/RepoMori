@@ -16,6 +16,7 @@ The first version is deliberately local and dependency-light:
 
 ```powershell
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
+python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --json
 python -m repomori info C:\path\to\repo.repomori
 python -m repomori query C:\path\to\repo.repomori storage
 python -m repomori diagnose C:\path\to\repo.repomori "where is storage handled?" --json
@@ -48,6 +49,7 @@ exactness matters.
 
 ```text
 repomori build <repo> <pack>
+repomori snapshot <repo> --out-dir <dir> [--no-compare] [--json]
 repomori info <pack>
 repomori tree <pack>
 repomori query <pack> <text>
@@ -84,6 +86,11 @@ file counts, language deltas, changed hashes and sizes, and symbol/import/headin
 summary deltas so agents can continue from what changed instead of rereading
 everything.
 
+`snapshot` builds timestamped packs into an output directory, updates
+`latest.repomori`, and automatically compares the new pack against the previous
+latest pack when one exists. It also writes snapshot JSON/Markdown reports and
+compare reports for machine-readable project memory over time.
+
 `verify` checks that stored chunks decompress, chunk hashes match, and restored
 files still match their recorded sizes and SHA-256 hashes.
 
@@ -96,15 +103,15 @@ records, symbol/import/heading graph data, vocabulary, and a verification
 manifest without embedding raw source text.
 
 `handoff` writes a directory for another agent with `manifest.json`,
-`context.md`, `context.json`, `capsule.json`, `eval.md`, `eval.json`,
-`verify.json`, and a short `README.md`. It verifies the pack first and stops
-before writing context artifacts if verification fails.
+`brief.md`, `brief.json`, `context.md`, `context.json`, `capsule.json`,
+`eval.md`, `eval.json`, `verify.json`, and a short `README.md`. It verifies the
+pack first and stops before writing context artifacts if verification fails.
 
 `check-handoff` validates a handoff manifest, artifact sizes and SHA-256 hashes,
 JSON artifacts, and any copied `.repomori` pack.
 
-`bench` runs the full local proof loop for a repository: build, verify, eval,
-handoff, check-handoff, then writes `bench.json` and `bench.md`.
+`bench` runs the full local proof loop for a repository: build, verify, brief,
+eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 
 You can run the same commands without installing the package:
 
