@@ -15,6 +15,7 @@ from .codec import (
     build_handoff_package,
     build_pack,
     check_handoff_package,
+    diagnose_query,
     evaluate_pack,
     format_context_markdown,
     format_eval_markdown,
@@ -54,6 +55,16 @@ def main(argv: list[str] | None = None) -> int:
     query.add_argument("text")
     query.add_argument("--limit", type=int, default=10)
     query.add_argument("--json", action="store_true")
+
+    diagnose = sub.add_parser("diagnose", help="Explain query ranking and snippet selection.")
+    diagnose.add_argument("pack", type=Path)
+    diagnose.add_argument("question")
+    diagnose.add_argument("--limit", type=int, default=8)
+    diagnose.add_argument("--max-files", type=int, help="Alias for --limit.")
+    diagnose.add_argument("--snippet-lines", type=int, default=12)
+    diagnose.add_argument("--snippets-per-file", type=int, default=2)
+    diagnose.add_argument("--max-bytes", type=int, help="Maximum total snippet text bytes.")
+    diagnose.add_argument("--json", action="store_true")
 
     context = sub.add_parser("context", help="Build source-backed agent context.")
     context.add_argument("pack", type=Path)
@@ -150,6 +161,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "query":
         _print(query_pack(args.pack, args.text, limit=args.limit), args.json)
+        return 0
+    if args.command == "diagnose":
+        limit = args.max_files if args.max_files is not None else args.limit
+        report = diagnose_query(
+            args.pack,
+            args.question,
+            limit=limit,
+            snippet_lines=args.snippet_lines,
+            max_bytes=args.max_bytes,
+            snippets_per_file=args.snippets_per_file,
+        )
+        _print(report, args.json)
         return 0
     if args.command == "context":
         limit = args.max_files if args.max_files is not None else args.limit

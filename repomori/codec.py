@@ -425,13 +425,127 @@ def verify_pack(pack: Path | str) -> dict[str, Any]:
 def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, Any]]:
     """Query pack indexes and return scored matching files."""
 
+    scored = _score_pack_query(pack, query)
+    return _ranked_query_results(scored, limit)
+
+
+def diagnose_query(
+    pack: Path | str,
+    question: str,
+    limit: int = 8,
+    snippet_lines: int = 12,
+    max_bytes: int | None = None,
+    snippets_per_file: int = 2,
+) -> dict[str, Any]:
+    """Explain query ranking and snippet anchor selection for a pack."""
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    if snippet_lines <= 0:
+        raise ValueError("snippet_lines must be greater than zero")
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes must be zero or greater")
+    if snippets_per_file < 0:
+        raise ValueError("snippets_per_file must be zero or greater")
+
+    started = time.time()
+    pack_info = info_pack(pack)
+    scored = _score_pack_query(pack, question)
+    selected = _ranked_query_results(scored, limit)
+    sources = []
+    remaining_bytes = max_bytes
+    source_bytes = 0
+
+    for rank, result in enumerate(selected, start=1):
+        snippets, snippet_status, used_bytes = _snippets_for_result(
+            pack,
+            question,
+            result,
+            snippet_lines,
+            snippets_per_file,
+            remaining_bytes,
+            True,
+        )
+        source_bytes += used_bytes
+        if remaining_bytes is not None:
+            remaining_bytes = max(0, remaining_bytes - used_bytes)
+        anchors, anchor_status = _diagnose_snippet_anchors(pack, question, result)
+        path = result["path"]
+        matched = set(scored["matched_tokens"].get(path, set()))
+        missed = [token for token in scored["tokens"] if token not in matched]
+        effective_snippet_status = anchor_status if snippet_status == "no_snippet" else snippet_status
+        sources.append(
+            {
+                "rank": rank,
+                "path": path,
+                "language": result.get("language"),
+                "size": result.get("size"),
+                "sha256": result.get("sha256"),
+                "score": result.get("score"),
+                "why": result.get("why", []),
+                "matched_tokens": sorted(matched),
+                "missed_tokens": missed,
+                "summary": result.get("summary", {}),
+                "score_breakdown": scored["breakdown"].get(path, []),
+                "snippet_status": effective_snippet_status,
+                "snippet_count": len(snippets),
+                "source_bytes": used_bytes,
+                "snippet_anchors": anchors,
+                "snippets": snippets,
+            }
+        )
+
+    return {
+        "schema_version": "repomori.diagnose.v1",
+        "question": question,
+        "pack": {
+            "schema_version": pack_info.get("schema_version"),
+            "repo_path": pack_info.get("repo_path"),
+            "pack_path": pack_info.get("pack_path"),
+            "created_at": pack_info.get("created_at"),
+            "logical_bytes": pack_info.get("logical_bytes"),
+            "pack_bytes": pack_info.get("pack_bytes"),
+            "counts": pack_info.get("counts", {}),
+        },
+        "query": {
+            "tokens": scored["tokens"],
+            "phrases": scored["phrases"],
+            "limit": limit,
+        },
+        "settings": {
+            "snippet_lines": snippet_lines,
+            "max_bytes": max_bytes,
+            "snippets_per_file": snippets_per_file,
+        },
+        "summary": {
+            "selected_count": len(sources),
+            "source_bytes": source_bytes,
+            "elapsed_seconds": round(time.time() - started, 4),
+        },
+        "selected_files": sources,
+        "ranking_notes": _diagnose_ranking_notes(sources),
+        "suggestions": _diagnose_suggestions(scored["tokens"], sources),
+    }
+
+
+def _score_pack_query(pack: Path | str, query: str) -> dict[str, Any]:
     tokens = _query_tokens(query)
-    if not tokens:
-        return []
     phrases = _query_phrases(query, tokens)
     scores: dict[str, float] = defaultdict(float)
     reasons: dict[str, set[str]] = defaultdict(set)
     matched_tokens: dict[str, set[str]] = defaultdict(set)
+    breakdown: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    if not tokens:
+        return {
+            "tokens": [],
+            "phrases": [],
+            "scores": scores,
+            "reasons": reasons,
+            "matched_tokens": matched_tokens,
+            "breakdown": breakdown,
+            "file_rows": [],
+        }
 
     with closing(_open_pack(pack)) as conn:
         files = conn.execute(
@@ -449,6 +563,7 @@ def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, 
                 scores,
                 reasons,
                 matched_tokens,
+                breakdown,
             )
             _score_query_value(
                 path,
@@ -460,6 +575,7 @@ def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, 
                 scores,
                 reasons,
                 matched_tokens,
+                breakdown,
             )
             if row["language"]:
                 _score_query_value(
@@ -472,6 +588,7 @@ def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, 
                     scores,
                     reasons,
                     matched_tokens,
+                    breakdown,
                 )
 
         index_rows = conn.execute("SELECT path, field, value FROM search_index").fetchall()
@@ -487,22 +604,48 @@ def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, 
                 scores,
                 reasons,
                 matched_tokens,
+                breakdown,
             )
 
-        if not scores:
-            return []
         for path, matches in matched_tokens.items():
             coverage = len(matches) / len(tokens)
-            scores[path] += coverage * 3.0
-            reasons[path].add("all-query-terms" if coverage == 1.0 else "partial-query-terms")
-        placeholders = ",".join("?" for _ in scores)
-        file_rows = conn.execute(
-            f"SELECT path, language, size, sha256, summary_json FROM files WHERE path IN ({placeholders})",
-            tuple(scores),
-        ).fetchall()
+            added = coverage * 3.0
+            scores[path] += added
+            reason = "all-query-terms" if coverage == 1.0 else "partial-query-terms"
+            reasons[path].add(reason)
+            breakdown[path].append(
+                {
+                    "field": "coverage",
+                    "kind": reason,
+                    "matched_tokens": sorted(matches),
+                    "weight": round(added, 2),
+                }
+            )
 
+        file_rows = []
+        if scores:
+            placeholders = ",".join("?" for _ in scores)
+            file_rows = conn.execute(
+                f"SELECT path, language, size, sha256, summary_json FROM files WHERE path IN ({placeholders})",
+                tuple(scores),
+            ).fetchall()
+
+    return {
+        "tokens": tokens,
+        "phrases": phrases,
+        "scores": scores,
+        "reasons": reasons,
+        "matched_tokens": matched_tokens,
+        "breakdown": breakdown,
+        "file_rows": file_rows,
+    }
+
+
+def _ranked_query_results(scored: dict[str, Any], limit: int) -> list[dict[str, Any]]:
     results = []
-    for row in file_rows:
+    scores = scored["scores"]
+    reasons = scored["reasons"]
+    for row in scored["file_rows"]:
         summary = _safe_json(row["summary_json"], {})
         path = row["path"]
         results.append(
@@ -517,6 +660,67 @@ def query_pack(pack: Path | str, query: str, limit: int = 10) -> list[dict[str, 
             }
         )
     return sorted(results, key=lambda item: (-item["score"], item["path"]))[:limit]
+
+
+def _diagnose_snippet_anchors(
+    pack: Path | str,
+    question: str,
+    result: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str]:
+    data = get_file_bytes(pack, str(result["path"]))
+    text = _decode_text(data)
+    if text is None:
+        return [], "binary_or_undecodable"
+    lines = text.splitlines()
+    if not lines:
+        return [], "empty_text"
+    anchors = []
+    for line_no, matched in _snippet_anchors(question, result, lines)[:8]:
+        anchors.append(
+            {
+                "line": line_no,
+                "matched": matched,
+                "preview": lines[line_no - 1].strip(),
+            }
+        )
+    return anchors, "text" if anchors else "no_snippet"
+
+
+def _diagnose_ranking_notes(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    notes = []
+    for higher, lower in zip(sources, sources[1:]):
+        higher_reasons = set(higher.get("why", []))
+        lower_reasons = set(lower.get("why", []))
+        notes.append(
+            {
+                "higher": higher.get("path"),
+                "lower": lower.get("path"),
+                "score_delta": round(float(higher.get("score") or 0) - float(lower.get("score") or 0), 2),
+                "higher_unique_reasons": sorted(higher_reasons - lower_reasons),
+                "lower_unique_reasons": sorted(lower_reasons - higher_reasons),
+                "higher_matched_tokens": higher.get("matched_tokens", []),
+                "lower_matched_tokens": lower.get("matched_tokens", []),
+            }
+        )
+    return notes
+
+
+def _diagnose_suggestions(tokens: list[str], sources: list[dict[str, Any]]) -> list[str]:
+    suggestions = []
+    if not sources:
+        return ["No files matched. Try a path, symbol, import, heading, or repository-specific term."]
+    if sources and float(sources[0].get("score") or 0) < 4.0:
+        suggestions.append("Top match is weak. Add a repository-specific path, symbol, import, or heading term.")
+    missed = sorted({token for source in sources for token in source.get("missed_tokens", [])})
+    if missed and tokens:
+        suggestions.append("Some selected files missed query terms: " + ", ".join(missed[:8]) + ".")
+    if any(source.get("snippet_status") == "budget_exhausted" for source in sources):
+        suggestions.append("Snippet source budget was exhausted. Increase --max-bytes or lower --max-files.")
+    if any(source.get("snippet_count") == 0 and source.get("snippet_status") == "text" for source in sources):
+        suggestions.append("Text files were selected but no snippets were emitted. Increase --snippets-per-file.")
+    if any("symbol" not in source.get("why", []) for source in sources):
+        suggestions.append("At least one selected file had no symbol match. Add a class or function name when you need code-specific ranking.")
+    return _unique_items(suggestions)
 
 
 def build_context_bundle(
@@ -2271,6 +2475,7 @@ def _score_query_value(
     scores: dict[str, float],
     reasons: dict[str, set[str]],
     matched_tokens: dict[str, set[str]],
+    breakdown: dict[str, list[dict[str, Any]]] | None = None,
 ) -> None:
     normalized = value.lower()
     if not normalized:
@@ -2279,9 +2484,20 @@ def _score_query_value(
     value_terms = set(_query_tokens(value))
     for phrase in phrases:
         if phrase in normalized:
-            scores[path] += (weight * 2.0) + 4.0
+            added = (weight * 2.0) + 4.0
+            scores[path] += added
             reasons[path].add("phrase")
             reasons[path].add(field)
+            if breakdown is not None:
+                breakdown[path].append(
+                    {
+                        "field": field,
+                        "kind": "phrase",
+                        "phrase": phrase,
+                        "value": _trace_value(value),
+                        "weight": round(added, 2),
+                    }
+                )
 
     for token in tokens:
         if token not in normalized:
@@ -2289,9 +2505,37 @@ def _score_query_value(
         scores[path] += weight
         reasons[path].add(field)
         matched_tokens[path].add(token)
+        if breakdown is not None:
+            breakdown[path].append(
+                {
+                    "field": field,
+                    "kind": "token",
+                    "token": token,
+                    "value": _trace_value(value),
+                    "weight": round(weight, 2),
+                }
+            )
         if token in value_terms:
-            scores[path] += weight * 0.5
+            added = weight * 0.5
+            scores[path] += added
             reasons[path].add(f"exact-{field}")
+            if breakdown is not None:
+                breakdown[path].append(
+                    {
+                        "field": field,
+                        "kind": "exact",
+                        "token": token,
+                        "value": _trace_value(value),
+                        "weight": round(added, 2),
+                    }
+                )
+
+
+def _trace_value(value: str, limit: int = 160) -> str:
+    compact = re.sub(r"\s+", " ", value).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
 
 
 def _markdown_fence_language(language: str | None) -> str:

@@ -16,6 +16,7 @@ from repomori.codec import (
     build_handoff_package,
     build_pack,
     check_handoff_package,
+    diagnose_query,
     evaluate_pack,
     format_benchmark_markdown,
     format_eval_markdown,
@@ -55,6 +56,38 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             tree = tree_pack(pack)
             self.assertEqual([row["path"] for row in tree], ["README.md", "app.py", "blob.bin"])
+
+    def test_diagnose_query_explains_ranking_and_snippets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            report = diagnose_query(pack, "storage sqlite Store", limit=3, snippet_lines=6)
+            self.assertEqual(report["schema_version"], "repomori.diagnose.v1")
+            self.assertEqual(report["question"], "storage sqlite Store")
+            self.assertIn("storage", report["query"]["tokens"])
+            self.assertIn("sqlite", report["query"]["tokens"])
+
+            self.assertGreaterEqual(len(report["selected_files"]), 2)
+            top = report["selected_files"][0]
+            self.assertEqual(top["path"], "app.py")
+            self.assertIn("symbol", top["why"])
+            self.assertIn("store", top["matched_tokens"])
+            self.assertIn("storage", top["missed_tokens"])
+            self.assertTrue(top["snippet_anchors"])
+            self.assertTrue(any(event["field"] == "symbol" for event in top["score_breakdown"]))
+            self.assertTrue(report["ranking_notes"])
+            self.assertIn("score_delta", report["ranking_notes"][0])
+
+    def test_diagnose_binary_file_skips_snippet_anchors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            report = diagnose_query(pack, "blob", limit=1)
+            source = report["selected_files"][0]
+            self.assertEqual(source["path"], "blob.bin")
+            self.assertEqual(source["snippet_status"], "binary_or_undecodable")
+            self.assertEqual(source["snippet_anchors"], [])
+            self.assertEqual(source["snippets"], [])
 
     def test_context_bundle_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -291,6 +324,31 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["selection"]["limit"], 1)
             self.assertLessEqual(payload["selection"]["source_bytes"], 40)
             self.assertIn("source_manifest", payload)
+
+    def test_cli_diagnose_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "diagnose",
+                    str(pack),
+                    "sqlite Store",
+                    "--json",
+                    "--max-files",
+                    "1",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.diagnose.v1")
+            self.assertEqual(payload["selected_files"][0]["path"], "app.py")
+            self.assertTrue(payload["selected_files"][0]["score_breakdown"])
+            self.assertIn("snippet_anchors", payload["selected_files"][0])
 
     def test_cli_verify_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

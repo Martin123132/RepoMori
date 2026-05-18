@@ -18,6 +18,7 @@ The first version is deliberately local and dependency-light:
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori info C:\path\to\repo.repomori
 python -m repomori query C:\path\to\repo.repomori storage
+python -m repomori diagnose C:\path\to\repo.repomori "where is storage handled?" --json
 python -m repomori context C:\path\to\repo.repomori "where is storage handled?" --out context.md
 python -m repomori verify C:\path\to\repo.repomori
 python -m repomori eval C:\path\to\repo.repomori --out eval.md
@@ -48,6 +49,7 @@ repomori build <repo> <pack>
 repomori info <pack>
 repomori tree <pack>
 repomori query <pack> <text>
+repomori diagnose <pack> <question> [--json] [--max-files n] [--max-bytes n]
 repomori context <pack> <question> [--format markdown|json] [--max-files n] [--max-bytes n] [--no-source] [--out file]
 repomori verify <pack>
 repomori eval <pack> [--question text] [--format markdown|json] [--out file]
@@ -63,6 +65,11 @@ matching files, restores exact text from compressed chunks, adds line-numbered
 snippets, and includes a source manifest with file hashes for verification.
 Use `--max-bytes`, `--snippets-per-file`, and `--no-source` to control how much
 exact source text goes into the context bundle.
+
+`diagnose` explains why a question ranked files the way it did. It reports
+query tokens and phrases, per-file score breakdowns, matched and missed terms,
+ranking comparisons, snippet anchors, and tuning suggestions for better agent
+context.
 
 `verify` checks that stored chunks decompress, chunk hashes match, and restored
 files still match their recorded sizes and SHA-256 hashes.
