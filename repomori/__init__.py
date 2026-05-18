@@ -18,9 +18,11 @@ from .codec import (
     format_context_markdown,
     format_eval_markdown,
     format_snapshot_markdown,
+    format_timeline_markdown,
     get_file_bytes,
     info_pack,
     query_pack,
+    read_snapshot_timeline,
     snapshot_repo,
     verify_pack,
 )
@@ -43,9 +45,11 @@ __all__ = [
     "format_context_markdown",
     "format_eval_markdown",
     "format_snapshot_markdown",
+    "format_timeline_markdown",
     "get_file_bytes",
     "info_pack",
     "query_pack",
+    "read_snapshot_timeline",
     "snapshot_repo",
     "verify_pack",
 ]

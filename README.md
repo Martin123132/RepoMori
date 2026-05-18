@@ -16,7 +16,8 @@ The first version is deliberately local and dependency-light:
 
 ```powershell
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
-python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --json
+python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
+python -m repomori timeline D:\Dev\RepoMori\packs --format json
 python -m repomori info C:\path\to\repo.repomori
 python -m repomori query C:\path\to\repo.repomori storage
 python -m repomori diagnose C:\path\to\repo.repomori "where is storage handled?" --json
@@ -50,7 +51,8 @@ exactness matters.
 
 ```text
 repomori build <repo> <pack>
-repomori snapshot <repo> --out-dir <dir> [--no-compare] [--json]
+repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-compare] [--json]
+repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori info <pack>
 repomori tree <pack>
 repomori query <pack> <text>
@@ -92,7 +94,12 @@ everything.
 latest pack when one exists. It also writes snapshot JSON/Markdown reports and
 compare reports for machine-readable project memory over time, plus a
 `snapshots.json` index that records the timeline of pack hashes and change
-summaries.
+summaries. Use `--handoff` to create a handoff package for the new snapshot,
+using the previous snapshot as `--base-pack` when available.
+
+`timeline` reads `snapshots.json` and reports recent snapshots, pack hashes,
+verification status, handoff locations, and aggregate added/removed/changed
+counts.
 
 `verify` checks that stored chunks decompress, chunk hashes match, and restored
 files still match their recorded sizes and SHA-256 hashes.

@@ -26,9 +26,11 @@ from repomori.codec import (
     format_eval_markdown,
     format_context_markdown,
     format_snapshot_markdown,
+    format_timeline_markdown,
     get_file_bytes,
     info_pack,
     query_pack,
+    read_snapshot_timeline,
     snapshot_repo,
     tree_pack,
     verify_pack,
@@ -438,10 +440,42 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(index["latest"]["pack_path"], second["summary"]["pack_path"])
             self.assertEqual(index["latest"]["added_count"], 1)
 
+            timeline = read_snapshot_timeline(out, limit=1)
+            self.assertEqual(timeline["schema_version"], "repomori.timeline.v1")
+            self.assertEqual(timeline["snapshot_count"], 2)
+            self.assertEqual(timeline["returned_count"], 1)
+            self.assertEqual(timeline["snapshots"][0]["pack_path"], second["summary"]["pack_path"])
+            self.assertEqual(timeline["summary"]["total_added"], 1)
+            timeline_markdown = format_timeline_markdown(timeline)
+            self.assertIn("# RepoMori Snapshot Timeline", timeline_markdown)
+            self.assertIn("Recent Snapshots", timeline_markdown)
+
             markdown = format_snapshot_markdown(second)
             self.assertIn("# RepoMori Snapshot", markdown)
             self.assertIn("## Comparison", markdown)
             self.assertIn("Added", markdown)
+
+    def test_snapshot_repo_can_build_handoff_with_previous_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            first = snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            second = snapshot_repo(repo, out, handoff_question="sqlite Store")
+
+            self.assertEqual(second["schema_version"], "repomori.snapshot.v1")
+            self.assertIsNotNone(second["handoff"])
+            self.assertTrue(second["summary"]["handoff_passed"])
+            handoff_dir = Path(second["summary"]["handoff_dir"])
+            self.assertTrue((handoff_dir / "manifest.json").exists())
+            self.assertTrue((handoff_dir / "compare.json").exists())
+            manifest = second["handoff"]
+            self.assertEqual(manifest["settings"]["base_pack"], first["summary"]["pack_path"])
+            self.assertEqual(second["handoff_check"]["checked_json"], 6)
+            index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["latest"]["handoff_dir"], str(handoff_dir))
+            self.assertTrue(index["latest"]["handoff_passed"])
 
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -753,6 +787,75 @@ class RepoMoriCodecTests(unittest.TestCase):
             index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
             self.assertEqual(index["schema_version"], "repomori.snapshots.v1")
             self.assertEqual(index["snapshot_count"], 1)
+
+    def test_cli_snapshot_handoff_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshot-handoff-cli"
+            subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "snapshot",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "snapshot",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--handoff",
+                    "sqlite Store",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.snapshot.v1")
+            self.assertTrue(payload["summary"]["handoff_passed"])
+            self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "compare.json").exists())
+
+    def test_cli_timeline_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "timeline-cli"
+            snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "timeline",
+                    str(out),
+                    "--format",
+                    "json",
+                    "--limit",
+                    "1",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.timeline.v1")
+            self.assertEqual(payload["snapshot_count"], 2)
+            self.assertEqual(payload["returned_count"], 1)
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

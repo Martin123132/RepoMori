@@ -1863,6 +1863,9 @@ def snapshot_repo(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     compare: bool = True,
     compare_limit: int = 50,
+    handoff_question: str | None = None,
+    handoff_out_dir: Path | str | None = None,
+    handoff_force: bool = False,
 ) -> dict[str, Any]:
     """Build a timestamped pack snapshot and compare it with the previous latest pack."""
 
@@ -1870,6 +1873,8 @@ def snapshot_repo(
         raise ValueError("chunk_size must be greater than zero")
     if compare_limit <= 0:
         raise ValueError("compare_limit must be greater than zero")
+    if handoff_question is not None and not handoff_question.strip():
+        raise ValueError("handoff_question must not be empty")
 
     started = time.time()
     repo_path = Path(repo).resolve()
@@ -1882,6 +1887,7 @@ def snapshot_repo(
     pack_path = _unique_snapshot_pack_path(out_path, repo_path.name, stamp)
     latest_path = out_path / "latest.repomori"
     previous_latest = latest_path if latest_path.exists() else None
+    previous_pack = _snapshot_previous_pack(out_path) or previous_latest
 
     build = build_pack(
         repo_path,
@@ -1897,12 +1903,26 @@ def snapshot_repo(
     comparison = None
     compare_json = None
     compare_md = None
-    if compare and previous_latest is not None:
-        comparison = compare_packs(previous_latest, pack_path, limit=compare_limit)
+    if compare and previous_pack is not None:
+        comparison = compare_packs(previous_pack, pack_path, limit=compare_limit)
         compare_json = out_path / f"{pack_path.stem}.compare.json"
         compare_md = out_path / f"{pack_path.stem}.compare.md"
         _write_json(compare_json, comparison)
         compare_md.write_text(format_compare_markdown(comparison), encoding="utf-8")
+
+    handoff = None
+    handoff_check = None
+    handoff_path = None
+    if handoff_question is not None:
+        handoff_path = Path(handoff_out_dir).resolve() if handoff_out_dir is not None else out_path / f"{pack_path.stem}.handoff"
+        handoff = build_handoff_package(
+            pack_path,
+            handoff_question,
+            handoff_path,
+            base_pack=previous_pack if compare and previous_pack is not None else None,
+            force=handoff_force,
+        )
+        handoff_check = check_handoff_package(handoff_path)
 
     if latest_path.resolve() != pack_path.resolve():
         shutil.copy2(pack_path, latest_path)
@@ -1925,7 +1945,7 @@ def snapshot_repo(
             "elapsed_seconds": round(elapsed, 4),
             "pack_path": str(pack_path),
             "latest_pack": str(latest_path),
-            "previous_latest_pack": str(previous_latest) if previous_latest is not None else None,
+            "previous_latest_pack": str(previous_pack) if previous_pack is not None else None,
             "pack_bytes": build.get("pack_bytes"),
             "logical_bytes": build.get("logical_bytes"),
             "file_count": build.get("file_count"),
@@ -1936,6 +1956,8 @@ def snapshot_repo(
             "changed_count": comparison.get("summary", {}).get("changed_count") if comparison else None,
             "added_count": comparison.get("summary", {}).get("added_count") if comparison else None,
             "removed_count": comparison.get("summary", {}).get("removed_count") if comparison else None,
+            "handoff_dir": str(handoff_path) if handoff_path is not None else None,
+            "handoff_passed": handoff_check.get("valid") if handoff_check else None,
         },
         "artifacts": {
             "pack": pack_path.name,
@@ -1947,10 +1969,14 @@ def snapshot_repo(
         "build": build,
         "verify": verify,
         "comparison": comparison,
+        "handoff": handoff,
+        "handoff_check": handoff_check,
     }
     if compare_json is not None and compare_md is not None:
         report["artifacts"]["compare_json"] = compare_json.name
         report["artifacts"]["compare_markdown"] = compare_md.name
+    if handoff_path is not None:
+        report["artifacts"]["handoff"] = handoff_path.name
 
     _write_json(snapshot_json, report)
     snapshot_md.write_text(format_snapshot_markdown(report), encoding="utf-8")
@@ -2067,10 +2093,97 @@ def format_snapshot_markdown(report: dict[str, Any]) -> str:
     else:
         lines.extend(["Comparison disabled for this snapshot.", ""])
 
+    handoff = report.get("handoff")
+    lines.extend(["## Handoff", ""])
+    if handoff:
+        summary = report.get("summary", {})
+        lines.extend(
+            [
+                f"- Directory: `{summary.get('handoff_dir')}`",
+                f"- Check passed: `{summary.get('handoff_passed')}`",
+                f"- Status: `{handoff.get('status')}`",
+                "",
+            ]
+        )
+    else:
+        lines.extend(["No handoff package was requested.", ""])
+
     lines.extend(["## Artifacts", ""])
     for label, path in report.get("artifacts", {}).items():
         lines.append(f"- {label}: `{path}`")
     lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def read_snapshot_timeline(out_dir: Path | str, *, limit: int | None = None) -> dict[str, Any]:
+    """Read a snapshot index and return recent snapshot history."""
+
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    out_path = Path(out_dir).resolve()
+    index = _read_snapshot_index(out_path / "snapshots.json", out_path)
+    snapshots = list(index.get("snapshots", []))
+    latest = index.get("latest")
+    recent = []
+    if isinstance(latest, dict):
+        recent.append(latest)
+    recent.extend(
+        item
+        for item in reversed(snapshots)
+        if not isinstance(latest, dict) or item.get("pack_path") != latest.get("pack_path")
+    )
+    if limit is not None:
+        recent = recent[:limit]
+    return {
+        "schema_version": "repomori.timeline.v1",
+        "out_dir": str(out_path),
+        "snapshot_count": len(snapshots),
+        "returned_count": len(recent),
+        "latest": index.get("latest"),
+        "summary": {
+            "total_added": _sum_snapshot_field(snapshots, "added_count"),
+            "total_removed": _sum_snapshot_field(snapshots, "removed_count"),
+            "total_changed": _sum_snapshot_field(snapshots, "changed_count"),
+            "verified_count": sum(1 for item in snapshots if item.get("verify_passed")),
+            "handoff_count": sum(1 for item in snapshots if item.get("handoff_dir")),
+        },
+        "snapshots": recent,
+    }
+
+
+def format_timeline_markdown(timeline: dict[str, Any]) -> str:
+    """Render snapshot timeline history as Markdown."""
+
+    summary = timeline.get("summary", {})
+    lines = [
+        "# RepoMori Snapshot Timeline",
+        "",
+        f"- Output: `{timeline.get('out_dir')}`",
+        f"- Snapshots: `{timeline.get('snapshot_count')}`",
+        f"- Returned: `{timeline.get('returned_count')}`",
+        f"- Verified snapshots: `{summary.get('verified_count')}`",
+        f"- Handoffs: `{summary.get('handoff_count')}`",
+        f"- Total added: `{summary.get('total_added')}`",
+        f"- Total removed: `{summary.get('total_removed')}`",
+        f"- Total changed: `{summary.get('total_changed')}`",
+        "",
+        "## Recent Snapshots",
+        "",
+    ]
+    snapshots = timeline.get("snapshots", [])
+    if not snapshots:
+        lines.extend(["No snapshots recorded.", ""])
+    else:
+        for item in snapshots:
+            lines.append(
+                f"- `{item.get('pack_name')}` status=`{item.get('status')}` "
+                f"files=`{item.get('file_count')}` "
+                f"added=`{item.get('added_count')}` removed=`{item.get('removed_count')}` "
+                f"changed=`{item.get('changed_count')}`"
+            )
+            if item.get("handoff_dir"):
+                lines.append(f"  - handoff: `{item.get('handoff_dir')}`")
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -2754,6 +2867,24 @@ def _unique_snapshot_pack_path(out_path: Path, repo_name: str, stamp: str) -> Pa
     raise FileExistsError(f"Could not allocate a snapshot pack name in {out_path}")
 
 
+def _snapshot_previous_pack(out_path: Path) -> Path | None:
+    index_path = out_path / "snapshots.json"
+    if not index_path.exists():
+        return None
+    try:
+        index = _read_snapshot_index(index_path, out_path)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    latest = index.get("latest")
+    if not isinstance(latest, dict):
+        return None
+    pack_path = latest.get("pack_path")
+    if not pack_path:
+        return None
+    path = Path(str(pack_path))
+    return path if path.exists() else None
+
+
 def _snapshot_exclude_paths(repo_path: Path, out_path: Path) -> tuple[Path, ...]:
     if out_path == repo_path:
         return ()
@@ -2829,12 +2960,23 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
         "pack_bytes": summary.get("pack_bytes"),
         "verify_passed": summary.get("verify_passed"),
         "compared_with_previous": summary.get("compared_with_previous"),
+        "handoff_dir": summary.get("handoff_dir"),
+        "handoff_passed": summary.get("handoff_passed"),
         "added_count": compare_summary.get("added_count"),
         "removed_count": compare_summary.get("removed_count"),
         "changed_count": compare_summary.get("changed_count"),
         "unchanged_count": compare_summary.get("unchanged_count"),
         "byte_delta": compare_summary.get("byte_delta"),
     }
+
+
+def _sum_snapshot_field(snapshots: list[dict[str, Any]], field: str) -> int:
+    total = 0
+    for item in snapshots:
+        value = item.get(field)
+        if isinstance(value, int):
+            total += value
+    return total
 
 
 def _path_sha256(path: Path) -> str:

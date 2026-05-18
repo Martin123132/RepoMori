@@ -23,13 +23,15 @@ from .codec import (
     format_compare_markdown,
     format_context_markdown,
     format_eval_markdown,
+    format_snapshot_markdown,
+    format_timeline_markdown,
     get_file_bytes,
     info_pack,
     query_pack,
+    read_snapshot_timeline,
     snapshot_repo,
     tree_pack,
     verify_pack,
-    format_snapshot_markdown,
 )
 
 
@@ -53,7 +55,16 @@ def main(argv: list[str] | None = None) -> int:
     snapshot.add_argument("--chunk-size", type=int, default=256 * 1024)
     snapshot.add_argument("--no-compare", action="store_true", help="Do not compare against latest.repomori.")
     snapshot.add_argument("--compare-limit", type=int, default=50)
+    snapshot.add_argument("--handoff", help="Build a handoff package for this snapshot using this question.")
+    snapshot.add_argument("--handoff-out", type=Path, help="Directory for the snapshot handoff package.")
+    snapshot.add_argument("--handoff-force", action="store_true", help="Overwrite an existing snapshot handoff.")
     snapshot.add_argument("--json", action="store_true", help="Print snapshot JSON.")
+
+    timeline = sub.add_parser("timeline", help="Read a snapshot index timeline.")
+    timeline.add_argument("out_dir", type=Path)
+    timeline.add_argument("--limit", type=int, help="Maximum recent snapshots to return.")
+    timeline.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    timeline.add_argument("--out", type=Path, help="Write the timeline report to this file.")
 
     info = sub.add_parser("info", help="Show pack metadata.")
     info.add_argument("pack", type=Path)
@@ -191,12 +202,28 @@ def main(argv: list[str] | None = None) -> int:
             chunk_size=args.chunk_size,
             compare=not args.no_compare,
             compare_limit=args.compare_limit,
+            handoff_question=args.handoff,
+            handoff_out_dir=args.handoff_out,
+            handoff_force=args.handoff_force,
         )
         if args.json:
             print(json.dumps(report, indent=2))
         else:
             print(format_snapshot_markdown(report), end="")
         return 0 if report["status"] == "pass" else 1
+    if args.command == "timeline":
+        report = read_snapshot_timeline(args.out_dir, limit=args.limit)
+        output = (
+            json.dumps(report, indent=2)
+            if args.format == "json"
+            else format_timeline_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0
     if args.command == "info":
         _print(info_pack(args.pack), args.json)
         return 0
