@@ -10,13 +10,17 @@ from pathlib import Path
 from .codec import (
     BuildOptions,
     benchmark_repo,
+    build_repo_brief,
     build_capsule,
     build_context_bundle,
     build_handoff_package,
     build_pack,
     check_handoff_package,
+    compare_packs,
     diagnose_query,
     evaluate_pack,
+    format_brief_markdown,
+    format_compare_markdown,
     format_context_markdown,
     format_eval_markdown,
     get_file_bytes,
@@ -65,6 +69,22 @@ def main(argv: list[str] | None = None) -> int:
     diagnose.add_argument("--snippets-per-file", type=int, default=2)
     diagnose.add_argument("--max-bytes", type=int, help="Maximum total snippet text bytes.")
     diagnose.add_argument("--json", action="store_true")
+
+    compare = sub.add_parser("compare", help="Compare two .repomori packs.")
+    compare.add_argument("base_pack", type=Path)
+    compare.add_argument("target_pack", type=Path)
+    compare.add_argument("--limit", type=int, default=50)
+    compare.add_argument("--include-unchanged", action="store_true")
+    compare.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    compare.add_argument("--out", type=Path, help="Write the comparison report to this file.")
+
+    brief = sub.add_parser("brief", help="Build a question-free repository orientation brief.")
+    brief.add_argument("pack", type=Path)
+    brief.add_argument("--max-files", type=int, default=12)
+    brief.add_argument("--top-terms", type=int, default=40)
+    brief.add_argument("--top-symbols", type=int, default=40)
+    brief.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    brief.add_argument("--out", type=Path, help="Write the brief to this file.")
 
     context = sub.add_parser("context", help="Build source-backed agent context.")
     context.add_argument("pack", type=Path)
@@ -173,6 +193,42 @@ def main(argv: list[str] | None = None) -> int:
             snippets_per_file=args.snippets_per_file,
         )
         _print(report, args.json)
+        return 0
+    if args.command == "compare":
+        report = compare_packs(
+            args.base_pack,
+            args.target_pack,
+            limit=args.limit,
+            include_unchanged=args.include_unchanged,
+        )
+        output = (
+            json.dumps(report, indent=2)
+            if args.format == "json"
+            else format_compare_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0
+    if args.command == "brief":
+        brief_report = build_repo_brief(
+            args.pack,
+            max_files=args.max_files,
+            top_terms=args.top_terms,
+            top_symbols=args.top_symbols,
+        )
+        output = (
+            json.dumps(brief_report, indent=2)
+            if args.format == "json"
+            else format_brief_markdown(brief_report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
         return 0
     if args.command == "context":
         limit = args.max_files if args.max_files is not None else args.limit

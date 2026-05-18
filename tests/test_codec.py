@@ -11,14 +11,18 @@ from pathlib import Path
 from repomori.codec import (
     BuildOptions,
     benchmark_repo,
+    build_repo_brief,
     build_capsule,
     build_context_bundle,
     build_handoff_package,
     build_pack,
     check_handoff_package,
+    compare_packs,
     diagnose_query,
     evaluate_pack,
     format_benchmark_markdown,
+    format_brief_markdown,
+    format_compare_markdown,
     format_eval_markdown,
     format_context_markdown,
     get_file_bytes,
@@ -88,6 +92,68 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(source["snippet_status"], "binary_or_undecodable")
             self.assertEqual(source["snippet_anchors"], [])
             self.assertEqual(source["snippets"], [])
+
+    def test_compare_packs_reports_added_changed_and_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, base_pack = self._demo_pack(Path(tmp))
+            build_pack(repo, base_pack, BuildOptions(force=True))
+
+            (repo / "README.md").write_text("# Demo\n\nStorage engine changed.\n", encoding="utf-8")
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            (repo / "blob.bin").unlink()
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            target_pack = Path(tmp) / "target.repomori"
+            build_pack(repo, target_pack, BuildOptions(force=True))
+
+            report = compare_packs(base_pack, target_pack)
+            self.assertEqual(report["schema_version"], "repomori.compare.v1")
+            self.assertEqual(report["summary"]["added_count"], 1)
+            self.assertEqual(report["summary"]["removed_count"], 1)
+            self.assertGreaterEqual(report["summary"]["changed_count"], 2)
+            self.assertEqual(report["files"]["added"][0]["path"], "new.py")
+            self.assertEqual(report["files"]["removed"][0]["path"], "blob.bin")
+
+            changed_paths = {item["path"] for item in report["files"]["changed"]}
+            self.assertIn("app.py", changed_paths)
+            app_change = next(item for item in report["files"]["changed"] if item["path"] == "app.py")
+            self.assertIn("sha256", app_change["change_reasons"])
+            self.assertIn("function:close", app_change["summary_delta"]["added_symbols"])
+
+            markdown = format_compare_markdown(report)
+            self.assertIn("# RepoMori Pack Compare", markdown)
+            self.assertIn("## Changed Files", markdown)
+            self.assertIn("new.py", markdown)
+            self.assertIn("blob.bin", markdown)
+
+    def test_repo_brief_summarizes_pack_orientation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            brief = build_repo_brief(pack, max_files=3)
+            self.assertEqual(brief["schema_version"], "repomori.brief.v1")
+            self.assertEqual(brief["summary"]["file_count"], 3)
+            languages = {item["language"]: item["count"] for item in brief["summary"]["language_counts"]}
+            self.assertEqual(languages["python"], 1)
+
+            key_paths = [item["path"] for item in brief["orientation"]["key_files"]]
+            self.assertIn("README.md", key_paths)
+            self.assertIn("app.py", key_paths)
+            symbols = [item["symbol"] for item in brief["vocabulary"]["top_symbols"]]
+            self.assertIn("class:Store", symbols)
+            self.assertTrue(brief["source_manifest"])
+
+            markdown = format_brief_markdown(brief)
+            self.assertIn("# RepoMori Repo Brief", markdown)
+            self.assertIn("## Entrypoints", markdown)
+            self.assertIn("app.py", markdown)
 
     def test_context_bundle_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -349,6 +415,57 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["selected_files"][0]["path"], "app.py")
             self.assertTrue(payload["selected_files"][0]["score_breakdown"])
             self.assertIn("snippet_anchors", payload["selected_files"][0])
+
+    def test_cli_compare_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, base_pack = self._demo_pack(Path(tmp))
+            build_pack(repo, base_pack, BuildOptions(force=True))
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            target_pack = Path(tmp) / "target.repomori"
+            build_pack(repo, target_pack, BuildOptions(force=True))
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "compare",
+                    str(base_pack),
+                    str(target_pack),
+                    "--format",
+                    "json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.compare.v1")
+            self.assertEqual(payload["summary"]["added_count"], 1)
+            self.assertEqual(payload["files"]["added"][0]["path"], "new.py")
+
+    def test_cli_brief_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "brief",
+                    str(pack),
+                    "--format",
+                    "json",
+                    "--max-files",
+                    "2",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.brief.v1")
+            self.assertEqual(payload["summary"]["file_count"], 3)
+            self.assertLessEqual(len(payload["orientation"]["key_files"]), 2)
 
     def test_cli_verify_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

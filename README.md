@@ -19,6 +19,8 @@ python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori info C:\path\to\repo.repomori
 python -m repomori query C:\path\to\repo.repomori storage
 python -m repomori diagnose C:\path\to\repo.repomori "where is storage handled?" --json
+python -m repomori brief C:\path\to\repo.repomori --out repo-brief.md
+python -m repomori compare C:\path\to\old.repomori C:\path\to\new.repomori --out compare.md
 python -m repomori context C:\path\to\repo.repomori "where is storage handled?" --out context.md
 python -m repomori verify C:\path\to\repo.repomori
 python -m repomori eval C:\path\to\repo.repomori --out eval.md
@@ -50,6 +52,8 @@ repomori info <pack>
 repomori tree <pack>
 repomori query <pack> <text>
 repomori diagnose <pack> <question> [--json] [--max-files n] [--max-bytes n]
+repomori brief <pack> [--format markdown|json] [--out file]
+repomori compare <base-pack> <target-pack> [--format markdown|json] [--out file]
 repomori context <pack> <question> [--format markdown|json] [--max-files n] [--max-bytes n] [--no-source] [--out file]
 repomori verify <pack>
 repomori eval <pack> [--question text] [--format markdown|json] [--out file]
@@ -70,6 +74,15 @@ exact source text goes into the context bundle.
 query tokens and phrases, per-file score breakdowns, matched and missed terms,
 ranking comparisons, snippet anchors, and tuning suggestions for better agent
 context.
+
+`brief` creates a question-free repository orientation report from one pack:
+languages, likely entrypoints, key files, top terms, symbols, imports, headings,
+and a source manifest for the files an agent should inspect first.
+
+`compare` diffs two packs and reports added, removed, changed, and unchanged
+file counts, language deltas, changed hashes and sizes, and symbol/import/heading
+summary deltas so agents can continue from what changed instead of rereading
+everything.
 
 `verify` checks that stored chunks decompress, chunk hashes match, and restored
 files still match their recorded sizes and SHA-256 hashes.

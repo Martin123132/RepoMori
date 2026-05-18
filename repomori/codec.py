@@ -1090,6 +1090,304 @@ def format_eval_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def compare_packs(
+    base_pack: Path | str,
+    target_pack: Path | str,
+    *,
+    limit: int = 50,
+    include_unchanged: bool = False,
+) -> dict[str, Any]:
+    """Compare two packs and return a machine-readable delta."""
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+
+    started = time.time()
+    base_info = info_pack(base_pack)
+    target_info = info_pack(target_pack)
+    base_records = _pack_file_records(base_pack)
+    target_records = _pack_file_records(target_pack)
+
+    base_paths = set(base_records)
+    target_paths = set(target_records)
+    added_paths = sorted(target_paths - base_paths)
+    removed_paths = sorted(base_paths - target_paths)
+    shared_paths = sorted(base_paths & target_paths)
+    changed_paths = [
+        path
+        for path in shared_paths
+        if _compare_record_reasons(base_records[path], target_records[path])
+    ]
+    changed_path_set = set(changed_paths)
+    unchanged_paths = [path for path in shared_paths if path not in changed_path_set]
+
+    files: dict[str, Any] = {
+        "added": [_visible_file_record(target_records[path]) for path in added_paths[:limit]],
+        "removed": [_visible_file_record(base_records[path]) for path in removed_paths[:limit]],
+        "changed": [
+            _changed_file_record(path, base_records[path], target_records[path])
+            for path in changed_paths[:limit]
+        ],
+    }
+    if include_unchanged:
+        files["unchanged"] = [_visible_file_record(target_records[path]) for path in unchanged_paths[:limit]]
+
+    base_bytes = sum(int(record["size"]) for record in base_records.values())
+    target_bytes = sum(int(record["size"]) for record in target_records.values())
+    return {
+        "schema_version": "repomori.compare.v1",
+        "base_pack": _pack_identity(base_info),
+        "target_pack": _pack_identity(target_info),
+        "settings": {
+            "limit": limit,
+            "include_unchanged": include_unchanged,
+        },
+        "summary": {
+            "added_count": len(added_paths),
+            "removed_count": len(removed_paths),
+            "changed_count": len(changed_paths),
+            "unchanged_count": len(unchanged_paths),
+            "file_count_delta": len(target_records) - len(base_records),
+            "byte_delta": target_bytes - base_bytes,
+            "logical_bytes_delta": int(target_info.get("logical_bytes", 0) or 0)
+            - int(base_info.get("logical_bytes", 0) or 0),
+            "elapsed_seconds": round(time.time() - started, 4),
+        },
+        "language_delta": _language_delta(base_records, target_records),
+        "files": files,
+        "truncated": {
+            "added": len(added_paths) > limit,
+            "removed": len(removed_paths) > limit,
+            "changed": len(changed_paths) > limit,
+            "unchanged": include_unchanged and len(unchanged_paths) > limit,
+        },
+    }
+
+
+def format_compare_markdown(report: dict[str, Any]) -> str:
+    """Render a pack comparison report as Markdown."""
+
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Pack Compare",
+        "",
+        f"Base: `{report.get('base_pack', {}).get('pack_path')}`",
+        f"Target: `{report.get('target_pack', {}).get('pack_path')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Added: {summary.get('added_count', 0)}",
+        f"- Removed: {summary.get('removed_count', 0)}",
+        f"- Changed: {summary.get('changed_count', 0)}",
+        f"- Unchanged: {summary.get('unchanged_count', 0)}",
+        f"- File count delta: {summary.get('file_count_delta', 0)}",
+        f"- Byte delta: {summary.get('byte_delta', 0)}",
+        "",
+    ]
+    language_delta = report.get("language_delta", [])
+    if language_delta:
+        lines.extend(["## Language Delta", ""])
+        for item in language_delta:
+            lines.append(
+                f"- `{item.get('language')}` base=`{item.get('base_count')}` "
+                f"target=`{item.get('target_count')}` delta=`{item.get('delta')}`"
+            )
+        lines.append("")
+
+    files = report.get("files", {})
+    _append_compare_file_section(lines, "Added Files", files.get("added", []))
+    _append_compare_file_section(lines, "Removed Files", files.get("removed", []))
+
+    changed = files.get("changed", [])
+    lines.extend(["## Changed Files", ""])
+    if not changed:
+        lines.extend(["No changed files.", ""])
+    else:
+        for item in changed:
+            before = item.get("before", {})
+            after = item.get("after", {})
+            reasons = ", ".join(item.get("change_reasons", []))
+            lines.append(
+                f"- `{item.get('path')}` reasons=`{reasons}` "
+                f"bytes `{before.get('size')}` -> `{after.get('size')}` "
+                f"sha `{before.get('sha256')}` -> `{after.get('sha256')}`"
+            )
+            detail = item.get("summary_delta", {})
+            for key in ("added_symbols", "removed_symbols", "added_imports", "removed_imports"):
+                values = detail.get(key, [])
+                if values:
+                    lines.append(f"  - {key}: " + ", ".join(f"`{value}`" for value in values[:8]))
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_repo_brief(
+    pack: Path | str,
+    *,
+    max_files: int = 12,
+    top_terms: int = 40,
+    top_symbols: int = 40,
+) -> dict[str, Any]:
+    """Build a question-free orientation brief from a pack."""
+
+    if max_files <= 0:
+        raise ValueError("max_files must be greater than zero")
+    if top_terms < 0:
+        raise ValueError("top_terms must be zero or greater")
+    if top_symbols < 0:
+        raise ValueError("top_symbols must be zero or greater")
+
+    pack_info = info_pack(pack)
+    records = _pack_file_records(pack)
+    language_counts = Counter(str(record.get("language") or "unknown") for record in records.values())
+    term_counts: Counter[str] = Counter()
+    symbol_counts: Counter[str] = Counter()
+    import_counts: Counter[str] = Counter()
+    heading_counts: Counter[str] = Counter()
+    symbol_paths: dict[str, set[str]] = defaultdict(set)
+
+    for record in records.values():
+        summary = record["_summary"]
+        terms = [str(term) for term in summary.get("top_terms", [])]
+        term_counts.update(terms)
+        for symbol in summary.get("symbols", []):
+            name = str(symbol.get("name", "")).strip()
+            if not name:
+                continue
+            key = f"{symbol.get('kind', 'symbol')}:{name}"
+            symbol_counts[key] += 1
+            symbol_paths[key].add(str(record["path"]))
+        for item in summary.get("imports", []):
+            target = str(item.get("target", "")).strip()
+            if target:
+                import_counts[target] += 1
+        for item in summary.get("headings", []):
+            text = str(item.get("text", "")).strip()
+            if text:
+                heading_counts[text] += 1
+
+    ranked_files = sorted(
+        records.values(),
+        key=lambda record: (
+            -_brief_file_score(record),
+            -int(record.get("token_count") or 0),
+            str(record.get("path")),
+        ),
+    )
+    key_files = [_visible_file_record(record) for record in ranked_files[:max_files]]
+    entrypoints = [
+        _visible_file_record(record)
+        for record in ranked_files
+        if _brief_file_score(record) >= 70
+    ][:max_files]
+    largest_files = [
+        _visible_file_record(record)
+        for record in sorted(records.values(), key=lambda record: (-int(record["size"]), str(record["path"])))[:max_files]
+    ]
+    top_symbol_rows = [
+        {
+            "symbol": symbol,
+            "count": count,
+            "paths": sorted(symbol_paths[symbol])[:8],
+        }
+        for symbol, count in symbol_counts.most_common(top_symbols)
+    ]
+
+    return {
+        "schema_version": "repomori.brief.v1",
+        "pack": _pack_identity(pack_info),
+        "settings": {
+            "max_files": max_files,
+            "top_terms": top_terms,
+            "top_symbols": top_symbols,
+        },
+        "summary": {
+            "file_count": len(records),
+            "text_files": pack_info.get("text_files"),
+            "binary_files": pack_info.get("binary_files"),
+            "logical_bytes": pack_info.get("logical_bytes"),
+            "pack_bytes": pack_info.get("pack_bytes"),
+            "language_counts": [
+                {"language": language, "count": count}
+                for language, count in sorted(language_counts.items())
+            ],
+        },
+        "orientation": {
+            "entrypoints": entrypoints,
+            "key_files": key_files,
+            "largest_files": largest_files,
+        },
+        "vocabulary": {
+            "top_terms": [[term, count] for term, count in term_counts.most_common(top_terms)],
+            "top_symbols": top_symbol_rows,
+            "top_imports": [[target, count] for target, count in import_counts.most_common(top_terms)],
+            "top_headings": [[heading, count] for heading, count in heading_counts.most_common(top_terms)],
+        },
+        "source_manifest": [
+            {
+                "path": record["path"],
+                "sha256": record["sha256"],
+                "size": record["size"],
+            }
+            for record in key_files
+        ],
+        "suggestions": _brief_suggestions(records, key_files, top_symbol_rows),
+    }
+
+
+def format_brief_markdown(brief: dict[str, Any]) -> str:
+    """Render a repo brief as Markdown."""
+
+    summary = brief.get("summary", {})
+    lines = [
+        "# RepoMori Repo Brief",
+        "",
+        f"Pack: `{brief.get('pack', {}).get('pack_path')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Files: {summary.get('file_count', 0)}",
+        f"- Text files: {summary.get('text_files', 0)}",
+        f"- Binary files: {summary.get('binary_files', 0)}",
+        f"- Logical bytes: {summary.get('logical_bytes', 0)}",
+        f"- Pack bytes: {summary.get('pack_bytes', 0)}",
+        "",
+    ]
+    language_counts = summary.get("language_counts", [])
+    if language_counts:
+        lines.extend(["## Languages", ""])
+        for item in language_counts:
+            lines.append(f"- `{item.get('language')}`: {item.get('count')}")
+        lines.append("")
+
+    orientation = brief.get("orientation", {})
+    _append_brief_file_section(lines, "Entrypoints", orientation.get("entrypoints", []))
+    _append_brief_file_section(lines, "Key Files", orientation.get("key_files", []))
+
+    vocabulary = brief.get("vocabulary", {})
+    lines.extend(["## Vocabulary", ""])
+    terms = vocabulary.get("top_terms", [])
+    if terms:
+        lines.append("Top terms: " + ", ".join(f"`{term}`({count})" for term, count in terms[:20]))
+    symbols = vocabulary.get("top_symbols", [])
+    if symbols:
+        lines.append("Top symbols: " + ", ".join(f"`{item.get('symbol')}`({item.get('count')})" for item in symbols[:20]))
+    imports = vocabulary.get("top_imports", [])
+    if imports:
+        lines.append("Top imports: " + ", ".join(f"`{target}`({count})" for target, count in imports[:20]))
+    if not terms and not symbols and not imports:
+        lines.append("No text vocabulary extracted.")
+    lines.append("")
+
+    suggestions = brief.get("suggestions", [])
+    if suggestions:
+        lines.extend(["## Suggestions", ""])
+        for suggestion in suggestions:
+            lines.append(f"- {suggestion}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def build_capsule(
     pack: Path | str,
     max_files: int | None = None,
@@ -2029,6 +2327,209 @@ def _unique_items(items: Iterable[str]) -> list[str]:
         seen.add(item)
         result.append(item)
     return result
+
+
+def _pack_identity(pack_info: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": pack_info.get("schema_version"),
+        "repo_path": pack_info.get("repo_path"),
+        "pack_path": pack_info.get("pack_path"),
+        "created_at": pack_info.get("created_at"),
+        "logical_bytes": pack_info.get("logical_bytes"),
+        "pack_bytes": pack_info.get("pack_bytes"),
+        "counts": pack_info.get("counts", {}),
+    }
+
+
+def _pack_file_records(pack: Path | str) -> dict[str, dict[str, Any]]:
+    with closing(_open_pack(pack)) as conn:
+        rows = conn.execute(
+            """
+            SELECT path, language, size, sha256, is_text, line_count, token_count, summary_json
+            FROM files
+            ORDER BY path
+            """
+        ).fetchall()
+    records = {}
+    for row in rows:
+        summary = _safe_json(row["summary_json"], {})
+        path = row["path"]
+        records[path] = {
+            "path": path,
+            "language": row["language"],
+            "size": row["size"],
+            "sha256": row["sha256"],
+            "is_text": bool(row["is_text"]),
+            "line_count": row["line_count"],
+            "token_count": row["token_count"],
+            "summary": _compact_summary(summary),
+            "_summary": summary,
+        }
+    return records
+
+
+def _visible_file_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in record.items() if not key.startswith("_")}
+
+
+def _compare_record_reasons(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    reasons = []
+    for key in ("sha256", "size", "language", "is_text", "line_count", "token_count"):
+        if before.get(key) != after.get(key):
+            reasons.append(key)
+    before_summary = before.get("_summary", {})
+    after_summary = after.get("_summary", {})
+    if before_summary.get("kind") != after_summary.get("kind"):
+        reasons.append("summary_kind")
+    for field in ("symbols", "imports", "headings", "top_terms"):
+        if _summary_identity_set(before_summary, field) != _summary_identity_set(after_summary, field):
+            reasons.append(field)
+    return reasons
+
+
+def _changed_file_record(path: str, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": path,
+        "change_reasons": _compare_record_reasons(before, after),
+        "before": _visible_file_record(before),
+        "after": _visible_file_record(after),
+        "summary_delta": _summary_delta(before.get("_summary", {}), after.get("_summary", {})),
+    }
+
+
+def _summary_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, list[str]]:
+    delta = {}
+    for field, added_key, removed_key in (
+        ("symbols", "added_symbols", "removed_symbols"),
+        ("imports", "added_imports", "removed_imports"),
+        ("headings", "added_headings", "removed_headings"),
+        ("top_terms", "added_terms", "removed_terms"),
+    ):
+        before_values = _summary_identity_set(before, field)
+        after_values = _summary_identity_set(after, field)
+        added = sorted(after_values - before_values)
+        removed = sorted(before_values - after_values)
+        if added:
+            delta[added_key] = added[:16]
+        if removed:
+            delta[removed_key] = removed[:16]
+    return delta
+
+
+def _summary_identity_set(summary: dict[str, Any], field: str) -> set[str]:
+    if field == "top_terms":
+        return {str(item) for item in summary.get("top_terms", []) if str(item)}
+    values = set()
+    for item in summary.get(field, []):
+        if field == "symbols":
+            name = str(item.get("name", "")).strip()
+            if name:
+                values.add(f"{item.get('kind', 'symbol')}:{name}")
+        elif field == "imports":
+            target = str(item.get("target", "")).strip()
+            if target:
+                values.add(target)
+        elif field == "headings":
+            text = str(item.get("text", "")).strip()
+            if text:
+                values.add(f"{item.get('level', '')}:{text}")
+    return values
+
+
+def _language_delta(
+    base_records: dict[str, dict[str, Any]],
+    target_records: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    base_counts = Counter(str(record.get("language") or "unknown") for record in base_records.values())
+    target_counts = Counter(str(record.get("language") or "unknown") for record in target_records.values())
+    rows = []
+    for language in sorted(set(base_counts) | set(target_counts)):
+        base_count = base_counts.get(language, 0)
+        target_count = target_counts.get(language, 0)
+        delta = target_count - base_count
+        if delta:
+            rows.append(
+                {
+                    "language": language,
+                    "base_count": base_count,
+                    "target_count": target_count,
+                    "delta": delta,
+                }
+            )
+    return rows
+
+
+def _append_compare_file_section(lines: list[str], title: str, files: list[dict[str, Any]]) -> None:
+    lines.extend([f"## {title}", ""])
+    if not files:
+        lines.extend([f"No {title.lower()}.", ""])
+        return
+    for item in files:
+        lines.append(
+            f"- `{item.get('path')}` [{item.get('language') or 'unknown'}] "
+            f"{item.get('size', 0)} bytes sha=`{item.get('sha256')}`"
+        )
+    lines.append("")
+
+
+def _brief_file_score(record: dict[str, Any]) -> float:
+    path = str(record.get("path", ""))
+    lowered = path.lower()
+    name = Path(path).name.lower()
+    score = 0.0
+    if name.startswith("readme"):
+        score = max(score, 100.0)
+    if name in {"pyproject.toml", "package.json", "setup.py", "cargo.toml", "go.mod", "pom.xml"}:
+        score = max(score, 95.0)
+    if name in {"cli.py", "main.py", "app.py", "server.py", "index.js", "index.ts"} or lowered.endswith("/__main__.py"):
+        score = max(score, 85.0)
+    if lowered.startswith("tests/") or "/tests/" in lowered:
+        score = max(score, 55.0)
+    if record.get("is_text"):
+        score += min(float(record.get("token_count") or 0) / 100.0, 20.0)
+    summary = record.get("_summary", {})
+    if summary.get("symbols"):
+        score += 10.0
+    if summary.get("headings"):
+        score += 5.0
+    return score
+
+
+def _brief_suggestions(
+    records: dict[str, dict[str, Any]],
+    key_files: list[dict[str, Any]],
+    symbols: list[dict[str, Any]],
+) -> list[str]:
+    suggestions = []
+    if not key_files:
+        suggestions.append("No key files were identified; add README or package metadata for stronger orientation.")
+    if not symbols and any(record.get("is_text") for record in records.values()):
+        suggestions.append("No symbols were extracted; add language-specific structure extractors if this repo is mostly code.")
+    if any(not record.get("is_text") for record in records.values()):
+        suggestions.append("Binary files are represented by metadata only; add type-specific extractors if they matter to agents.")
+    return suggestions
+
+
+def _append_brief_file_section(lines: list[str], title: str, files: list[dict[str, Any]]) -> None:
+    lines.extend([f"## {title}", ""])
+    if not files:
+        lines.extend([f"No {title.lower()} identified.", ""])
+        return
+    for item in files:
+        summary = item.get("summary", {})
+        bits = []
+        symbols = summary.get("symbols", [])
+        if symbols:
+            bits.append("symbols=" + ",".join(str(symbol.get("name", "")) for symbol in symbols[:5]))
+        headings = summary.get("headings", [])
+        if headings:
+            bits.append("headings=" + ",".join(str(heading.get("text", "")) for heading in headings[:3]))
+        suffix = " " + " ".join(bits) if bits else ""
+        lines.append(
+            f"- `{item.get('path')}` [{item.get('language') or 'unknown'}] "
+            f"{item.get('size', 0)} bytes sha=`{item.get('sha256')}`{suffix}"
+        )
+    lines.append("")
 
 
 def _percent(part: int, whole: int) -> float:
