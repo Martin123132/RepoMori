@@ -326,6 +326,40 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(check["valid"])
             self.assertTrue(check["copied_pack"]["verified"])
 
+    def test_handoff_with_base_pack_includes_compare_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, base_pack = self._demo_pack(Path(tmp))
+            build_pack(repo, base_pack, BuildOptions(force=True))
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            target_pack = Path(tmp) / "target.repomori"
+            build_pack(repo, target_pack, BuildOptions(force=True))
+            out = Path(tmp) / "handoff-compare"
+
+            manifest = build_handoff_package(target_pack, "sqlite Store", out, base_pack=base_pack)
+
+            self.assertEqual(manifest["schema_version"], "repomori.handoff.v1")
+            self.assertIn("base_pack", manifest)
+            self.assertEqual(manifest["settings"]["base_pack"], str(base_pack.resolve()))
+            self.assertTrue((out / "compare.json").exists())
+            self.assertTrue((out / "compare.md").exists())
+            artifacts = {artifact["path"]: artifact for artifact in manifest["artifacts"]}
+            self.assertEqual(artifacts["compare.json"]["kind"], "compare_json")
+            compare = json.loads((out / "compare.json").read_text(encoding="utf-8"))
+            self.assertEqual(compare["schema_version"], "repomori.compare.v1")
+            self.assertGreaterEqual(compare["summary"]["changed_count"], 1)
+
+            check = check_handoff_package(out)
+            self.assertTrue(check["valid"])
+            self.assertEqual(check["checked_json"], 6)
+
     def test_check_handoff_detects_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -384,6 +418,11 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue((out / "latest.repomori").exists())
             self.assertTrue((out / first["artifacts"]["snapshot_json"]).exists())
             self.assertTrue((out / first["artifacts"]["snapshot_markdown"]).exists())
+            index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["schema_version"], "repomori.snapshots.v1")
+            self.assertEqual(index["snapshot_count"], 1)
+            self.assertEqual(index["latest"]["pack_path"], first["summary"]["pack_path"])
+            self.assertEqual(index["latest"]["pack_sha256"], hashlib.sha256(Path(first["summary"]["pack_path"]).read_bytes()).hexdigest())
 
             (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
             second = snapshot_repo(repo, out)
@@ -393,6 +432,11 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(second["comparison"]["summary"]["added_count"], 1)
             self.assertIn("compare_json", second["artifacts"])
             self.assertIn("compare_markdown", second["artifacts"])
+            self.assertEqual(second["artifacts"]["snapshot_index"], "snapshots.json")
+            index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["snapshot_count"], 2)
+            self.assertEqual(index["latest"]["pack_path"], second["summary"]["pack_path"])
+            self.assertEqual(index["latest"]["added_count"], 1)
 
             markdown = format_snapshot_markdown(second)
             self.assertIn("# RepoMori Snapshot", markdown)
@@ -599,6 +643,39 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue((out / "manifest.json").exists())
             self.assertTrue((out / "context.md").exists())
 
+    def test_cli_handoff_base_pack_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, base_pack = self._demo_pack(Path(tmp))
+            build_pack(repo, base_pack, BuildOptions(force=True))
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            target_pack = Path(tmp) / "target.repomori"
+            build_pack(repo, target_pack, BuildOptions(force=True))
+            out = Path(tmp) / "handoff-base-cli"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "handoff",
+                    str(target_pack),
+                    "sqlite Store",
+                    "--base-pack",
+                    str(base_pack),
+                    "--out",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.handoff.v1")
+            self.assertIn("base_pack", payload)
+            self.assertTrue((out / "compare.json").exists())
+            compare = json.loads((out / "compare.json").read_text(encoding="utf-8"))
+            self.assertEqual(compare["summary"]["added_count"], 1)
+
     def test_cli_check_handoff_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -673,6 +750,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "pass")
             self.assertTrue((out / "latest.repomori").exists())
             self.assertTrue((out / payload["artifacts"]["snapshot_json"]).exists())
+            index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["schema_version"], "repomori.snapshots.v1")
+            self.assertEqual(index["snapshot_count"], 1)
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

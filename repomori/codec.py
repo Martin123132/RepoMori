@@ -1508,6 +1508,7 @@ def build_handoff_package(
     question: str,
     out_dir: Path | str,
     *,
+    base_pack: Path | str | None = None,
     force: bool = False,
     copy_pack: bool = False,
     allow_unverified: bool = False,
@@ -1527,6 +1528,7 @@ def build_handoff_package(
         raise ValueError("max_files must be greater than zero")
 
     pack_path = Path(pack).resolve()
+    base_pack_path = Path(base_pack).resolve() if base_pack is not None else None
     out_path = Path(out_dir).resolve()
     _prepare_handoff_dir(out_path, force)
 
@@ -1548,6 +1550,7 @@ def build_handoff_package(
             artifacts,
             status,
             {
+                "base_pack": str(base_pack_path) if base_pack_path is not None else None,
                 "force": force,
                 "copy_pack": copy_pack,
                 "allow_unverified": allow_unverified,
@@ -1558,6 +1561,7 @@ def build_handoff_package(
                 "capsule_max_files": capsule_max_files,
                 "top_terms": top_terms,
             },
+            info_pack(base_pack_path) if base_pack_path is not None else None,
         )
         _write_json(out_path / "manifest.json", manifest)
         return manifest
@@ -1584,6 +1588,17 @@ def build_handoff_package(
     brief_md.write_text(format_brief_markdown(brief), encoding="utf-8")
     artifacts.append(_artifact_record(out_path, brief_json, "brief_json"))
     artifacts.append(_artifact_record(out_path, brief_md, "brief_markdown"))
+
+    base_pack_info = None
+    if base_pack_path is not None:
+        base_pack_info = info_pack(base_pack_path)
+        comparison = compare_packs(base_pack_path, pack_path)
+        compare_json = out_path / "compare.json"
+        compare_md = out_path / "compare.md"
+        _write_json(compare_json, comparison)
+        compare_md.write_text(format_compare_markdown(comparison), encoding="utf-8")
+        artifacts.append(_artifact_record(out_path, compare_json, "compare_json"))
+        artifacts.append(_artifact_record(out_path, compare_md, "compare_markdown"))
 
     capsule = build_capsule(pack_path, max_files=capsule_max_files, top_terms=top_terms)
     capsule_path = out_path / "capsule.json"
@@ -1613,7 +1628,7 @@ def build_handoff_package(
         artifacts.append(_artifact_record(out_path, pack_copy, "pack_copy"))
 
     readme_path = out_path / "README.md"
-    readme_path.write_text(_handoff_readme(question, copy_pack), encoding="utf-8")
+    readme_path.write_text(_handoff_readme(question, copy_pack, base_pack_path is not None), encoding="utf-8")
     artifacts.append(_artifact_record(out_path, readme_path, "handoff_readme"))
 
     manifest = _handoff_manifest(
@@ -1624,6 +1639,7 @@ def build_handoff_package(
         artifacts,
         status,
         {
+            "base_pack": str(base_pack_path) if base_pack_path is not None else None,
             "force": force,
             "copy_pack": copy_pack,
             "allow_unverified": allow_unverified,
@@ -1634,6 +1650,7 @@ def build_handoff_package(
             "capsule_max_files": capsule_max_files,
             "top_terms": top_terms,
         },
+        base_pack_info,
     )
     _write_json(out_path / "manifest.json", manifest)
     return manifest
@@ -1685,6 +1702,12 @@ def check_handoff_package(handoff_dir: Path | str) -> dict[str, Any]:
         )
         if has_brief:
             json_names.insert(1, "brief.json")
+        has_compare = (root / "compare.json").exists() or any(
+            isinstance(artifact, dict) and artifact.get("path") == "compare.json"
+            for artifact in artifacts
+        )
+        if has_compare:
+            json_names.insert(-1, "compare.json")
         for name in json_names:
             json_results.append(_check_handoff_json(root, name, errors))
 
@@ -1919,6 +1942,7 @@ def snapshot_repo(
             "latest_pack": latest_path.name,
             "snapshot_json": snapshot_json.name,
             "snapshot_markdown": snapshot_md.name,
+            "snapshot_index": "snapshots.json",
         },
         "build": build,
         "verify": verify,
@@ -1930,6 +1954,7 @@ def snapshot_repo(
 
     _write_json(snapshot_json, report)
     snapshot_md.write_text(format_snapshot_markdown(report), encoding="utf-8")
+    _update_snapshot_index(out_path, report)
     return report
 
 
@@ -2295,22 +2320,15 @@ def _handoff_manifest(
     artifacts: list[dict[str, Any]],
     status: str,
     settings: dict[str, Any],
+    base_pack_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    manifest = {
         "schema_version": "repomori.handoff.v1",
         "status": status,
         "created_at": int(time.time()),
         "question": question,
         "out_dir": str(out_path),
-        "pack": {
-            "schema_version": pack_info.get("schema_version"),
-            "repo_path": pack_info.get("repo_path"),
-            "pack_path": pack_info.get("pack_path"),
-            "created_at": pack_info.get("created_at"),
-            "logical_bytes": pack_info.get("logical_bytes"),
-            "pack_bytes": pack_info.get("pack_bytes"),
-            "counts": pack_info.get("counts", {}),
-        },
+        "pack": _pack_identity(pack_info),
         "verification": {
             "verified": verify_report.get("verified"),
             "error_count": verify_report.get("error_count"),
@@ -2319,13 +2337,21 @@ def _handoff_manifest(
         "settings": settings,
         "artifacts": artifacts,
     }
+    if base_pack_info is not None:
+        manifest["base_pack"] = _pack_identity(base_pack_info)
+    return manifest
 
 
-def _handoff_readme(question: str, copied_pack: bool) -> str:
+def _handoff_readme(question: str, copied_pack: bool, has_compare: bool = False) -> str:
     pack_note = (
         "The `.repomori` pack is included in this directory.\n"
         if copied_pack
         else "The original `.repomori` pack is referenced in `manifest.json` but not copied here.\n"
+    )
+    compare_note = (
+        "8. `compare.md` / `compare.json` - delta from the base pack.\n"
+        if has_compare
+        else ""
     )
     return (
         "# RepoMori Agent Handoff\n\n"
@@ -2337,7 +2363,8 @@ def _handoff_readme(question: str, copied_pack: bool) -> str:
         "4. `context.json` - raw context bundle for tools.\n"
         "5. `capsule.json` - dense machine-readable repository state.\n"
         "6. `eval.md` / `eval.json` - context quality report.\n"
-        "7. `verify.json` - pack integrity report.\n\n"
+        "7. `verify.json` - pack integrity report.\n"
+        f"{compare_note}\n"
         f"{pack_note}"
         "No AI provider, API key, or network call is required to consume this handoff.\n"
     )
@@ -2735,6 +2762,87 @@ def _snapshot_exclude_paths(repo_path: Path, out_path: Path) -> tuple[Path, ...]
     except ValueError:
         return ()
     return (out_path,)
+
+
+def _update_snapshot_index(out_path: Path, report: dict[str, Any]) -> dict[str, Any]:
+    index_path = out_path / "snapshots.json"
+    index = _read_snapshot_index(index_path, out_path)
+    entry = _snapshot_index_entry(report)
+    snapshots = [
+        snapshot
+        for snapshot in index.get("snapshots", [])
+        if snapshot.get("pack_path") != entry["pack_path"]
+    ]
+    snapshots.append(entry)
+    snapshots.sort(key=lambda item: (int(item.get("created_at", 0) or 0), str(item.get("pack_path", ""))))
+    updated = {
+        "schema_version": "repomori.snapshots.v1",
+        "out_dir": str(out_path),
+        "updated_at": int(time.time()),
+        "snapshot_count": len(snapshots),
+        "latest": entry,
+        "snapshots": snapshots,
+    }
+    _write_json(index_path, updated)
+    return updated
+
+
+def _read_snapshot_index(index_path: Path, out_path: Path) -> dict[str, Any]:
+    if not index_path.exists():
+        return {
+            "schema_version": "repomori.snapshots.v1",
+            "out_dir": str(out_path),
+            "updated_at": None,
+            "snapshot_count": 0,
+            "latest": None,
+            "snapshots": [],
+        }
+    data = json.loads(index_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("schema_version") != "repomori.snapshots.v1":
+        raise ValueError(f"Unexpected snapshot index schema: {index_path}")
+    if not isinstance(data.get("snapshots"), list):
+        raise ValueError(f"Snapshot index snapshots must be a list: {index_path}")
+    return data
+
+
+def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
+    summary = report.get("summary", {})
+    artifacts = report.get("artifacts", {})
+    pack_path = Path(str(summary.get("pack_path", "")))
+    comparison = report.get("comparison")
+    compare_summary = comparison.get("summary", {}) if isinstance(comparison, dict) else {}
+    return {
+        "created_at": report.get("created_at"),
+        "status": report.get("status"),
+        "repo_path": report.get("repo_path"),
+        "pack_path": str(pack_path),
+        "pack_name": artifacts.get("pack"),
+        "pack_sha256": _path_sha256(pack_path),
+        "latest_pack": summary.get("latest_pack"),
+        "previous_latest_pack": summary.get("previous_latest_pack"),
+        "snapshot_json": artifacts.get("snapshot_json"),
+        "snapshot_markdown": artifacts.get("snapshot_markdown"),
+        "compare_json": artifacts.get("compare_json"),
+        "compare_markdown": artifacts.get("compare_markdown"),
+        "file_count": summary.get("file_count"),
+        "logical_bytes": summary.get("logical_bytes"),
+        "pack_bytes": summary.get("pack_bytes"),
+        "verify_passed": summary.get("verify_passed"),
+        "compared_with_previous": summary.get("compared_with_previous"),
+        "added_count": compare_summary.get("added_count"),
+        "removed_count": compare_summary.get("removed_count"),
+        "changed_count": compare_summary.get("changed_count"),
+        "unchanged_count": compare_summary.get("unchanged_count"),
+        "byte_delta": compare_summary.get("byte_delta"),
+    }
+
+
+def _path_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _percent(part: int, whole: int) -> float:

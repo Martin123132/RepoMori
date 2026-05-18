@@ -135,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     handoff.add_argument("pack", type=Path)
     handoff.add_argument("question")
     handoff.add_argument("--out", type=Path, required=True, help="Directory to write handoff artifacts.")
+    handoff.add_argument("--base-pack", type=Path, help="Previous pack to compare against.")
     handoff.add_argument("--force", action="store_true", help="Overwrite an existing handoff directory.")
     handoff.add_argument("--copy-pack", action="store_true", help="Copy the .repomori pack into the handoff.")
     handoff.add_argument("--allow-unverified", action="store_true", help="Continue when pack verification fails.")
@@ -317,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
             args.pack,
             args.question,
             args.out,
+            base_pack=args.base_pack,
             force=args.force,
             copy_pack=args.copy_pack,
             allow_unverified=args.allow_unverified,

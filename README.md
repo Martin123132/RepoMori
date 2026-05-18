@@ -27,6 +27,7 @@ python -m repomori verify C:\path\to\repo.repomori
 python -m repomori eval C:\path\to\repo.repomori --out eval.md
 python -m repomori capsule C:\path\to\repo.repomori --out repo.capsule.json
 python -m repomori handoff C:\path\to\repo.repomori "where is storage handled?" --out D:\handoffs\repo
+python -m repomori handoff C:\path\to\new.repomori "continue this work" --base-pack C:\path\to\old.repomori --out D:\handoffs\next
 python -m repomori check-handoff D:\handoffs\repo --json
 python -m repomori bench D:\Dev\RepoMori --out D:\benchmarks\repomori
 python -m repomori get C:\path\to\repo.repomori path\inside\repo.py --out restored.py
@@ -60,7 +61,7 @@ repomori context <pack> <question> [--format markdown|json] [--max-files n] [--m
 repomori verify <pack>
 repomori eval <pack> [--question text] [--format markdown|json] [--out file]
 repomori capsule <pack> [--max-files n] [--top-terms n] [--out file]
-repomori handoff <pack> <question> --out <dir> [--copy-pack] [--force] [--json]
+repomori handoff <pack> <question> --out <dir> [--base-pack pack] [--copy-pack] [--force] [--json]
 repomori check-handoff <dir> [--json]
 repomori bench <repo> --out <dir> [--force] [--json]
 repomori get <pack> <path> [--out file]
@@ -89,7 +90,9 @@ everything.
 `snapshot` builds timestamped packs into an output directory, updates
 `latest.repomori`, and automatically compares the new pack against the previous
 latest pack when one exists. It also writes snapshot JSON/Markdown reports and
-compare reports for machine-readable project memory over time.
+compare reports for machine-readable project memory over time, plus a
+`snapshots.json` index that records the timeline of pack hashes and change
+summaries.
 
 `verify` checks that stored chunks decompress, chunk hashes match, and restored
 files still match their recorded sizes and SHA-256 hashes.
@@ -105,7 +108,9 @@ manifest without embedding raw source text.
 `handoff` writes a directory for another agent with `manifest.json`,
 `brief.md`, `brief.json`, `context.md`, `context.json`, `capsule.json`,
 `eval.md`, `eval.json`, `verify.json`, and a short `README.md`. It verifies the
-pack first and stops before writing context artifacts if verification fails.
+pack first and stops before writing context artifacts if verification fails. Use
+`--base-pack` to include `compare.md` and `compare.json` so the receiving agent
+can see what changed since an earlier pack.
 
 `check-handoff` validates a handoff manifest, artifact sizes and SHA-256 hashes,
 JSON artifacts, and any copied `.repomori` pack.
