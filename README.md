@@ -22,6 +22,7 @@ python -m repomori context C:\path\to\repo.repomori "where is storage handled?" 
 python -m repomori verify C:\path\to\repo.repomori
 python -m repomori eval C:\path\to\repo.repomori --out eval.md
 python -m repomori capsule C:\path\to\repo.repomori --out repo.capsule.json
+python -m repomori handoff C:\path\to\repo.repomori "where is storage handled?" --out D:\handoffs\repo
 python -m repomori get C:\path\to\repo.repomori path\inside\repo.py --out restored.py
 ```
 
@@ -49,6 +50,7 @@ repomori context <pack> <question> [--format markdown|json] [--max-files n] [--m
 repomori verify <pack>
 repomori eval <pack> [--question text] [--format markdown|json] [--out file]
 repomori capsule <pack> [--max-files n] [--top-terms n] [--out file]
+repomori handoff <pack> <question> --out <dir> [--copy-pack] [--force] [--json]
 repomori get <pack> <path> [--out file]
 ```
 
@@ -68,6 +70,11 @@ suggested ranking or extraction improvements.
 `capsule` exports the pack's machine summary as dense JSON: compact file
 records, symbol/import/heading graph data, vocabulary, and a verification
 manifest without embedding raw source text.
+
+`handoff` writes a directory for another agent with `manifest.json`,
+`context.md`, `context.json`, `capsule.json`, `eval.md`, `eval.json`,
+`verify.json`, and a short `README.md`. It verifies the pack first and stops
+before writing context artifacts if verification fails.
 
 You can run the same commands without installing the package:
 

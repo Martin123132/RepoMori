@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import stat
 import time
@@ -999,6 +1000,134 @@ def build_capsule(
     }
 
 
+def build_handoff_package(
+    pack: Path | str,
+    question: str,
+    out_dir: Path | str,
+    *,
+    force: bool = False,
+    copy_pack: bool = False,
+    allow_unverified: bool = False,
+    max_files: int = 8,
+    max_bytes: int | None = None,
+    snippet_lines: int = 12,
+    snippets_per_file: int = 2,
+    capsule_max_files: int | None = None,
+    top_terms: int = 128,
+    eval_questions: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Build a portable directory of source-backed handoff artifacts."""
+
+    if not question.strip():
+        raise ValueError("question must not be empty")
+    if max_files <= 0:
+        raise ValueError("max_files must be greater than zero")
+
+    pack_path = Path(pack).resolve()
+    out_path = Path(out_dir).resolve()
+    _prepare_handoff_dir(out_path, force)
+
+    artifacts: list[dict[str, Any]] = []
+    verify_report = verify_pack(pack_path)
+    verify_path = out_path / "verify.json"
+    _write_json(verify_path, verify_report)
+    artifacts.append(_artifact_record(out_path, verify_path, "verify_json"))
+
+    pack_info = info_pack(pack_path)
+    status = "complete_unverified" if not verify_report["verified"] else "complete"
+    if not verify_report["verified"] and not allow_unverified:
+        status = "verification_failed"
+        manifest = _handoff_manifest(
+            question,
+            out_path,
+            pack_info,
+            verify_report,
+            artifacts,
+            status,
+            {
+                "force": force,
+                "copy_pack": copy_pack,
+                "allow_unverified": allow_unverified,
+                "max_files": max_files,
+                "max_bytes": max_bytes,
+                "snippet_lines": snippet_lines,
+                "snippets_per_file": snippets_per_file,
+                "capsule_max_files": capsule_max_files,
+                "top_terms": top_terms,
+            },
+        )
+        _write_json(out_path / "manifest.json", manifest)
+        return manifest
+
+    context = build_context_bundle(
+        pack_path,
+        question,
+        limit=max_files,
+        snippet_lines=snippet_lines,
+        max_bytes=max_bytes,
+        snippets_per_file=snippets_per_file,
+    )
+    context_json = out_path / "context.json"
+    context_md = out_path / "context.md"
+    _write_json(context_json, context)
+    context_md.write_text(format_context_markdown(context), encoding="utf-8")
+    artifacts.append(_artifact_record(out_path, context_json, "context_json"))
+    artifacts.append(_artifact_record(out_path, context_md, "context_markdown"))
+
+    capsule = build_capsule(pack_path, max_files=capsule_max_files, top_terms=top_terms)
+    capsule_path = out_path / "capsule.json"
+    _write_json(capsule_path, capsule, compact=True)
+    artifacts.append(_artifact_record(out_path, capsule_path, "capsule_json"))
+
+    eval_question_list = _handoff_eval_questions(question, eval_questions)
+    eval_report = evaluate_pack(
+        pack_path,
+        questions=eval_question_list,
+        limit=max_files,
+        snippet_lines=snippet_lines,
+        max_bytes=max_bytes,
+        snippets_per_file=snippets_per_file,
+    )
+    eval_json = out_path / "eval.json"
+    eval_md = out_path / "eval.md"
+    _write_json(eval_json, eval_report)
+    eval_md.write_text(format_eval_markdown(eval_report), encoding="utf-8")
+    artifacts.append(_artifact_record(out_path, eval_json, "eval_json"))
+    artifacts.append(_artifact_record(out_path, eval_md, "eval_markdown"))
+
+    if copy_pack:
+        pack_copy = out_path / pack_path.name
+        if pack_copy.resolve() != pack_path:
+            shutil.copy2(pack_path, pack_copy)
+        artifacts.append(_artifact_record(out_path, pack_copy, "pack_copy"))
+
+    readme_path = out_path / "README.md"
+    readme_path.write_text(_handoff_readme(question, copy_pack), encoding="utf-8")
+    artifacts.append(_artifact_record(out_path, readme_path, "handoff_readme"))
+
+    manifest = _handoff_manifest(
+        question,
+        out_path,
+        pack_info,
+        verify_report,
+        artifacts,
+        status,
+        {
+            "force": force,
+            "copy_pack": copy_pack,
+            "allow_unverified": allow_unverified,
+            "max_files": max_files,
+            "max_bytes": max_bytes,
+            "snippet_lines": snippet_lines,
+            "snippets_per_file": snippets_per_file,
+            "capsule_max_files": capsule_max_files,
+            "top_terms": top_terms,
+        },
+    )
+    _write_json(out_path / "manifest.json", manifest)
+    return manifest
+
+
 def get_file_bytes(pack: Path | str, repo_path: str) -> bytes:
     """Restore one file from a pack and return its bytes."""
 
@@ -1198,6 +1327,98 @@ def _capsule_headings(items: list[dict[str, Any]], limit: int) -> list[list[Any]
         ]
         for item in items[:limit]
     ]
+
+
+def _prepare_handoff_dir(out_path: Path, force: bool) -> None:
+    if out_path.exists():
+        if not force:
+            raise FileExistsError(f"Handoff output already exists: {out_path}")
+        if out_path.is_dir():
+            shutil.rmtree(out_path)
+        else:
+            out_path.unlink()
+    out_path.mkdir(parents=True, exist_ok=False)
+
+
+def _write_json(path: Path, payload: dict[str, Any], *, compact: bool = False) -> None:
+    if compact:
+        text = json.dumps(payload, separators=(",", ":"))
+    else:
+        text = json.dumps(payload, indent=2)
+    path.write_text(text + "\n", encoding="utf-8")
+
+
+def _artifact_record(root: Path, path: Path, kind: str) -> dict[str, Any]:
+    data = path.read_bytes()
+    return {
+        "path": path.relative_to(root).as_posix(),
+        "kind": kind,
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def _handoff_eval_questions(question: str, extra_questions: Iterable[str] | None) -> list[str]:
+    return _unique_items(
+        item.strip()
+        for item in (question, *DEFAULT_EVAL_QUESTIONS, *(extra_questions or ()))
+        if item.strip()
+    )
+
+
+def _handoff_manifest(
+    question: str,
+    out_path: Path,
+    pack_info: dict[str, Any],
+    verify_report: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+    status: str,
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "repomori.handoff.v1",
+        "status": status,
+        "created_at": int(time.time()),
+        "question": question,
+        "out_dir": str(out_path),
+        "pack": {
+            "schema_version": pack_info.get("schema_version"),
+            "repo_path": pack_info.get("repo_path"),
+            "pack_path": pack_info.get("pack_path"),
+            "created_at": pack_info.get("created_at"),
+            "logical_bytes": pack_info.get("logical_bytes"),
+            "pack_bytes": pack_info.get("pack_bytes"),
+            "counts": pack_info.get("counts", {}),
+        },
+        "verification": {
+            "verified": verify_report.get("verified"),
+            "error_count": verify_report.get("error_count"),
+            "artifact": "verify.json",
+        },
+        "settings": settings,
+        "artifacts": artifacts,
+    }
+
+
+def _handoff_readme(question: str, copied_pack: bool) -> str:
+    pack_note = (
+        "The `.repomori` pack is included in this directory.\n"
+        if copied_pack
+        else "The original `.repomori` pack is referenced in `manifest.json` but not copied here.\n"
+    )
+    return (
+        "# RepoMori Agent Handoff\n\n"
+        f"Question: {question}\n\n"
+        "Use these files in order:\n\n"
+        "1. `manifest.json` - artifact list, hashes, settings, and verification status.\n"
+        "2. `context.md` - compact source-backed context for quick reading.\n"
+        "3. `context.json` - raw context bundle for tools.\n"
+        "4. `capsule.json` - dense machine-readable repository state.\n"
+        "5. `eval.md` / `eval.json` - context quality report.\n"
+        "6. `verify.json` - pack integrity report.\n\n"
+        f"{pack_note}"
+        "No AI provider, API key, or network call is required to consume this handoff.\n"
+    )
 
 
 def _eval_weak_signals(

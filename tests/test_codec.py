@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from repomori.codec import (
     BuildOptions,
     build_capsule,
     build_context_bundle,
+    build_handoff_package,
     build_pack,
     evaluate_pack,
     format_eval_markdown,
@@ -157,6 +159,61 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertNotIn("text", app_record)
             self.assertNotIn("snippets", app_record)
 
+    def test_handoff_package_outputs_manifest_and_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff"
+
+            manifest = build_handoff_package(pack, "sqlite Store", out)
+
+            self.assertEqual(manifest["schema_version"], "repomori.handoff.v1")
+            self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(manifest["question"], "sqlite Store")
+            self.assertTrue(manifest["verification"]["verified"])
+            self.assertEqual(json.loads((out / "manifest.json").read_text(encoding="utf-8")), manifest)
+
+            expected = {
+                "README.md",
+                "capsule.json",
+                "context.json",
+                "context.md",
+                "eval.json",
+                "eval.md",
+                "manifest.json",
+                "verify.json",
+            }
+            self.assertTrue(expected.issubset({path.name for path in out.iterdir()}))
+
+            artifacts = {artifact["path"]: artifact for artifact in manifest["artifacts"]}
+            self.assertIn("context.md", artifacts)
+            self.assertIn("capsule.json", artifacts)
+            for artifact in artifacts.values():
+                artifact_path = out / artifact["path"]
+                data = artifact_path.read_bytes()
+                self.assertEqual(artifact["size"], len(data))
+                self.assertEqual(artifact["sha256"], hashlib.sha256(data).hexdigest())
+
+            for name in ("context.json", "capsule.json", "eval.json", "verify.json"):
+                json.loads((out / name).read_text(encoding="utf-8"))
+
+    def test_handoff_force_and_copy_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff"
+
+            build_handoff_package(pack, "sqlite Store", out)
+            with self.assertRaises(FileExistsError):
+                build_handoff_package(pack, "sqlite Store", out)
+
+            forced = build_handoff_package(pack, "sqlite Store", out, force=True)
+            self.assertEqual(forced["status"], "complete")
+
+            copy_out = Path(tmp) / "handoff-copy"
+            copied = build_handoff_package(pack, "sqlite Store", copy_out, copy_pack=True)
+            pack_copy = copy_out / pack.name
+            self.assertEqual(pack_copy.read_bytes(), pack.read_bytes())
+            self.assertTrue(any(artifact["kind"] == "pack_copy" for artifact in copied["artifacts"]))
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -253,6 +310,33 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.capsule.v1")
             self.assertEqual(payload["selection"]["included_files"], 1)
             self.assertIn("key", payload)
+
+    def test_cli_handoff_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff-cli"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "handoff",
+                    str(pack),
+                    "sqlite Store",
+                    "--out",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.handoff.v1")
+            self.assertEqual(payload["status"], "complete")
+            self.assertEqual(payload["question"], "sqlite Store")
+            self.assertTrue((out / "manifest.json").exists())
+            self.assertTrue((out / "context.md").exists())
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

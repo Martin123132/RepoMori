@@ -11,6 +11,7 @@ from .codec import (
     BuildOptions,
     build_capsule,
     build_context_bundle,
+    build_handoff_package,
     build_pack,
     evaluate_pack,
     format_context_markdown,
@@ -86,6 +87,23 @@ def main(argv: list[str] | None = None) -> int:
     capsule.add_argument("--max-files", type=int, help="Maximum files to include.")
     capsule.add_argument("--top-terms", type=int, default=128, help="Vocabulary terms to include.")
     capsule.add_argument("--out", type=Path, help="Write capsule JSON to this file.")
+
+    handoff = sub.add_parser("handoff", help="Build an agent handoff package directory.")
+    handoff.add_argument("pack", type=Path)
+    handoff.add_argument("question")
+    handoff.add_argument("--out", type=Path, required=True, help="Directory to write handoff artifacts.")
+    handoff.add_argument("--force", action="store_true", help="Overwrite an existing handoff directory.")
+    handoff.add_argument("--copy-pack", action="store_true", help="Copy the .repomori pack into the handoff.")
+    handoff.add_argument("--allow-unverified", action="store_true", help="Continue when pack verification fails.")
+    handoff.add_argument("--max-files", type=int, default=8)
+    handoff.add_argument("--max-bytes", type=int, help="Maximum total snippet text bytes.")
+    handoff.add_argument("--snippet-lines", type=int, default=12)
+    handoff.add_argument("--snippets-per-file", type=int, default=2)
+    handoff.add_argument("--capsule-max-files", type=int)
+    handoff.add_argument("--top-terms", type=int, default=128)
+    handoff.add_argument("--eval-question", action="append", help="Extra eval question; repeat for more.")
+    handoff.add_argument("--questions-file", type=Path, help="Read extra eval questions, one per line.")
+    handoff.add_argument("--json", action="store_true", help="Print manifest JSON.")
 
     get = sub.add_parser("get", help="Restore one exact file from the pack.")
     get.add_argument("pack", type=Path)
@@ -168,6 +186,30 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(output)
         return 0
+    if args.command == "handoff":
+        extra_questions = _eval_questions(args.eval_question, args.questions_file)
+        manifest = build_handoff_package(
+            args.pack,
+            args.question,
+            args.out,
+            force=args.force,
+            copy_pack=args.copy_pack,
+            allow_unverified=args.allow_unverified,
+            max_files=args.max_files,
+            max_bytes=args.max_bytes,
+            snippet_lines=args.snippet_lines,
+            snippets_per_file=args.snippets_per_file,
+            capsule_max_files=args.capsule_max_files,
+            top_terms=args.top_terms,
+            eval_questions=extra_questions,
+        )
+        if args.json:
+            print(json.dumps(manifest, indent=2))
+        else:
+            print(f"handoff: {manifest['out_dir']}")
+            print(f"status: {manifest['status']}")
+            print(f"artifacts: {len(manifest['artifacts'])}")
+        return 1 if manifest["status"] == "verification_failed" else 0
     if args.command == "get":
         data = get_file_bytes(args.pack, args.path)
         if args.out:
