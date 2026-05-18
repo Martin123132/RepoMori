@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .codec import (
     BuildOptions,
+    benchmark_repo,
     build_capsule,
     build_context_bundle,
     build_handoff_package,
@@ -109,6 +110,23 @@ def main(argv: list[str] | None = None) -> int:
     check_handoff = sub.add_parser("check-handoff", help="Validate a handoff package directory.")
     check_handoff.add_argument("handoff_dir", type=Path)
     check_handoff.add_argument("--json", action="store_true")
+
+    bench = sub.add_parser("bench", help="Run an end-to-end repository benchmark.")
+    bench.add_argument("repo", type=Path)
+    bench.add_argument("--out", type=Path, required=True, help="Directory to write benchmark artifacts.")
+    bench.add_argument("--question", default="How should an agent understand and continue this repository?")
+    bench.add_argument("--force", action="store_true", help="Overwrite an existing benchmark directory.")
+    bench.add_argument("--chunk-size", type=int, default=256 * 1024)
+    bench.add_argument("--max-files", type=int, default=8)
+    bench.add_argument("--max-bytes", type=int, default=4096)
+    bench.add_argument("--snippet-lines", type=int, default=12)
+    bench.add_argument("--snippets-per-file", type=int, default=2)
+    bench.add_argument("--capsule-max-files", type=int)
+    bench.add_argument("--top-terms", type=int, default=128)
+    bench.add_argument("--eval-question", action="append", help="Extra eval question; repeat for more.")
+    bench.add_argument("--questions-file", type=Path, help="Read extra eval questions, one per line.")
+    bench.add_argument("--copy-pack", action="store_true", help="Copy the pack into the handoff.")
+    bench.add_argument("--json", action="store_true", help="Print benchmark JSON.")
 
     get = sub.add_parser("get", help="Restore one exact file from the pack.")
     get.add_argument("pack", type=Path)
@@ -219,6 +237,31 @@ def main(argv: list[str] | None = None) -> int:
         result = check_handoff_package(args.handoff_dir)
         _print(result, args.json)
         return 0 if result["valid"] else 1
+    if args.command == "bench":
+        extra_questions = _eval_questions(args.eval_question, args.questions_file)
+        report = benchmark_repo(
+            args.repo,
+            args.out,
+            question=args.question,
+            force=args.force,
+            chunk_size=args.chunk_size,
+            max_files=args.max_files,
+            max_bytes=args.max_bytes,
+            snippet_lines=args.snippet_lines,
+            snippets_per_file=args.snippets_per_file,
+            capsule_max_files=args.capsule_max_files,
+            top_terms=args.top_terms,
+            eval_questions=extra_questions,
+            copy_pack=args.copy_pack,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"bench: {report['out_dir']}")
+            print(f"status: {report['status']}")
+            print(f"pack: {report['summary']['pack_path']}")
+            print(f"handoff: {report['summary']['handoff_dir']}")
+        return 0 if report["status"] == "pass" else 1
     if args.command == "get":
         data = get_file_bytes(args.pack, args.path)
         if args.out:

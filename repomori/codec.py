@@ -1198,6 +1198,177 @@ def check_handoff_package(handoff_dir: Path | str) -> dict[str, Any]:
     }
 
 
+def benchmark_repo(
+    repo: Path | str,
+    out_dir: Path | str,
+    *,
+    question: str = "How should an agent understand and continue this repository?",
+    force: bool = False,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    max_files: int = 8,
+    max_bytes: int | None = 4096,
+    snippet_lines: int = 12,
+    snippets_per_file: int = 2,
+    capsule_max_files: int | None = None,
+    top_terms: int = 128,
+    eval_questions: Iterable[str] | None = None,
+    copy_pack: bool = False,
+) -> dict[str, Any]:
+    """Run an end-to-end RepoMori benchmark for a repository."""
+
+    repo_path = Path(repo).resolve()
+    out_path = Path(out_dir).resolve()
+    if not repo_path.is_dir():
+        raise ValueError(f"Repository folder not found: {repo_path}")
+    _prepare_handoff_dir(out_path, force)
+
+    started = time.time()
+    pack_path = out_path / f"{repo_path.name}.repomori"
+    handoff_path = out_path / "handoff"
+
+    build = build_pack(repo_path, pack_path, BuildOptions(chunk_size=chunk_size, force=True))
+    verify = verify_pack(pack_path)
+    eval_question_list = _handoff_eval_questions(question, eval_questions)
+    eval_report = evaluate_pack(
+        pack_path,
+        questions=eval_question_list,
+        limit=max_files,
+        snippet_lines=snippet_lines,
+        max_bytes=max_bytes,
+        snippets_per_file=snippets_per_file,
+    )
+    handoff = build_handoff_package(
+        pack_path,
+        question,
+        handoff_path,
+        force=True,
+        copy_pack=copy_pack,
+        max_files=max_files,
+        max_bytes=max_bytes,
+        snippet_lines=snippet_lines,
+        snippets_per_file=snippets_per_file,
+        capsule_max_files=capsule_max_files,
+        top_terms=top_terms,
+        eval_questions=eval_questions,
+    )
+    handoff_check = check_handoff_package(handoff_path)
+    elapsed = time.time() - started
+    status = "pass" if verify["verified"] and handoff_check["valid"] else "fail"
+
+    report = {
+        "schema_version": "repomori.bench.v1",
+        "status": status,
+        "repo_path": str(repo_path),
+        "out_dir": str(out_path),
+        "question": question,
+        "settings": {
+            "chunk_size": chunk_size,
+            "max_files": max_files,
+            "max_bytes": max_bytes,
+            "snippet_lines": snippet_lines,
+            "snippets_per_file": snippets_per_file,
+            "capsule_max_files": capsule_max_files,
+            "top_terms": top_terms,
+            "copy_pack": copy_pack,
+        },
+        "summary": {
+            "elapsed_seconds": round(elapsed, 4),
+            "pack_path": str(pack_path),
+            "handoff_dir": str(handoff_path),
+            "pack_bytes": build.get("pack_bytes"),
+            "logical_bytes": build.get("logical_bytes"),
+            "logical_to_pack_ratio": _ratio(build.get("logical_bytes"), build.get("pack_bytes")),
+            "file_count": build.get("file_count"),
+            "text_file_count": build.get("text_file_count"),
+            "binary_file_count": build.get("binary_file_count"),
+            "compressed_chunk_bytes": build.get("compressed_chunk_bytes"),
+            "verify_passed": verify.get("verified"),
+            "handoff_passed": handoff_check.get("valid"),
+            "eval_weak_questions": eval_report.get("summary", {}).get("weak_questions"),
+            "eval_total_source_bytes": eval_report.get("summary", {}).get("total_source_bytes"),
+            "eval_total_snippets": eval_report.get("summary", {}).get("total_snippets"),
+            "eval_average_top_score": eval_report.get("summary", {}).get("average_top_score"),
+        },
+        "artifacts": {
+            "pack": pack_path.name,
+            "handoff": handoff_path.name,
+            "bench_json": "bench.json",
+            "bench_markdown": "bench.md",
+        },
+        "build": build,
+        "verify": verify,
+        "eval": eval_report,
+        "handoff": handoff,
+        "handoff_check": handoff_check,
+    }
+    _write_json(out_path / "bench.json", report)
+    (out_path / "bench.md").write_text(format_benchmark_markdown(report), encoding="utf-8")
+    return report
+
+
+def format_benchmark_markdown(report: dict[str, Any]) -> str:
+    """Render a benchmark report as Markdown."""
+
+    summary = report.get("summary", {})
+    settings = report.get("settings", {})
+    eval_report = report.get("eval", {})
+    coverage = eval_report.get("coverage", {})
+    lines = [
+        "# RepoMori Benchmark",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Repository: `{report.get('repo_path')}`",
+        f"- Output: `{report.get('out_dir')}`",
+        f"- Question: {report.get('question')}",
+        "",
+        "## Settings",
+        "",
+        f"- Chunk size: `{settings.get('chunk_size')}`",
+        f"- Max files: `{settings.get('max_files')}`",
+        f"- Max bytes: `{settings.get('max_bytes')}`",
+        f"- Snippet lines: `{settings.get('snippet_lines')}`",
+        f"- Snippets per file: `{settings.get('snippets_per_file')}`",
+        f"- Copy pack in handoff: `{settings.get('copy_pack')}`",
+        "",
+        "## Results",
+        "",
+        f"- Files: `{summary.get('file_count')}`",
+        f"- Text files: `{summary.get('text_file_count')}`",
+        f"- Binary files: `{summary.get('binary_file_count')}`",
+        f"- Logical bytes: `{summary.get('logical_bytes')}`",
+        f"- Pack bytes: `{summary.get('pack_bytes')}`",
+        f"- Logical/pack ratio: `{summary.get('logical_to_pack_ratio')}`",
+        f"- Verify passed: `{summary.get('verify_passed')}`",
+        f"- Handoff check passed: `{summary.get('handoff_passed')}`",
+        f"- Eval weak questions: `{summary.get('eval_weak_questions')}`",
+        f"- Eval source bytes: `{summary.get('eval_total_source_bytes')}`",
+        f"- Eval snippets: `{summary.get('eval_total_snippets')}`",
+        f"- Eval average top score: `{summary.get('eval_average_top_score')}`",
+        f"- Elapsed seconds: `{summary.get('elapsed_seconds')}`",
+        "",
+        "## Coverage",
+        "",
+        f"- Unique selected files: `{coverage.get('unique_file_count', 0)}`",
+        f"- File coverage: `{coverage.get('unique_file_percent', 0)}%`",
+        f"- Unique selected bytes: `{coverage.get('unique_source_bytes', 0)}`",
+        f"- Byte coverage: `{coverage.get('unique_source_byte_percent', 0)}%`",
+        "",
+        "## Artifacts",
+        "",
+    ]
+    for label, path in report.get("artifacts", {}).items():
+        lines.append(f"- {label}: `{path}`")
+    suggestions = eval_report.get("suggested_improvements", [])
+    lines.extend(["", "## Suggested Improvements", ""])
+    if suggestions:
+        for suggestion in suggestions:
+            lines.append(f"- {suggestion}")
+    else:
+        lines.append("No immediate eval weaknesses detected.")
+    lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def get_file_bytes(pack: Path | str, repo_path: str) -> bytes:
     """Restore one file from a pack and return its bytes."""
 
@@ -1658,6 +1829,15 @@ def _unique_items(items: Iterable[str]) -> list[str]:
 
 def _percent(part: int, whole: int) -> float:
     return round((part / whole) * 100, 2) if whole else 0.0
+
+
+def _ratio(part: Any, whole: Any) -> float | None:
+    try:
+        numerator = float(part)
+        denominator = float(whole)
+    except (TypeError, ValueError):
+        return None
+    return round(numerator / denominator, 3) if denominator else None
 
 
 def _add_verify_error(

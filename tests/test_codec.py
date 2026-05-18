@@ -10,12 +10,14 @@ from pathlib import Path
 
 from repomori.codec import (
     BuildOptions,
+    benchmark_repo,
     build_capsule,
     build_context_bundle,
     build_handoff_package,
     build_pack,
     check_handoff_package,
     evaluate_pack,
+    format_benchmark_markdown,
     format_eval_markdown,
     format_context_markdown,
     get_file_bytes,
@@ -236,6 +238,31 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertGreaterEqual(broken["error_count"], 1)
             self.assertTrue(any(error["scope"] == "artifact" for error in broken["errors"]))
 
+    def test_benchmark_repo_outputs_reports_and_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "bench"
+
+            report = benchmark_repo(repo, out, question="sqlite Store")
+
+            self.assertEqual(report["schema_version"], "repomori.bench.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["summary"]["verify_passed"])
+            self.assertTrue(report["summary"]["handoff_passed"])
+            self.assertTrue((out / "bench.json").exists())
+            self.assertTrue((out / "bench.md").exists())
+            self.assertTrue((out / "handoff" / "manifest.json").exists())
+            self.assertEqual(json.loads((out / "bench.json").read_text(encoding="utf-8")), report)
+
+            markdown = format_benchmark_markdown(report)
+            self.assertIn("# RepoMori Benchmark", markdown)
+            self.assertIn("sqlite Store", markdown)
+
+            with self.assertRaises(FileExistsError):
+                benchmark_repo(repo, out, question="sqlite Store")
+            forced = benchmark_repo(repo, out, question="sqlite Store", force=True)
+            self.assertEqual(forced["status"], "pass")
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -382,6 +409,33 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.handoff.check.v1")
             self.assertTrue(payload["valid"])
             self.assertEqual(payload["error_count"], 0)
+
+    def test_cli_bench_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "bench-cli"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "bench",
+                    str(repo),
+                    "--out",
+                    str(out),
+                    "--question",
+                    "sqlite Store",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.bench.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertTrue((out / "bench.json").exists())
+            self.assertTrue((out / "handoff" / "manifest.json").exists())
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"
