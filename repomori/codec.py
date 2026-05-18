@@ -1128,6 +1128,76 @@ def build_handoff_package(
     return manifest
 
 
+def check_handoff_package(handoff_dir: Path | str) -> dict[str, Any]:
+    """Validate a RepoMori handoff directory and its artifact manifest."""
+
+    root = Path(handoff_dir).resolve()
+    errors: list[dict[str, Any]] = []
+    artifact_results = []
+    json_results = []
+    copied_pack_result = None
+    manifest = None
+    started = time.time()
+
+    manifest_path = root / "manifest.json"
+    if not root.exists() or not root.is_dir():
+        _add_check_error(errors, "handoff", "", "Handoff directory not found.")
+    elif not manifest_path.exists():
+        _add_check_error(errors, "manifest", "manifest.json", "Manifest file not found.")
+    else:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            _add_check_error(errors, "manifest", "manifest.json", f"Manifest JSON is invalid: {exc}")
+
+    if isinstance(manifest, dict):
+        if manifest.get("schema_version") != "repomori.handoff.v1":
+            _add_check_error(
+                errors,
+                "manifest",
+                "manifest.json",
+                "Unexpected handoff schema version.",
+                expected="repomori.handoff.v1",
+                actual=manifest.get("schema_version"),
+            )
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, list):
+            _add_check_error(errors, "manifest", "manifest.json", "Manifest artifacts must be a list.")
+            artifacts = []
+        for artifact in artifacts:
+            artifact_results.append(_check_handoff_artifact(root, artifact, errors))
+
+        for name in ("context.json", "capsule.json", "eval.json", "verify.json"):
+            json_results.append(_check_handoff_json(root, name, errors))
+
+        pack_artifact = next(
+            (
+                artifact
+                for artifact in artifacts
+                if isinstance(artifact, dict) and artifact.get("kind") == "pack_copy"
+            ),
+            None,
+        )
+        if pack_artifact:
+            pack_path = root / str(pack_artifact.get("path", ""))
+            copied_pack_result = _check_handoff_pack_copy(pack_path, errors)
+
+    elapsed = time.time() - started
+    return {
+        "schema_version": "repomori.handoff.check.v1",
+        "handoff_dir": str(root),
+        "valid": not errors,
+        "error_count": len(errors),
+        "checked_artifacts": len(artifact_results),
+        "checked_json": len(json_results),
+        "copied_pack": copied_pack_result,
+        "elapsed_seconds": round(elapsed, 4),
+        "artifacts": artifact_results,
+        "json_files": json_results,
+        "errors": errors,
+    }
+
+
 def get_file_bytes(pack: Path | str, repo_path: str) -> bytes:
     """Restore one file from a pack and return its bytes."""
 
@@ -1419,6 +1489,128 @@ def _handoff_readme(question: str, copied_pack: bool) -> str:
         f"{pack_note}"
         "No AI provider, API key, or network call is required to consume this handoff.\n"
     )
+
+
+def _check_handoff_artifact(
+    root: Path,
+    artifact: Any,
+    errors: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not isinstance(artifact, dict):
+        _add_check_error(errors, "artifact", "", "Artifact entry must be an object.")
+        return {"path": None, "exists": False, "valid": False}
+    relative = str(artifact.get("path", ""))
+    result = {
+        "path": relative,
+        "kind": artifact.get("kind"),
+        "exists": False,
+        "valid": False,
+        "size": None,
+        "sha256": None,
+    }
+    if not relative:
+        _add_check_error(errors, "artifact", "", "Artifact path is missing.")
+        return result
+    try:
+        path = _safe_child_path(root, relative)
+    except ValueError as exc:
+        _add_check_error(errors, "artifact", relative, str(exc))
+        return result
+    if not path.exists() or not path.is_file():
+        _add_check_error(errors, "artifact", relative, "Artifact file not found.")
+        return result
+
+    data = path.read_bytes()
+    actual_size = len(data)
+    actual_hash = hashlib.sha256(data).hexdigest()
+    result.update({"exists": True, "size": actual_size, "sha256": actual_hash})
+    if actual_size != artifact.get("size"):
+        _add_check_error(
+            errors,
+            "artifact",
+            relative,
+            "Artifact size mismatch.",
+            expected=artifact.get("size"),
+            actual=actual_size,
+        )
+    if actual_hash != artifact.get("sha256"):
+        _add_check_error(
+            errors,
+            "artifact",
+            relative,
+            "Artifact SHA-256 mismatch.",
+            expected=artifact.get("sha256"),
+            actual=actual_hash,
+        )
+    result["valid"] = actual_size == artifact.get("size") and actual_hash == artifact.get("sha256")
+    return result
+
+
+def _check_handoff_json(root: Path, relative: str, errors: list[dict[str, Any]]) -> dict[str, Any]:
+    result = {"path": relative, "exists": False, "valid_json": False}
+    try:
+        path = _safe_child_path(root, relative)
+    except ValueError as exc:
+        _add_check_error(errors, "json", relative, str(exc))
+        return result
+    if not path.exists():
+        _add_check_error(errors, "json", relative, "Expected JSON artifact not found.")
+        return result
+    result["exists"] = True
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        _add_check_error(errors, "json", relative, f"JSON artifact is invalid: {exc}")
+        return result
+    result["valid_json"] = True
+    return result
+
+
+def _check_handoff_pack_copy(pack_path: Path, errors: list[dict[str, Any]]) -> dict[str, Any]:
+    result = {"path": pack_path.name, "verified": False, "error_count": None}
+    if not pack_path.exists():
+        _add_check_error(errors, "pack_copy", pack_path.name, "Copied pack file not found.")
+        return result
+    try:
+        verify_report = verify_pack(pack_path)
+    except (FileNotFoundError, sqlite3.DatabaseError, ValueError, zlib.error) as exc:
+        _add_check_error(errors, "pack_copy", pack_path.name, f"Copied pack verification failed: {exc}")
+        return result
+    result["verified"] = bool(verify_report.get("verified"))
+    result["error_count"] = verify_report.get("error_count")
+    if not result["verified"]:
+        _add_check_error(
+            errors,
+            "pack_copy",
+            pack_path.name,
+            "Copied pack did not verify.",
+            actual=verify_report.get("error_count"),
+        )
+    return result
+
+
+def _safe_child_path(root: Path, relative: str) -> Path:
+    path = (root / relative).resolve()
+    if path != root and root not in path.parents:
+        raise ValueError("Path escapes handoff directory.")
+    return path
+
+
+def _add_check_error(
+    errors: list[dict[str, Any]],
+    scope: str,
+    path: str,
+    message: str,
+    *,
+    expected: Any = None,
+    actual: Any = None,
+) -> None:
+    error = {"scope": scope, "path": path, "message": message}
+    if expected is not None:
+        error["expected"] = expected
+    if actual is not None:
+        error["actual"] = actual
+    errors.append(error)
 
 
 def _eval_weak_signals(

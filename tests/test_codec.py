@@ -14,6 +14,7 @@ from repomori.codec import (
     build_context_bundle,
     build_handoff_package,
     build_pack,
+    check_handoff_package,
     evaluate_pack,
     format_eval_markdown,
     format_context_markdown,
@@ -214,6 +215,27 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(pack_copy.read_bytes(), pack.read_bytes())
             self.assertTrue(any(artifact["kind"] == "pack_copy" for artifact in copied["artifacts"]))
 
+            check = check_handoff_package(copy_out)
+            self.assertTrue(check["valid"])
+            self.assertTrue(check["copied_pack"]["verified"])
+
+    def test_check_handoff_detects_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff"
+            build_handoff_package(pack, "sqlite Store", out)
+
+            clean = check_handoff_package(out)
+            self.assertTrue(clean["valid"])
+            self.assertEqual(clean["checked_artifacts"], 7)
+            self.assertEqual(clean["checked_json"], 4)
+
+            (out / "context.md").write_text("tampered\n", encoding="utf-8")
+            broken = check_handoff_package(out)
+            self.assertFalse(broken["valid"])
+            self.assertGreaterEqual(broken["error_count"], 1)
+            self.assertTrue(any(error["scope"] == "artifact" for error in broken["errors"]))
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -337,6 +359,29 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["question"], "sqlite Store")
             self.assertTrue((out / "manifest.json").exists())
             self.assertTrue((out / "context.md").exists())
+
+    def test_cli_check_handoff_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff-check-cli"
+            build_handoff_package(pack, "sqlite Store", out)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "check-handoff",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.handoff.check.v1")
+            self.assertTrue(payload["valid"])
+            self.assertEqual(payload["error_count"], 0)
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

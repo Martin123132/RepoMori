@@ -13,6 +13,7 @@ from .codec import (
     build_context_bundle,
     build_handoff_package,
     build_pack,
+    check_handoff_package,
     evaluate_pack,
     format_context_markdown,
     format_eval_markdown,
@@ -104,6 +105,10 @@ def main(argv: list[str] | None = None) -> int:
     handoff.add_argument("--eval-question", action="append", help="Extra eval question; repeat for more.")
     handoff.add_argument("--questions-file", type=Path, help="Read extra eval questions, one per line.")
     handoff.add_argument("--json", action="store_true", help="Print manifest JSON.")
+
+    check_handoff = sub.add_parser("check-handoff", help="Validate a handoff package directory.")
+    check_handoff.add_argument("handoff_dir", type=Path)
+    check_handoff.add_argument("--json", action="store_true")
 
     get = sub.add_parser("get", help="Restore one exact file from the pack.")
     get.add_argument("pack", type=Path)
@@ -210,6 +215,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"status: {manifest['status']}")
             print(f"artifacts: {len(manifest['artifacts'])}")
         return 1 if manifest["status"] == "verification_failed" else 0
+    if args.command == "check-handoff":
+        result = check_handoff_package(args.handoff_dir)
+        _print(result, args.json)
+        return 0 if result["valid"] else 1
     if args.command == "get":
         data = get_file_bytes(args.pack, args.path)
         if args.out:
