@@ -2151,6 +2151,235 @@ def read_snapshot_timeline(out_dir: Path | str, *, limit: int | None = None) -> 
     }
 
 
+def doctor_snapshot_dir(out_dir: Path | str, *, verify_packs: bool = False) -> dict[str, Any]:
+    """Check snapshot index, pack hashes, generated reports, and handoff health."""
+
+    out_path = Path(out_dir).resolve()
+    index_path = out_path / "snapshots.json"
+    latest_path = out_path / "latest.repomori"
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    summary: dict[str, Any] = {
+        "out_dir": str(out_path),
+        "index_path": str(index_path),
+        "snapshot_count": 0,
+        "checked_packs": 0,
+        "verified_packs": 0,
+        "checked_artifacts": 0,
+        "checked_handoffs": 0,
+        "latest_repomori": str(latest_path),
+        "verify_packs": verify_packs,
+    }
+
+    index: dict[str, Any] | None = None
+    snapshots: list[dict[str, Any]] = []
+    if not out_path.exists():
+        _add_doctor_issue(errors, "out_dir", str(out_path), "Snapshot directory does not exist.")
+    elif not out_path.is_dir():
+        _add_doctor_issue(errors, "out_dir", str(out_path), "Snapshot path is not a directory.")
+    elif not index_path.exists():
+        _add_doctor_issue(errors, "index", str(index_path), "snapshots.json was not found.")
+    else:
+        try:
+            index = _read_snapshot_index(index_path, out_path)
+        except json.JSONDecodeError as exc:
+            _add_doctor_issue(errors, "index", str(index_path), f"snapshots.json is invalid JSON: {exc}")
+        except ValueError as exc:
+            _add_doctor_issue(errors, "index", str(index_path), str(exc))
+
+    if index is not None:
+        raw_snapshots = index.get("snapshots", [])
+        if isinstance(raw_snapshots, list):
+            for offset, item in enumerate(raw_snapshots):
+                if isinstance(item, dict):
+                    snapshots.append(item)
+                else:
+                    _add_doctor_issue(
+                        errors,
+                        "index",
+                        str(index_path),
+                        "Snapshot index entry is not an object.",
+                        index=offset,
+                    )
+        else:
+            _add_doctor_issue(errors, "index", str(index_path), "Snapshot index snapshots must be a list.")
+
+        summary["snapshot_count"] = len(snapshots)
+        summary["index_snapshot_count"] = index.get("snapshot_count")
+        if index.get("snapshot_count") != len(snapshots):
+            _add_doctor_issue(
+                warnings,
+                "index",
+                str(index_path),
+                "snapshot_count does not match the number of indexed snapshots.",
+                expected=len(snapshots),
+                actual=index.get("snapshot_count"),
+            )
+
+        latest = index.get("latest")
+        if latest is None:
+            if snapshots:
+                _add_doctor_issue(errors, "latest", str(index_path), "Snapshot index latest entry is missing.")
+        elif not isinstance(latest, dict):
+            _add_doctor_issue(errors, "latest", str(index_path), "Snapshot index latest entry is not an object.")
+        else:
+            latest_pack = _recorded_snapshot_path(out_path, latest.get("pack_path"))
+            summary["latest_index_pack"] = str(latest_pack) if latest_pack is not None else None
+            if latest_pack is None:
+                _add_doctor_issue(errors, "latest", str(index_path), "Snapshot index latest pack_path is missing.")
+            elif not latest_pack.exists():
+                _add_doctor_issue(errors, "latest", str(latest_pack), "Snapshot index latest pack does not exist.")
+
+        if not latest_path.exists():
+            _add_doctor_issue(errors, "latest", str(latest_path), "latest.repomori does not exist.")
+        elif not latest_path.is_file():
+            _add_doctor_issue(errors, "latest", str(latest_path), "latest.repomori is not a file.")
+
+        latest_pack_keys = {str(_recorded_snapshot_path(out_path, item.get("pack_path"))) for item in snapshots}
+        if isinstance(index.get("latest"), dict):
+            latest_key = str(_recorded_snapshot_path(out_path, index["latest"].get("pack_path")))
+            if snapshots and latest_key not in latest_pack_keys:
+                _add_doctor_issue(
+                    warnings,
+                    "latest",
+                    str(index_path),
+                    "Snapshot index latest entry is not present in snapshots.",
+                )
+
+        for offset, snapshot in enumerate(snapshots):
+            _doctor_check_snapshot(out_path, snapshot, offset, verify_packs, summary, errors, warnings)
+
+    status = "fail" if errors else "warn" if warnings else "pass"
+    return {
+        "schema_version": "repomori.doctor.v1",
+        "status": status,
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+        "summary": summary,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def prune_snapshots(out_dir: Path | str, *, keep: int = 20, apply: bool = False) -> dict[str, Any]:
+    """Plan or apply safe cleanup of generated snapshot artifacts."""
+
+    if keep < 0:
+        raise ValueError("keep must be zero or greater")
+
+    out_path = Path(out_dir).resolve()
+    index_path = out_path / "snapshots.json"
+    latest_path = out_path / "latest.repomori"
+    deleted: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    retained: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+
+    if not out_path.exists():
+        _add_prune_error(errors, "out_dir", str(out_path), "Snapshot directory does not exist.")
+        snapshots: list[dict[str, Any]] = []
+        index: dict[str, Any] | None = None
+    elif not out_path.is_dir():
+        _add_prune_error(errors, "out_dir", str(out_path), "Snapshot path is not a directory.")
+        snapshots = []
+        index = None
+    elif not index_path.exists():
+        _add_prune_error(errors, "index", str(index_path), "snapshots.json was not found.")
+        snapshots = []
+        index = None
+    else:
+        try:
+            index = _read_snapshot_index(index_path, out_path)
+            snapshots = [item for item in index.get("snapshots", []) if isinstance(item, dict)]
+        except json.JSONDecodeError as exc:
+            _add_prune_error(errors, "index", str(index_path), f"snapshots.json is invalid JSON: {exc}")
+            snapshots = []
+            index = None
+        except ValueError as exc:
+            _add_prune_error(errors, "index", str(index_path), str(exc))
+            snapshots = []
+            index = None
+
+    retained_keys: set[str] = set()
+    latest_entry = index.get("latest") if isinstance(index, dict) and isinstance(index.get("latest"), dict) else None
+    if latest_entry is not None:
+        retained_keys.add(_snapshot_pack_key(out_path, latest_entry))
+    ordered_snapshots = sorted(snapshots, key=lambda item: _snapshot_entry_sort_key(out_path, item))
+    for offset, snapshot in enumerate(reversed(ordered_snapshots)):
+        if offset >= keep:
+            break
+        retained_keys.add(_snapshot_pack_key(out_path, snapshot))
+    retained_keys = {key for key in retained_keys if key}
+
+    seen_targets: set[str] = set()
+    for snapshot in snapshots:
+        key = _snapshot_pack_key(out_path, snapshot)
+        record = _snapshot_prune_record(snapshot)
+        if key in retained_keys:
+            retained.append(record)
+            continue
+        targets, target_skips = _snapshot_prune_targets(out_path, snapshot)
+        candidates.append({**record, "artifacts": targets, "skipped": target_skips})
+        skipped.extend(target_skips)
+        for target in targets:
+            target_path = Path(str(target["path"])).resolve()
+            target_key = str(target_path)
+            if target_key in seen_targets:
+                continue
+            seen_targets.add(target_key)
+            if target_path in {index_path, latest_path}:
+                skipped.append({**target, "reason": "protected"})
+                continue
+            if not _is_within_path(out_path, target_path):
+                skipped.append({**target, "reason": "skipped_external"})
+                continue
+            if target_path == out_path:
+                skipped.append({**target, "reason": "protected"})
+                continue
+            if not target_path.exists():
+                skipped.append({**target, "reason": "missing"})
+                continue
+            if not apply:
+                continue
+            try:
+                if target_path.is_dir():
+                    shutil.rmtree(target_path)
+                else:
+                    target_path.unlink()
+            except OSError as exc:
+                _add_prune_error(errors, "delete", str(target_path), f"Could not delete snapshot artifact: {exc}")
+                continue
+            deleted.append({**target, "deleted": True})
+
+    if apply and index is not None and not errors:
+        retained_snapshots = [snapshot for snapshot in snapshots if _snapshot_pack_key(out_path, snapshot) in retained_keys]
+        latest = index.get("latest")
+        if isinstance(latest, dict) and _snapshot_pack_key(out_path, latest) not in retained_keys:
+            retained_snapshots.append(latest)
+        updated = {
+            "schema_version": "repomori.snapshots.v1",
+            "out_dir": str(out_path),
+            "updated_at": int(time.time()),
+            "snapshot_count": len(retained_snapshots),
+            "latest": index.get("latest"),
+            "snapshots": retained_snapshots,
+        }
+        _write_json(index_path, updated)
+
+    return {
+        "schema_version": "repomori.prune.v1",
+        "applied": apply,
+        "keep": keep,
+        "out_dir": str(out_path),
+        "retained": retained,
+        "candidates": candidates,
+        "deleted": deleted,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
 def format_timeline_markdown(timeline: dict[str, Any]) -> str:
     """Render snapshot timeline history as Markdown."""
 
@@ -2905,7 +3134,7 @@ def _update_snapshot_index(out_path: Path, report: dict[str, Any]) -> dict[str, 
         if snapshot.get("pack_path") != entry["pack_path"]
     ]
     snapshots.append(entry)
-    snapshots.sort(key=lambda item: (int(item.get("created_at", 0) or 0), str(item.get("pack_path", ""))))
+    snapshots.sort(key=lambda item: _snapshot_entry_sort_key(out_path, item))
     updated = {
         "schema_version": "repomori.snapshots.v1",
         "out_dir": str(out_path),
@@ -2968,6 +3197,252 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
         "unchanged_count": compare_summary.get("unchanged_count"),
         "byte_delta": compare_summary.get("byte_delta"),
     }
+
+
+def _doctor_check_snapshot(
+    out_path: Path,
+    snapshot: dict[str, Any],
+    index: int,
+    verify_packs: bool,
+    summary: dict[str, Any],
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+) -> None:
+    pack_path = _recorded_snapshot_path(out_path, snapshot.get("pack_path"))
+    pack_label = str(pack_path) if pack_path is not None else str(snapshot.get("pack_path"))
+    if pack_path is None:
+        _add_doctor_issue(errors, "pack", pack_label, "Snapshot pack_path is missing.", index=index)
+    elif not pack_path.exists():
+        _add_doctor_issue(errors, "pack", str(pack_path), "Indexed snapshot pack does not exist.", index=index)
+    elif not pack_path.is_file():
+        _add_doctor_issue(errors, "pack", str(pack_path), "Indexed snapshot pack is not a file.", index=index)
+    else:
+        summary["checked_packs"] += 1
+        expected_hash = snapshot.get("pack_sha256")
+        actual_hash = _path_sha256(pack_path)
+        if expected_hash and actual_hash != expected_hash:
+            _add_doctor_issue(
+                errors,
+                "pack",
+                str(pack_path),
+                "Indexed snapshot pack SHA-256 does not match.",
+                index=index,
+                expected=expected_hash,
+                actual=actual_hash,
+            )
+        elif not expected_hash:
+            _add_doctor_issue(
+                warnings,
+                "pack",
+                str(pack_path),
+                "Indexed snapshot pack has no recorded SHA-256.",
+                index=index,
+            )
+
+        if verify_packs:
+            try:
+                verify = verify_pack(pack_path)
+            except (FileNotFoundError, sqlite3.DatabaseError, ValueError, zlib.error) as exc:
+                _add_doctor_issue(
+                    errors,
+                    "verify",
+                    str(pack_path),
+                    f"Pack verification could not run: {exc}",
+                    index=index,
+                )
+            else:
+                if verify.get("verified"):
+                    summary["verified_packs"] += 1
+                else:
+                    _add_doctor_issue(
+                        errors,
+                        "verify",
+                        str(pack_path),
+                        "Pack verification failed.",
+                        index=index,
+                        actual=verify.get("error_count"),
+                    )
+
+    for field in ("snapshot_json", "snapshot_markdown"):
+        _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
+    for field in ("compare_json", "compare_markdown"):
+        if snapshot.get(field):
+            _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
+
+    handoff_value = snapshot.get("handoff_dir")
+    if not handoff_value:
+        return
+    handoff_path = _recorded_snapshot_path(out_path, handoff_value)
+    if handoff_path is None:
+        _add_doctor_issue(errors, "handoff", str(handoff_value), "Recorded handoff path is empty.", index=index)
+        return
+    if not _is_within_path(out_path, handoff_path):
+        if not handoff_path.exists():
+            _add_doctor_issue(
+                warnings,
+                "handoff",
+                str(handoff_path),
+                "External handoff path is recorded but does not exist.",
+                index=index,
+            )
+        else:
+            _add_doctor_issue(
+                warnings,
+                "handoff",
+                str(handoff_path),
+                "External handoff path was not validated by snapshot doctor.",
+                index=index,
+            )
+        return
+    if not handoff_path.exists():
+        _add_doctor_issue(errors, "handoff", str(handoff_path), "Recorded in-dir handoff does not exist.", index=index)
+        return
+    if not handoff_path.is_dir():
+        _add_doctor_issue(errors, "handoff", str(handoff_path), "Recorded in-dir handoff is not a directory.", index=index)
+        return
+    summary["checked_handoffs"] += 1
+    check = check_handoff_package(handoff_path)
+    if not check.get("valid"):
+        _add_doctor_issue(
+            errors,
+            "handoff",
+            str(handoff_path),
+            "Recorded in-dir handoff failed validation.",
+            index=index,
+            actual=check.get("error_count"),
+        )
+
+
+def _doctor_check_snapshot_artifact(
+    out_path: Path,
+    snapshot: dict[str, Any],
+    index: int,
+    field: str,
+    errors: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> None:
+    value = snapshot.get(field)
+    path = _recorded_snapshot_path(out_path, value)
+    label = str(path) if path is not None else str(value)
+    summary["checked_artifacts"] += 1
+    if path is None:
+        _add_doctor_issue(errors, field, label, f"Recorded {field} path is missing.", index=index)
+        return
+    if not path.exists():
+        _add_doctor_issue(errors, field, str(path), f"Recorded {field} path does not exist.", index=index)
+        return
+    if not path.is_file():
+        _add_doctor_issue(errors, field, str(path), f"Recorded {field} path is not a file.", index=index)
+
+
+def _add_doctor_issue(
+    issues: list[dict[str, Any]],
+    scope: str,
+    path: str,
+    message: str,
+    *,
+    index: int | None = None,
+    expected: Any = None,
+    actual: Any = None,
+) -> None:
+    issue: dict[str, Any] = {"scope": scope, "path": path, "message": message}
+    if index is not None:
+        issue["index"] = index
+    if expected is not None:
+        issue["expected"] = expected
+    if actual is not None:
+        issue["actual"] = actual
+    issues.append(issue)
+
+
+def _recorded_snapshot_path(out_path: Path, value: Any) -> Path | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    path = Path(text)
+    if not path.is_absolute():
+        path = out_path / path
+    return path.resolve()
+
+
+def _is_within_path(root: Path, path: Path) -> bool:
+    root_resolved = root.resolve()
+    path_resolved = path.resolve()
+    return path_resolved == root_resolved or root_resolved in path_resolved.parents
+
+
+def _snapshot_pack_key(out_path: Path, snapshot: dict[str, Any]) -> str:
+    pack_path = _recorded_snapshot_path(out_path, snapshot.get("pack_path"))
+    return str(pack_path) if pack_path is not None else ""
+
+
+def _snapshot_entry_sort_key(out_path: Path, snapshot: dict[str, Any]) -> tuple[int, int, str]:
+    pack_path = _recorded_snapshot_path(out_path, snapshot.get("pack_path"))
+    pack_name = str(snapshot.get("pack_name") or (pack_path.name if pack_path is not None else ""))
+    stem = Path(pack_name).stem
+    suffix_order = 0
+    match = re.search(r"\d{8}-\d{6}(?:-(\d+))?$", stem)
+    if match and match.group(1):
+        suffix_order = int(match.group(1))
+    return (int(snapshot.get("created_at", 0) or 0), suffix_order, str(pack_path or ""))
+
+
+def _snapshot_prune_record(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "created_at": snapshot.get("created_at"),
+        "pack_name": snapshot.get("pack_name"),
+        "pack_path": snapshot.get("pack_path"),
+        "pack_sha256": snapshot.get("pack_sha256"),
+        "snapshot_json": snapshot.get("snapshot_json"),
+        "snapshot_markdown": snapshot.get("snapshot_markdown"),
+        "compare_json": snapshot.get("compare_json"),
+        "compare_markdown": snapshot.get("compare_markdown"),
+        "handoff_dir": snapshot.get("handoff_dir"),
+    }
+
+
+def _snapshot_prune_targets(out_path: Path, snapshot: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    targets: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for kind, field in (
+        ("pack", "pack_path"),
+        ("snapshot_json", "snapshot_json"),
+        ("snapshot_markdown", "snapshot_markdown"),
+        ("compare_json", "compare_json"),
+        ("compare_markdown", "compare_markdown"),
+    ):
+        path = _recorded_snapshot_path(out_path, snapshot.get(field))
+        if path is None:
+            continue
+        targets.append(
+            {
+                "kind": kind,
+                "path": str(path),
+                "exists": path.exists(),
+                "directory": path.is_dir(),
+            }
+        )
+
+    handoff_path = _recorded_snapshot_path(out_path, snapshot.get("handoff_dir"))
+    if handoff_path is None:
+        return targets, skipped
+    handoff_target = {
+        "kind": "handoff_dir",
+        "path": str(handoff_path),
+        "exists": handoff_path.exists(),
+        "directory": True,
+    }
+    if _is_within_path(out_path, handoff_path):
+        targets.append(handoff_target)
+    else:
+        skipped.append({**handoff_target, "reason": "skipped_external"})
+    return targets, skipped
+
+
+def _add_prune_error(errors: list[dict[str, Any]], scope: str, path: str, message: str) -> None:
+    errors.append({"scope": scope, "path": path, "message": message})
 
 
 def _sum_snapshot_field(snapshots: list[dict[str, Any]], field: str) -> int:

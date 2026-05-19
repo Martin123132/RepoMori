@@ -19,6 +19,7 @@ from repomori.codec import (
     check_handoff_package,
     compare_packs,
     diagnose_query,
+    doctor_snapshot_dir,
     evaluate_pack,
     format_benchmark_markdown,
     format_brief_markdown,
@@ -30,6 +31,7 @@ from repomori.codec import (
     get_file_bytes,
     info_pack,
     query_pack,
+    prune_snapshots,
     read_snapshot_timeline,
     snapshot_repo,
     tree_pack,
@@ -477,6 +479,114 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(index["latest"]["handoff_dir"], str(handoff_dir))
             self.assertTrue(index["latest"]["handoff_passed"])
 
+    def test_doctor_snapshot_dir_passes_clean_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            snapshot_repo(repo, out, handoff_question="sqlite Store")
+
+            report = doctor_snapshot_dir(out, verify_packs=True)
+            self.assertEqual(report["schema_version"], "repomori.doctor.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["error_count"], 0)
+            self.assertEqual(report["warning_count"], 0)
+            self.assertEqual(report["summary"]["snapshot_count"], 2)
+            self.assertEqual(report["summary"]["checked_packs"], 2)
+            self.assertEqual(report["summary"]["verified_packs"], 2)
+            self.assertEqual(report["summary"]["checked_handoffs"], 1)
+
+    def test_doctor_detects_missing_pack_and_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            first = snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            second = snapshot_repo(repo, out)
+
+            Path(first["summary"]["pack_path"]).unlink()
+            second_pack = Path(second["summary"]["pack_path"])
+            second_pack.write_bytes(second_pack.read_bytes() + b"tampered")
+
+            report = doctor_snapshot_dir(out)
+            self.assertEqual(report["status"], "fail")
+            self.assertGreaterEqual(report["error_count"], 2)
+            messages = [error["message"] for error in report["errors"]]
+            self.assertTrue(any("does not exist" in message for message in messages))
+            self.assertTrue(any("SHA-256" in message for message in messages))
+
+    def test_doctor_validates_snapshot_handoff_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            report = snapshot_repo(repo, out, handoff_question="sqlite Store")
+            handoff_dir = Path(report["summary"]["handoff_dir"])
+            (handoff_dir / "context.md").unlink()
+
+            doctor = doctor_snapshot_dir(out)
+            self.assertEqual(doctor["status"], "fail")
+            self.assertTrue(any(error["scope"] == "handoff" for error in doctor["errors"]))
+
+    def test_prune_snapshots_dry_run_and_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            first = snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            second = snapshot_repo(repo, out, handoff_question="sqlite Store")
+            (repo / "next.py").write_text("def next_step():\n    return 'next'\n", encoding="utf-8")
+            third = snapshot_repo(repo, out)
+            index_before = (out / "snapshots.json").read_text(encoding="utf-8")
+
+            dry_run = prune_snapshots(out, keep=1)
+            self.assertFalse(dry_run["applied"])
+            self.assertEqual(len(dry_run["retained"]), 1)
+            self.assertEqual(len(dry_run["candidates"]), 2)
+            self.assertEqual((out / "snapshots.json").read_text(encoding="utf-8"), index_before)
+            self.assertTrue(Path(first["summary"]["pack_path"]).exists())
+            self.assertTrue(Path(second["summary"]["handoff_dir"]).exists())
+
+            applied = prune_snapshots(out, keep=1, apply=True)
+            self.assertTrue(applied["applied"])
+            self.assertFalse(applied["errors"])
+            self.assertTrue((out / "latest.repomori").exists())
+            self.assertTrue((out / "snapshots.json").exists())
+            self.assertTrue(Path(third["summary"]["pack_path"]).exists())
+            self.assertFalse(Path(first["summary"]["pack_path"]).exists())
+            self.assertFalse(Path(second["summary"]["handoff_dir"]).exists())
+            updated = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(updated["snapshot_count"], 1)
+            self.assertEqual(updated["latest"]["pack_path"], third["summary"]["pack_path"])
+
+    def test_prune_skips_external_handoff_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+            external_handoff = Path(tmp) / "external-handoff"
+
+            snapshot_repo(repo, out, handoff_question="sqlite Store", handoff_out_dir=external_handoff)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+            (repo / "next.py").write_text("def next_step():\n    return 'next'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+
+            report = prune_snapshots(out, keep=1, apply=True)
+            self.assertFalse(report["errors"])
+            self.assertTrue(external_handoff.exists())
+            self.assertTrue(
+                any(
+                    item["reason"] == "skipped_external" and item["path"] == str(external_handoff.resolve())
+                    for item in report["skipped"]
+                )
+            )
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -856,6 +966,77 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.timeline.v1")
             self.assertEqual(payload["snapshot_count"], 2)
             self.assertEqual(payload["returned_count"], 1)
+
+    def test_cli_doctor_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "doctor-cli"
+            snapshot_repo(repo, out)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "doctor",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.doctor.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["error_count"], 0)
+
+    def test_cli_prune_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "prune-cli"
+            first = snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+
+            dry_run_output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "prune",
+                    str(out),
+                    "--keep",
+                    "1",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+            dry_run = json.loads(dry_run_output)
+            self.assertEqual(dry_run["schema_version"], "repomori.prune.v1")
+            self.assertFalse(dry_run["applied"])
+            self.assertEqual(len(dry_run["candidates"]), 1)
+            self.assertTrue(Path(first["summary"]["pack_path"]).exists())
+
+            apply_output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "prune",
+                    str(out),
+                    "--keep",
+                    "1",
+                    "--apply",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+            applied = json.loads(apply_output)
+            self.assertTrue(applied["applied"])
+            self.assertFalse(applied["errors"])
+            self.assertFalse(Path(first["summary"]["pack_path"]).exists())
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

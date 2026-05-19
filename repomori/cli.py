@@ -18,6 +18,7 @@ from .codec import (
     check_handoff_package,
     compare_packs,
     diagnose_query,
+    doctor_snapshot_dir,
     evaluate_pack,
     format_brief_markdown,
     format_compare_markdown,
@@ -29,6 +30,7 @@ from .codec import (
     info_pack,
     query_pack,
     read_snapshot_timeline,
+    prune_snapshots,
     snapshot_repo,
     tree_pack,
     verify_pack,
@@ -65,6 +67,17 @@ def main(argv: list[str] | None = None) -> int:
     timeline.add_argument("--limit", type=int, help="Maximum recent snapshots to return.")
     timeline.add_argument("--format", choices=("markdown", "json"), default="markdown")
     timeline.add_argument("--out", type=Path, help="Write the timeline report to this file.")
+
+    doctor = sub.add_parser("doctor", help="Check snapshot directory health.")
+    doctor.add_argument("out_dir", type=Path)
+    doctor.add_argument("--verify-packs", action="store_true", help="Run full pack verification for indexed packs.")
+    doctor.add_argument("--json", action="store_true", help="Print doctor JSON.")
+
+    prune = sub.add_parser("prune", help="Plan or apply safe snapshot cleanup.")
+    prune.add_argument("out_dir", type=Path)
+    prune.add_argument("--keep", type=int, default=20, help="Newest snapshots to keep in addition to latest.")
+    prune.add_argument("--apply", action="store_true", help="Delete planned in-dir artifacts and update snapshots.json.")
+    prune.add_argument("--json", action="store_true", help="Print prune JSON.")
 
     info = sub.add_parser("info", help="Show pack metadata.")
     info.add_argument("pack", type=Path)
@@ -224,6 +237,14 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0
+    if args.command == "doctor":
+        result = doctor_snapshot_dir(args.out_dir, verify_packs=args.verify_packs)
+        _print(result, args.json)
+        return 0 if result["status"] != "fail" else 1
+    if args.command == "prune":
+        result = prune_snapshots(args.out_dir, keep=args.keep, apply=args.apply)
+        _print(result, args.json)
+        return 0 if not result["errors"] else 1
     if args.command == "info":
         _print(info_pack(args.pack), args.json)
         return 0

@@ -18,6 +18,9 @@ The first version is deliberately local and dependency-light:
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
 python -m repomori timeline D:\Dev\RepoMori\packs --format json
+python -m repomori doctor D:\Dev\RepoMori\packs --json
+python -m repomori prune D:\Dev\RepoMori\packs --keep 20 --json
+python -m repomori prune D:\Dev\RepoMori\packs --keep 20 --apply --json
 python -m repomori info C:\path\to\repo.repomori
 python -m repomori query C:\path\to\repo.repomori storage
 python -m repomori diagnose C:\path\to\repo.repomori "where is storage handled?" --json
@@ -53,6 +56,8 @@ exactness matters.
 repomori build <repo> <pack>
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-compare] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
+repomori doctor <snapshot-dir> [--verify-packs] [--json]
+repomori prune <snapshot-dir> [--keep n] [--apply] [--json]
 repomori info <pack>
 repomori tree <pack>
 repomori query <pack> <text>
@@ -100,6 +105,17 @@ using the previous snapshot as `--base-pack` when available.
 `timeline` reads `snapshots.json` and reports recent snapshots, pack hashes,
 verification status, handoff locations, and aggregate added/removed/changed
 counts.
+
+`doctor` checks snapshot-directory health: `snapshots.json` parseability,
+indexed pack existence and SHA-256 hashes, recorded snapshot/compare artifacts,
+`latest.repomori`, and in-directory handoff packages. Add `--verify-packs` when
+you want a full pack verification pass for each indexed snapshot.
+
+`prune` plans safe cleanup of old generated snapshot artifacts. It is a dry run
+unless `--apply` is supplied. It keeps `latest.repomori`, `snapshots.json`, the
+latest indexed snapshot, and the newest `--keep` snapshots, then only removes
+generated packs, reports, compare reports, and in-directory handoff folders
+inside the snapshot directory. External handoff paths are reported as skipped.
 
 `verify` checks that stored chunks decompress, chunk hashes match, and restored
 files still match their recorded sizes and SHA-256 hashes.
