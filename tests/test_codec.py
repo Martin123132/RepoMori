@@ -29,7 +29,9 @@ from repomori.codec import (
     format_snapshot_markdown,
     format_timeline_markdown,
     get_file_bytes,
+    init_config,
     info_pack,
+    load_memory_config,
     query_pack,
     prune_snapshots,
     read_snapshot_timeline,
@@ -648,6 +650,45 @@ class RepoMoriCodecTests(unittest.TestCase):
             index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
             self.assertEqual(index["snapshot_count"], 1)
 
+    def test_init_and_load_memory_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+
+            result = init_config(repo, out)
+            config_path = Path(result["config_path"])
+            self.assertEqual(result["schema_version"], "repomori.config.init.v1")
+            self.assertTrue(config_path.exists())
+            self.assertIn("[profiles.default]", config_path.read_text(encoding="utf-8"))
+
+            loaded = load_memory_config(config_path)
+            self.assertEqual(loaded["schema_version"], "repomori.config.v1")
+            self.assertEqual(loaded["profile"], "default")
+            self.assertEqual(loaded["settings"]["repo"], str(repo.resolve()))
+            self.assertEqual(loaded["settings"]["out_dir"], str(out.resolve()))
+            self.assertEqual(loaded["settings"]["keep"], 20)
+            self.assertFalse(loaded["settings"]["prune_apply"])
+
+    def test_load_memory_config_supports_named_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            config_path = Path(tmp) / "repomori.toml"
+            init_config(
+                repo,
+                Path(tmp) / "packs",
+                config_path=config_path,
+                profile="nightly",
+                keep=2,
+                prune_apply=True,
+                no_handoff=True,
+            )
+
+            loaded = load_memory_config(config_path, profile="nightly")
+            self.assertEqual(loaded["profile"], "nightly")
+            self.assertEqual(loaded["settings"]["keep"], 2)
+            self.assertTrue(loaded["settings"]["prune_apply"])
+            self.assertTrue(loaded["settings"]["no_handoff"])
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -1182,6 +1223,89 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(payload["prune"]["errors"])
             index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
             self.assertEqual(index["snapshot_count"], 1)
+
+    def test_cli_init_json_writes_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "init",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--config",
+                    str(config),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.config.init.v1")
+            self.assertEqual(payload["config_path"], str(config.resolve()))
+            self.assertTrue(config.exists())
+            self.assertIn("repomori.config.v1", config.read_text(encoding="utf-8"))
+
+    def test_cli_memory_uses_config_without_repo_or_out_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            init_config(repo, out, config_path=config)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    "--config",
+                    str(config),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertEqual(payload["repo_path"], str(repo.resolve()))
+            self.assertEqual(payload["out_dir"], str(out.resolve()))
+            self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "manifest.json").exists())
+
+    def test_cli_memory_flags_override_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            init_config(repo, out, config_path=config, no_handoff=True, keep=5)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    "--config",
+                    str(config),
+                    "--with-handoff",
+                    "--keep",
+                    "1",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertFalse(payload["settings"]["no_handoff"])
+            self.assertEqual(payload["settings"]["keep"], 1)
+            self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "manifest.json").exists())
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

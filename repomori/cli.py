@@ -27,7 +27,9 @@ from .codec import (
     format_snapshot_markdown,
     format_timeline_markdown,
     get_file_bytes,
+    init_config,
     info_pack,
+    load_memory_config,
     query_pack,
     read_snapshot_timeline,
     prune_snapshots,
@@ -51,6 +53,23 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--chunk-size", type=int, default=256 * 1024)
     build.add_argument("--force", action="store_true", help="Overwrite an existing pack.")
     build.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    init = sub.add_parser("init", help="Write a RepoMori config file.")
+    init.add_argument("repo", type=Path, help="Repository folder to remember.")
+    init.add_argument("--out-dir", type=Path, required=True, help="Directory for snapshot packs and reports.")
+    init.add_argument("--config", type=Path, help="Config file path; defaults to <repo>/repomori.toml.")
+    init.add_argument("--profile", default="default", help="Profile name to write.")
+    init.add_argument("--force", action="store_true", help="Overwrite an existing config file.")
+    init.add_argument("--handoff-question", default="continue this repo")
+    init.add_argument("--no-handoff", action="store_true", help="Skip default handoffs in this profile.")
+    init.add_argument("--keep", type=int, default=20, help="Newest snapshots to keep in addition to latest.")
+    init.add_argument("--prune-apply", action="store_true", help="Apply safe prune in this profile.")
+    init.add_argument("--verify-packs", action="store_true", help="Run full pack verification during doctor.")
+    init.add_argument("--timeline-limit", type=int, default=5, help="Recent snapshots to return.")
+    init.add_argument("--chunk-size", type=int, default=256 * 1024)
+    init.add_argument("--no-compare", action="store_true", help="Do not compare against latest.repomori.")
+    init.add_argument("--compare-limit", type=int, default=50)
+    init.add_argument("--json", action="store_true", help="Print config init JSON.")
 
     snapshot = sub.add_parser("snapshot", help="Build a timestamped pack snapshot.")
     snapshot.add_argument("repo", type=Path)
@@ -81,17 +100,27 @@ def main(argv: list[str] | None = None) -> int:
     prune.add_argument("--json", action="store_true", help="Print prune JSON.")
 
     memory = sub.add_parser("memory", help="Run snapshot, handoff, doctor, prune, and timeline.")
-    memory.add_argument("repo", type=Path)
-    memory.add_argument("--out-dir", type=Path, required=True, help="Directory for snapshot packs and reports.")
-    memory.add_argument("--handoff-question", default="continue this repo")
-    memory.add_argument("--no-handoff", action="store_true", help="Skip the default snapshot handoff package.")
-    memory.add_argument("--keep", type=int, default=20, help="Newest snapshots to keep in addition to latest.")
-    memory.add_argument("--prune-apply", action="store_true", help="Apply safe prune after the snapshot.")
-    memory.add_argument("--verify-packs", action="store_true", help="Run full pack verification during doctor.")
-    memory.add_argument("--timeline-limit", type=int, default=5, help="Recent snapshots to return.")
-    memory.add_argument("--chunk-size", type=int, default=256 * 1024)
-    memory.add_argument("--no-compare", action="store_true", help="Do not compare against latest.repomori.")
-    memory.add_argument("--compare-limit", type=int, default=50)
+    memory.add_argument("repo", type=Path, nargs="?", help="Repository folder; falls back to repomori.toml.")
+    memory.add_argument("--out-dir", type=Path, help="Directory for snapshot packs and reports.")
+    memory.add_argument("--config", type=Path, help="Config file path; defaults to nearest repomori.toml.")
+    memory.add_argument("--profile", help="Config profile to use.")
+    memory.add_argument("--handoff-question")
+    handoff_group = memory.add_mutually_exclusive_group()
+    handoff_group.add_argument("--no-handoff", dest="no_handoff", action="store_true", default=None, help="Skip the default snapshot handoff package.")
+    handoff_group.add_argument("--with-handoff", dest="no_handoff", action="store_false", help="Force handoff even if config disables it.")
+    memory.add_argument("--keep", type=int, help="Newest snapshots to keep in addition to latest.")
+    prune_group = memory.add_mutually_exclusive_group()
+    prune_group.add_argument("--prune-apply", dest="prune_apply", action="store_true", default=None, help="Apply safe prune after the snapshot.")
+    prune_group.add_argument("--prune-dry-run", dest="prune_apply", action="store_false", help="Force prune dry-run even if config applies it.")
+    verify_group = memory.add_mutually_exclusive_group()
+    verify_group.add_argument("--verify-packs", dest="verify_packs", action="store_true", default=None, help="Run full pack verification during doctor.")
+    verify_group.add_argument("--no-verify-packs", dest="verify_packs", action="store_false", help="Skip full pack verification during doctor.")
+    memory.add_argument("--timeline-limit", type=int, help="Recent snapshots to return.")
+    memory.add_argument("--chunk-size", type=int)
+    compare_group = memory.add_mutually_exclusive_group()
+    compare_group.add_argument("--no-compare", dest="compare", action="store_false", default=None, help="Do not compare against latest.repomori.")
+    compare_group.add_argument("--compare", dest="compare", action="store_true", help="Compare against latest.repomori.")
+    memory.add_argument("--compare-limit", type=int)
     memory.add_argument("--json", action="store_true", help="Print memory JSON.")
 
     info = sub.add_parser("info", help="Show pack metadata.")
@@ -223,6 +252,31 @@ def main(argv: list[str] | None = None) -> int:
         )
         _print(result, args.json)
         return 0
+    if args.command == "init":
+        result = init_config(
+            args.repo,
+            args.out_dir,
+            config_path=args.config,
+            profile=args.profile,
+            force=args.force,
+            handoff_question=args.handoff_question,
+            no_handoff=args.no_handoff,
+            keep=args.keep,
+            prune_apply=args.prune_apply,
+            verify_packs=args.verify_packs,
+            timeline_limit=args.timeline_limit,
+            chunk_size=args.chunk_size,
+            compare=not args.no_compare,
+            compare_limit=args.compare_limit,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"config: {result['config_path']}")
+            print(f"profile: {result['profile']}")
+            print(f"repo: {result['settings']['repo']}")
+            print(f"out_dir: {result['settings']['out_dir']}")
+        return 0
     if args.command == "snapshot":
         report = snapshot_repo(
             args.repo,
@@ -261,18 +315,19 @@ def main(argv: list[str] | None = None) -> int:
         _print(result, args.json)
         return 0 if not result["errors"] else 1
     if args.command == "memory":
+        settings = _memory_settings(args, parser)
         report = run_memory_cycle(
-            args.repo,
-            args.out_dir,
-            handoff_question=args.handoff_question,
-            no_handoff=args.no_handoff,
-            keep=args.keep,
-            prune_apply=args.prune_apply,
-            verify_packs=args.verify_packs,
-            timeline_limit=args.timeline_limit,
-            chunk_size=args.chunk_size,
-            compare=not args.no_compare,
-            compare_limit=args.compare_limit,
+            settings["repo"],
+            settings["out_dir"],
+            handoff_question=settings["handoff_question"],
+            no_handoff=settings["no_handoff"],
+            keep=settings["keep"],
+            prune_apply=settings["prune_apply"],
+            verify_packs=settings["verify_packs"],
+            timeline_limit=settings["timeline_limit"],
+            chunk_size=settings["chunk_size"],
+            compare=settings["compare"],
+            compare_limit=settings["compare_limit"],
         )
         if args.json:
             print(json.dumps(report, indent=2))
@@ -488,6 +543,41 @@ def _eval_questions(questions: list[str] | None, questions_file: Path | None) ->
             if line.strip() and not line.lstrip().startswith("#")
         )
     return values or None
+
+
+def _memory_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
+    config = None
+    if args.config is not None or args.profile is not None or args.repo is None or args.out_dir is None:
+        try:
+            config = load_memory_config(args.config, start_dir=Path.cwd(), profile=args.profile)
+        except (FileNotFoundError, ValueError) as exc:
+            parser.error(str(exc))
+    settings = dict(config.get("settings", {}) if config else {})
+    repo = str(args.repo.resolve()) if args.repo is not None else settings.get("repo")
+    out_dir = str(args.out_dir.resolve()) if args.out_dir is not None else settings.get("out_dir")
+    if not repo:
+        parser.error("memory requires a repo argument or a config profile with `repo`.")
+    if not out_dir:
+        parser.error("memory requires --out-dir or a config profile with `out_dir`.")
+    return {
+        "repo": repo,
+        "out_dir": out_dir,
+        "handoff_question": _setting(args.handoff_question, settings, "handoff_question", "continue this repo"),
+        "no_handoff": _setting(args.no_handoff, settings, "no_handoff", False),
+        "keep": _setting(args.keep, settings, "keep", 20),
+        "prune_apply": _setting(args.prune_apply, settings, "prune_apply", False),
+        "verify_packs": _setting(args.verify_packs, settings, "verify_packs", False),
+        "timeline_limit": _setting(args.timeline_limit, settings, "timeline_limit", 5),
+        "chunk_size": _setting(args.chunk_size, settings, "chunk_size", 256 * 1024),
+        "compare": _setting(args.compare, settings, "compare", True),
+        "compare_limit": _setting(args.compare_limit, settings, "compare_limit", 50),
+    }
+
+
+def _setting(value, settings: dict, key: str, default):
+    if value is not None:
+        return value
+    return settings.get(key, default)
 
 
 def _format_row(row: dict) -> str:

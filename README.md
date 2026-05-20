@@ -16,6 +16,8 @@ The first version is deliberately local and dependency-light:
 
 ```powershell
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
+python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
+python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
 python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --prune-apply --json
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
 python -m repomori timeline D:\Dev\RepoMori\packs --format json
@@ -55,7 +57,8 @@ exactness matters.
 
 ```text
 repomori build <repo> <pack>
-repomori memory <repo> --out-dir <dir> [--no-handoff] [--keep n] [--prune-apply] [--json]
+repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--json]
+repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--keep n] [--prune-apply] [--json]
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-compare] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
@@ -99,7 +102,14 @@ everything.
 `memory` is the recommended repeatable workflow for the end of a work session.
 It builds a snapshot, creates a default handoff package, runs snapshot doctor,
 plans or applies prune, and returns the recent timeline in one offline report.
-Prune remains a dry run unless `--prune-apply` is supplied.
+Prune remains a dry run unless `--prune-apply` is supplied. Use `init` to write
+a local `repomori.toml` with D-drive-safe defaults, then run `memory` with
+`--config` or from a directory beneath that config.
+
+`init` writes a dependency-free TOML config with named profiles. A profile stores
+the repo path, snapshot output directory, handoff question, retention count,
+prune mode, doctor verification mode, timeline limit, chunk size, and compare
+settings. Explicit `memory` flags override config values.
 
 `snapshot` builds timestamped packs into an output directory, updates
 `latest.repomori`, and automatically compares the new pack against the previous

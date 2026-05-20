@@ -2482,6 +2482,96 @@ def run_memory_cycle(
     }
 
 
+def init_config(
+    repo: Path | str,
+    out_dir: Path | str,
+    *,
+    config_path: Path | str | None = None,
+    profile: str = "default",
+    force: bool = False,
+    handoff_question: str = "continue this repo",
+    no_handoff: bool = False,
+    keep: int = 20,
+    prune_apply: bool = False,
+    verify_packs: bool = False,
+    timeline_limit: int = 5,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    compare: bool = True,
+    compare_limit: int = 50,
+) -> dict[str, Any]:
+    """Write a local RepoMori config file for memory runs."""
+
+    _validate_config_profile(profile)
+    repo_path = Path(repo).resolve()
+    out_path = Path(out_dir).resolve()
+    if not repo_path.is_dir():
+        raise ValueError(f"Repository folder not found: {repo_path}")
+    path = Path(config_path).resolve() if config_path is not None else repo_path / "repomori.toml"
+    if path.exists() and not force:
+        raise FileExistsError(f"Config already exists: {path}")
+    if keep < 0:
+        raise ValueError("keep must be zero or greater")
+    if timeline_limit <= 0:
+        raise ValueError("timeline_limit must be greater than zero")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than zero")
+    if compare_limit <= 0:
+        raise ValueError("compare_limit must be greater than zero")
+    if not no_handoff and not handoff_question.strip():
+        raise ValueError("handoff_question must not be empty")
+
+    settings = {
+        "repo": str(repo_path),
+        "out_dir": str(out_path),
+        "handoff_question": handoff_question,
+        "no_handoff": no_handoff,
+        "keep": keep,
+        "prune_apply": prune_apply,
+        "verify_packs": verify_packs,
+        "timeline_limit": timeline_limit,
+        "chunk_size": chunk_size,
+        "compare": compare,
+        "compare_limit": compare_limit,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_format_memory_config(profile, settings), encoding="utf-8")
+    return {
+        "schema_version": "repomori.config.init.v1",
+        "config_schema_version": "repomori.config.v1",
+        "config_path": str(path),
+        "profile": profile,
+        "settings": settings,
+    }
+
+
+def load_memory_config(
+    config_path: Path | str | None = None,
+    *,
+    start_dir: Path | str | None = None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    """Load a RepoMori memory profile from repomori.toml."""
+
+    path = Path(config_path).resolve() if config_path is not None else _find_config_path(start_dir)
+    if path is None:
+        raise FileNotFoundError("RepoMori config not found. Run `python -m repomori init ...` first.")
+    raw = _read_memory_config(path)
+    if raw.get("schema_version") != "repomori.config.v1":
+        raise ValueError(f"Unexpected RepoMori config schema: {path}")
+    selected = profile or str(raw.get("default_profile") or "default")
+    _validate_config_profile(selected)
+    profiles = raw.get("profiles")
+    if not isinstance(profiles, dict) or selected not in profiles:
+        raise ValueError(f"RepoMori config profile not found: {selected}")
+    settings = _normalize_memory_config_settings(path, profiles[selected])
+    return {
+        "schema_version": "repomori.config.v1",
+        "config_path": str(path),
+        "profile": selected,
+        "settings": settings,
+    }
+
+
 def format_timeline_markdown(timeline: dict[str, Any]) -> str:
     """Render snapshot timeline history as Markdown."""
 
@@ -3545,6 +3635,134 @@ def _snapshot_prune_targets(out_path: Path, snapshot: dict[str, Any]) -> tuple[l
 
 def _add_prune_error(errors: list[dict[str, Any]], scope: str, path: str, message: str) -> None:
     errors.append({"scope": scope, "path": path, "message": message})
+
+
+def _format_memory_config(profile: str, settings: dict[str, Any]) -> str:
+    lines = [
+        'schema_version = "repomori.config.v1"',
+        f"default_profile = {_toml_value(profile)}",
+        "",
+        f"[profiles.{profile}]",
+    ]
+    for key in (
+        "repo",
+        "out_dir",
+        "handoff_question",
+        "no_handoff",
+        "keep",
+        "prune_apply",
+        "verify_packs",
+        "timeline_limit",
+        "chunk_size",
+        "compare",
+        "compare_limit",
+    ):
+        lines.append(f"{key} = {_toml_value(settings[key])}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _read_memory_config(path: Path) -> dict[str, Any]:
+    data: dict[str, Any] = {"profiles": {}}
+    current: dict[str, Any] = data
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            if not section.startswith("profiles."):
+                raise ValueError(f"Unsupported config section at {path}:{line_number}")
+            profile = section[len("profiles.") :].strip()
+            _validate_config_profile(profile)
+            profiles = data.setdefault("profiles", {})
+            current = profiles.setdefault(profile, {})
+            continue
+        if "=" not in line:
+            raise ValueError(f"Invalid config line at {path}:{line_number}")
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_]+", key):
+            raise ValueError(f"Invalid config key at {path}:{line_number}")
+        current[key] = _parse_toml_value(value.strip(), path, line_number)
+    return data
+
+
+def _find_config_path(start_dir: Path | str | None) -> Path | None:
+    start = Path(start_dir or Path.cwd()).resolve()
+    if start.is_file():
+        start = start.parent
+    for path in (start, *start.parents):
+        candidate = path / "repomori.toml"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _normalize_memory_config_settings(path: Path, settings: dict[str, Any]) -> dict[str, Any]:
+    defaults: dict[str, Any] = {
+        "handoff_question": "continue this repo",
+        "no_handoff": False,
+        "keep": 20,
+        "prune_apply": False,
+        "verify_packs": False,
+        "timeline_limit": 5,
+        "chunk_size": DEFAULT_CHUNK_SIZE,
+        "compare": True,
+        "compare_limit": 50,
+    }
+    normalized = {**defaults, **settings}
+    for key in ("repo", "out_dir"):
+        value = normalized.get(key)
+        if value is None or not str(value).strip():
+            raise ValueError(f"RepoMori config missing required key `{key}`: {path}")
+        config_path = Path(str(value))
+        if not config_path.is_absolute():
+            config_path = path.parent / config_path
+        normalized[key] = str(config_path.resolve())
+    for key in ("no_handoff", "prune_apply", "verify_packs", "compare"):
+        normalized[key] = _coerce_config_bool(path, key, normalized[key])
+    for key in ("keep", "timeline_limit", "chunk_size", "compare_limit"):
+        normalized[key] = _coerce_config_int(path, key, normalized[key])
+    normalized["handoff_question"] = str(normalized.get("handoff_question") or "")
+    return normalized
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    return json.dumps(str(value))
+
+
+def _parse_toml_value(raw: str, path: Path, line_number: int) -> Any:
+    if raw in {"true", "false"}:
+        return raw == "true"
+    if re.fullmatch(r"-?\d+", raw):
+        return int(raw)
+    if raw.startswith('"') and raw.endswith('"'):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid string value at {path}:{line_number}: {exc}") from exc
+    raise ValueError(f"Unsupported config value at {path}:{line_number}")
+
+
+def _validate_config_profile(profile: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", profile):
+        raise ValueError("profile must contain only letters, numbers, underscores, or hyphens")
+
+
+def _coerce_config_bool(path: Path, key: str, value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"RepoMori config key `{key}` must be true or false: {path}")
+
+
+def _coerce_config_int(path: Path, key: str, value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"RepoMori config key `{key}` must be an integer: {path}")
+    return value
 
 
 def _sum_snapshot_field(snapshots: list[dict[str, Any]], field: str) -> int:
