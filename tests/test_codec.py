@@ -33,6 +33,7 @@ from repomori.codec import (
     query_pack,
     prune_snapshots,
     read_snapshot_timeline,
+    run_memory_cycle,
     snapshot_repo,
     tree_pack,
     verify_pack,
@@ -587,6 +588,66 @@ class RepoMoriCodecTests(unittest.TestCase):
                 )
             )
 
+    def test_run_memory_cycle_creates_handoff_and_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory"
+
+            report = run_memory_cycle(repo, out)
+
+            self.assertEqual(report["schema_version"], "repomori.memory.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["settings"]["handoff_question"], "continue this repo")
+            self.assertEqual(report["snapshot"]["schema_version"], "repomori.snapshot.v1")
+            self.assertEqual(report["doctor"]["schema_version"], "repomori.doctor.v1")
+            self.assertEqual(report["prune"]["schema_version"], "repomori.prune.v1")
+            self.assertEqual(report["timeline"]["schema_version"], "repomori.timeline.v1")
+            self.assertFalse(report["prune"]["applied"])
+            handoff_dir = Path(report["summary"]["handoff_dir"])
+            self.assertTrue((handoff_dir / "manifest.json").exists())
+            self.assertTrue(report["summary"]["handoff_passed"])
+            self.assertEqual(report["timeline"]["returned_count"], 1)
+
+    def test_run_memory_cycle_can_skip_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory"
+
+            report = run_memory_cycle(repo, out, no_handoff=True)
+
+            self.assertEqual(report["schema_version"], "repomori.memory.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertIsNone(report["settings"]["handoff_question"])
+            self.assertIsNone(report["summary"]["handoff_dir"])
+            self.assertNotIn("handoff", report["artifacts"])
+            self.assertIsNone(report["snapshot"]["handoff"])
+
+    def test_run_memory_cycle_prune_dry_run_and_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory"
+
+            first = run_memory_cycle(repo, out, no_handoff=True, keep=1)
+            first_pack = Path(first["summary"]["pack_path"])
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            dry_run = run_memory_cycle(repo, out, no_handoff=True, keep=1)
+
+            self.assertFalse(dry_run["prune"]["applied"])
+            self.assertEqual(len(dry_run["prune"]["candidates"]), 1)
+            self.assertTrue(first_pack.exists())
+
+            second_pack = Path(dry_run["summary"]["pack_path"])
+            (repo / "next.py").write_text("def next_step():\n    return 'next'\n", encoding="utf-8")
+            applied = run_memory_cycle(repo, out, no_handoff=True, keep=1, prune_apply=True)
+
+            self.assertTrue(applied["prune"]["applied"])
+            self.assertFalse(applied["prune"]["errors"])
+            self.assertFalse(first_pack.exists())
+            self.assertFalse(second_pack.exists())
+            self.assertTrue(Path(applied["summary"]["pack_path"]).exists())
+            index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["snapshot_count"], 1)
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -1037,6 +1098,90 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(applied["applied"])
             self.assertFalse(applied["errors"])
             self.assertFalse(Path(first["summary"]["pack_path"]).exists())
+
+    def test_cli_memory_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-cli"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "manifest.json").exists())
+            self.assertEqual(payload["timeline"]["returned_count"], 1)
+
+    def test_cli_memory_no_handoff_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-no-handoff-cli"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--no-handoff",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertIsNone(payload["summary"]["handoff_dir"])
+            self.assertNotIn("handoff", payload["artifacts"])
+
+    def test_cli_memory_prune_apply_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-prune-cli"
+            run_memory_cycle(repo, out, no_handoff=True)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--no-handoff",
+                    "--keep",
+                    "1",
+                    "--prune-apply",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertTrue(payload["prune"]["applied"])
+            self.assertFalse(payload["prune"]["errors"])
+            index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["snapshot_count"], 1)
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

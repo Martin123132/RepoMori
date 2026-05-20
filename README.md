@@ -16,6 +16,7 @@ The first version is deliberately local and dependency-light:
 
 ```powershell
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
+python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --prune-apply --json
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
 python -m repomori timeline D:\Dev\RepoMori\packs --format json
 python -m repomori doctor D:\Dev\RepoMori\packs --json
@@ -54,6 +55,7 @@ exactness matters.
 
 ```text
 repomori build <repo> <pack>
+repomori memory <repo> --out-dir <dir> [--no-handoff] [--keep n] [--prune-apply] [--json]
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-compare] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
@@ -93,6 +95,11 @@ and a source manifest for the files an agent should inspect first.
 file counts, language deltas, changed hashes and sizes, and symbol/import/heading
 summary deltas so agents can continue from what changed instead of rereading
 everything.
+
+`memory` is the recommended repeatable workflow for the end of a work session.
+It builds a snapshot, creates a default handoff package, runs snapshot doctor,
+plans or applies prune, and returns the recent timeline in one offline report.
+Prune remains a dry run unless `--prune-apply` is supplied.
 
 `snapshot` builds timestamped packs into an output directory, updates
 `latest.repomori`, and automatically compares the new pack against the previous

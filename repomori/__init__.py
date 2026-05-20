@@ -25,6 +25,7 @@ from .codec import (
     query_pack,
     prune_snapshots,
     read_snapshot_timeline,
+    run_memory_cycle,
     snapshot_repo,
     verify_pack,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "query_pack",
     "prune_snapshots",
     "read_snapshot_timeline",
+    "run_memory_cycle",
     "snapshot_repo",
     "verify_pack",
 ]

@@ -2380,6 +2380,108 @@ def prune_snapshots(out_dir: Path | str, *, keep: int = 20, apply: bool = False)
     }
 
 
+def run_memory_cycle(
+    repo: Path | str,
+    out_dir: Path | str,
+    *,
+    handoff_question: str = "continue this repo",
+    no_handoff: bool = False,
+    keep: int = 20,
+    prune_apply: bool = False,
+    verify_packs: bool = False,
+    timeline_limit: int = 5,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    compare: bool = True,
+    compare_limit: int = 50,
+) -> dict[str, Any]:
+    """Run the full offline snapshot memory loop for a repository."""
+
+    if timeline_limit <= 0:
+        raise ValueError("timeline_limit must be greater than zero")
+    if no_handoff:
+        snapshot_handoff_question = None
+    else:
+        if not handoff_question.strip():
+            raise ValueError("handoff_question must not be empty")
+        snapshot_handoff_question = handoff_question
+
+    started = time.time()
+    repo_path = Path(repo).resolve()
+    out_path = Path(out_dir).resolve()
+    snapshot = snapshot_repo(
+        repo_path,
+        out_path,
+        chunk_size=chunk_size,
+        compare=compare,
+        compare_limit=compare_limit,
+        handoff_question=snapshot_handoff_question,
+    )
+    doctor = doctor_snapshot_dir(out_path, verify_packs=verify_packs)
+    prune = prune_snapshots(out_path, keep=keep, apply=prune_apply)
+    timeline = read_snapshot_timeline(out_path, limit=timeline_limit)
+
+    status = "pass"
+    if snapshot.get("status") != "pass" or doctor.get("status") == "fail" or prune.get("errors"):
+        status = "fail"
+    elif doctor.get("status") == "warn":
+        status = "warn"
+
+    snapshot_summary = snapshot.get("summary", {})
+    artifacts = {
+        "pack": snapshot_summary.get("pack_path"),
+        "latest_pack": snapshot_summary.get("latest_pack"),
+        "snapshot_json": snapshot.get("artifacts", {}).get("snapshot_json"),
+        "snapshot_markdown": snapshot.get("artifacts", {}).get("snapshot_markdown"),
+        "snapshot_index": snapshot.get("artifacts", {}).get("snapshot_index"),
+    }
+    if snapshot_summary.get("handoff_dir"):
+        artifacts["handoff"] = snapshot_summary.get("handoff_dir")
+    if snapshot.get("artifacts", {}).get("compare_json"):
+        artifacts["compare_json"] = snapshot["artifacts"]["compare_json"]
+    if snapshot.get("artifacts", {}).get("compare_markdown"):
+        artifacts["compare_markdown"] = snapshot["artifacts"]["compare_markdown"]
+
+    return {
+        "schema_version": "repomori.memory.v1",
+        "status": status,
+        "repo_path": str(repo_path),
+        "out_dir": str(out_path),
+        "created_at": int(started),
+        "settings": {
+            "handoff_question": None if no_handoff else handoff_question,
+            "no_handoff": no_handoff,
+            "keep": keep,
+            "prune_apply": prune_apply,
+            "verify_packs": verify_packs,
+            "timeline_limit": timeline_limit,
+            "chunk_size": chunk_size,
+            "compare": compare,
+            "compare_limit": compare_limit,
+        },
+        "summary": {
+            "elapsed_seconds": round(time.time() - started, 4),
+            "snapshot_status": snapshot.get("status"),
+            "doctor_status": doctor.get("status"),
+            "doctor_errors": doctor.get("error_count"),
+            "doctor_warnings": doctor.get("warning_count"),
+            "prune_applied": prune.get("applied"),
+            "prune_candidates": len(prune.get("candidates", [])),
+            "prune_deleted": len(prune.get("deleted", [])),
+            "timeline_snapshot_count": timeline.get("snapshot_count"),
+            "timeline_returned_count": timeline.get("returned_count"),
+            "pack_path": snapshot_summary.get("pack_path"),
+            "latest_pack": snapshot_summary.get("latest_pack"),
+            "handoff_dir": snapshot_summary.get("handoff_dir"),
+            "handoff_passed": snapshot_summary.get("handoff_passed"),
+        },
+        "artifacts": artifacts,
+        "snapshot": snapshot,
+        "doctor": doctor,
+        "prune": prune,
+        "timeline": timeline,
+    }
+
+
 def format_timeline_markdown(timeline: dict[str, Any]) -> str:
     """Render snapshot timeline history as Markdown."""
 

@@ -31,6 +31,7 @@ from .codec import (
     query_pack,
     read_snapshot_timeline,
     prune_snapshots,
+    run_memory_cycle,
     snapshot_repo,
     tree_pack,
     verify_pack,
@@ -78,6 +79,20 @@ def main(argv: list[str] | None = None) -> int:
     prune.add_argument("--keep", type=int, default=20, help="Newest snapshots to keep in addition to latest.")
     prune.add_argument("--apply", action="store_true", help="Delete planned in-dir artifacts and update snapshots.json.")
     prune.add_argument("--json", action="store_true", help="Print prune JSON.")
+
+    memory = sub.add_parser("memory", help="Run snapshot, handoff, doctor, prune, and timeline.")
+    memory.add_argument("repo", type=Path)
+    memory.add_argument("--out-dir", type=Path, required=True, help="Directory for snapshot packs and reports.")
+    memory.add_argument("--handoff-question", default="continue this repo")
+    memory.add_argument("--no-handoff", action="store_true", help="Skip the default snapshot handoff package.")
+    memory.add_argument("--keep", type=int, default=20, help="Newest snapshots to keep in addition to latest.")
+    memory.add_argument("--prune-apply", action="store_true", help="Apply safe prune after the snapshot.")
+    memory.add_argument("--verify-packs", action="store_true", help="Run full pack verification during doctor.")
+    memory.add_argument("--timeline-limit", type=int, default=5, help="Recent snapshots to return.")
+    memory.add_argument("--chunk-size", type=int, default=256 * 1024)
+    memory.add_argument("--no-compare", action="store_true", help="Do not compare against latest.repomori.")
+    memory.add_argument("--compare-limit", type=int, default=50)
+    memory.add_argument("--json", action="store_true", help="Print memory JSON.")
 
     info = sub.add_parser("info", help="Show pack metadata.")
     info.add_argument("pack", type=Path)
@@ -245,6 +260,30 @@ def main(argv: list[str] | None = None) -> int:
         result = prune_snapshots(args.out_dir, keep=args.keep, apply=args.apply)
         _print(result, args.json)
         return 0 if not result["errors"] else 1
+    if args.command == "memory":
+        report = run_memory_cycle(
+            args.repo,
+            args.out_dir,
+            handoff_question=args.handoff_question,
+            no_handoff=args.no_handoff,
+            keep=args.keep,
+            prune_apply=args.prune_apply,
+            verify_packs=args.verify_packs,
+            timeline_limit=args.timeline_limit,
+            chunk_size=args.chunk_size,
+            compare=not args.no_compare,
+            compare_limit=args.compare_limit,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"memory: {report['out_dir']}")
+            print(f"status: {report['status']}")
+            print(f"pack: {report['summary']['pack_path']}")
+            print(f"handoff: {report['summary']['handoff_dir']}")
+            print(f"prune applied: {report['summary']['prune_applied']}")
+            print(f"timeline snapshots: {report['summary']['timeline_snapshot_count']}")
+        return 0 if report["status"] != "fail" else 1
     if args.command == "info":
         _print(info_pack(args.pack), args.json)
         return 0
