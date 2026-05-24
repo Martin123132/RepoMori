@@ -19,6 +19,7 @@ python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
 python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --prune-apply --json
+python -m repomori agent --config D:\Dev\RepoMori\repomori.toml
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
 python -m repomori timeline D:\Dev\RepoMori\packs --format json
 python -m repomori doctor D:\Dev\RepoMori\packs --json
@@ -59,6 +60,7 @@ exactness matters.
 repomori build <repo> <pack>
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--json]
 repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--keep n] [--prune-apply] [--json]
+repomori agent [--config file] [--profile name]
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-compare] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
@@ -110,6 +112,22 @@ a local `repomori.toml` with D-drive-safe defaults, then run `memory` with
 the repo path, snapshot output directory, handoff question, retention count,
 prune mode, doctor verification mode, timeline limit, chunk size, and compare
 settings. Explicit `memory` flags override config values.
+
+`agent` runs a dependency-free JSON-lines bridge on stdio so other agents can
+query RepoMori without guessing shell commands. Send one JSON object per line:
+
+```json
+{"id":1,"method":"agent.help"}
+{"id":2,"method":"query.run","params":{"text":"sqlite Store","limit":3}}
+{"id":3,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
+{"id":4,"method":"file.get","params":{"path":"repomori/codec.py"}}
+```
+
+Responses are JSON lines with `schema_version`, `jsonrpc`, `id`, `ok`, and
+either `result` or `error`. Supported methods are `memory.run`, `timeline.read`,
+`doctor.run`, `query.run`, `context.build`, `handoff.build`, `capsule.build`,
+and `file.get`. Methods use the configured latest snapshot pack when `pack` is
+not supplied.
 
 `snapshot` builds timestamped packs into an output directory, updates
 `latest.repomori`, and automatically compares the new pack against the previous

@@ -29,6 +29,7 @@ from repomori.codec import (
     format_snapshot_markdown,
     format_timeline_markdown,
     get_file_bytes,
+    handle_agent_request,
     init_config,
     info_pack,
     load_memory_config,
@@ -689,6 +690,90 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(loaded["settings"]["prune_apply"])
             self.assertTrue(loaded["settings"]["no_handoff"])
 
+    def test_agent_bridge_help_query_context_and_file_get(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            init_config(repo, out, config_path=config)
+            run_memory_cycle(repo, out, no_handoff=True)
+
+            help_response = handle_agent_request(
+                {"id": 1, "method": "agent.help"},
+                config_path=config,
+            )
+            self.assertTrue(help_response["ok"])
+            self.assertIn("query.run", help_response["result"]["methods"])
+
+            query_response = handle_agent_request(
+                {"id": 2, "method": "query.run", "params": {"text": "sqlite Store", "limit": 1}},
+                config_path=config,
+            )
+            self.assertTrue(query_response["ok"])
+            self.assertEqual(query_response["result"]["schema_version"], "repomori.agent.query.v1")
+            self.assertEqual(query_response["result"]["results"][0]["path"], "app.py")
+
+            context_response = handle_agent_request(
+                {
+                    "id": 3,
+                    "method": "context.build",
+                    "params": {"question": "How does Store connect?", "max_files": 1, "max_bytes": 200},
+                },
+                config_path=config,
+            )
+            self.assertTrue(context_response["ok"])
+            self.assertEqual(context_response["result"]["schema_version"], "repomori.context.v1")
+            self.assertEqual(context_response["result"]["sources"][0]["path"], "app.py")
+
+            file_response = handle_agent_request(
+                {"id": 4, "method": "file.get", "params": {"path": "app.py"}},
+                config_path=config,
+            )
+            self.assertTrue(file_response["ok"])
+            self.assertEqual(file_response["result"]["schema_version"], "repomori.agent.file.v1")
+            self.assertTrue(file_response["result"]["is_text"])
+            self.assertIn("sqlite3.connect", file_response["result"]["text"])
+
+    def test_agent_bridge_memory_doctor_timeline_capsule_and_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            init_config(repo, out, config_path=config, no_handoff=True)
+
+            memory_response = handle_agent_request(
+                {"id": "memory", "method": "memory.run", "params": {"keep": 1}},
+                config_path=config,
+            )
+            self.assertTrue(memory_response["ok"])
+            self.assertEqual(memory_response["result"]["schema_version"], "repomori.memory.v1")
+
+            doctor_response = handle_agent_request({"id": "doctor", "method": "doctor.run"}, config_path=config)
+            self.assertTrue(doctor_response["ok"])
+            self.assertEqual(doctor_response["result"]["schema_version"], "repomori.doctor.v1")
+
+            timeline_response = handle_agent_request(
+                {"id": "timeline", "method": "timeline.read", "params": {"limit": 1}},
+                config_path=config,
+            )
+            self.assertTrue(timeline_response["ok"])
+            self.assertEqual(timeline_response["result"]["schema_version"], "repomori.timeline.v1")
+
+            capsule_response = handle_agent_request(
+                {"id": "capsule", "method": "capsule.build", "params": {"max_files": 1}},
+                config_path=config,
+            )
+            self.assertTrue(capsule_response["ok"])
+            self.assertEqual(capsule_response["result"]["schema_version"], "repomori.capsule.v1")
+
+            bad_response = handle_agent_request({"id": "bad", "method": "missing.method"}, config_path=config)
+            self.assertFalse(bad_response["ok"])
+            self.assertEqual(bad_response["error"]["code"], "method_not_found")
+
+            invalid_response = handle_agent_request(["not", "an", "object"])  # type: ignore[arg-type]
+            self.assertFalse(invalid_response["ok"])
+            self.assertEqual(invalid_response["error"]["code"], "invalid_request")
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -1306,6 +1391,58 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(payload["settings"]["no_handoff"])
             self.assertEqual(payload["settings"]["keep"], 1)
             self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "manifest.json").exists())
+
+    def test_cli_agent_json_lines_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            init_config(repo, out, config_path=config, no_handoff=True)
+            run_memory_cycle(repo, out, no_handoff=True)
+            requests = "\n".join(
+                [
+                    json.dumps({"id": 1, "method": "ping"}),
+                    json.dumps({"id": 2, "method": "query.run", "params": {"text": "sqlite Store", "limit": 1}}),
+                    "",
+                ]
+            )
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "agent",
+                    "--config",
+                    str(config),
+                ],
+                input=requests,
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            responses = [json.loads(line) for line in output.splitlines()]
+            self.assertEqual(len(responses), 2)
+            self.assertTrue(responses[0]["ok"])
+            self.assertEqual(responses[0]["result"]["status"], "ok")
+            self.assertTrue(responses[1]["ok"])
+            self.assertEqual(responses[1]["result"]["results"][0]["path"], "app.py")
+
+    def test_cli_agent_invalid_json_reports_error(self) -> None:
+        output = subprocess.check_output(
+            [
+                sys.executable,
+                "-m",
+                "repomori",
+                "agent",
+            ],
+            input="{not json}\n",
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+        )
+
+        payload = json.loads(output)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "invalid_json")
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

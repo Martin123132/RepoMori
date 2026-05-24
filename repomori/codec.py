@@ -7,6 +7,7 @@ machine summaries. Exact source is still recoverable through the chunk map.
 from __future__ import annotations
 
 import ast
+import base64
 import hashlib
 import json
 import os
@@ -2572,6 +2573,66 @@ def load_memory_config(
     }
 
 
+def handle_agent_request(
+    request: dict[str, Any],
+    *,
+    config_path: Path | str | None = None,
+    profile: str | None = None,
+    start_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """Handle one JSON-RPC-style RepoMori agent bridge request."""
+
+    request_id = request.get("id") if isinstance(request, dict) else None
+    try:
+        if not isinstance(request, dict):
+            raise ValueError("Agent request must be a JSON object.")
+        method = request.get("method")
+        if not isinstance(method, str) or not method:
+            raise ValueError("Agent request must include a string method.")
+        params = request.get("params", {})
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            raise ValueError("Agent request params must be an object.")
+        result = _agent_dispatch(method, params, config_path=config_path, profile=profile, start_dir=start_dir)
+        return _agent_response(request_id, result)
+    except Exception as exc:
+        code = "method_not_found" if isinstance(exc, NotImplementedError) else "execution_error"
+        if isinstance(exc, ValueError):
+            code = "invalid_request"
+        return _agent_error_response(request_id, code, str(exc))
+
+
+def run_agent_bridge(
+    input_stream,
+    output_stream,
+    *,
+    config_path: Path | str | None = None,
+    profile: str | None = None,
+    start_dir: Path | str | None = None,
+) -> int:
+    """Run the RepoMori JSON-lines agent bridge on stdio-like streams."""
+
+    for raw_line in input_stream:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError as exc:
+            response = _agent_error_response(None, "invalid_json", f"Invalid JSON request: {exc}")
+        else:
+            response = handle_agent_request(
+                request,
+                config_path=config_path,
+                profile=profile,
+                start_dir=start_dir,
+            )
+        output_stream.write(json.dumps(response, separators=(",", ":")) + "\n")
+        output_stream.flush()
+    return 0
+
+
 def format_timeline_markdown(timeline: dict[str, Any]) -> str:
     """Render snapshot timeline history as Markdown."""
 
@@ -3763,6 +3824,211 @@ def _coerce_config_int(path: Path, key: str, value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"RepoMori config key `{key}` must be an integer: {path}")
     return value
+
+
+AGENT_METHODS = (
+    "agent.help",
+    "ping",
+    "memory.run",
+    "timeline.read",
+    "doctor.run",
+    "query.run",
+    "context.build",
+    "handoff.build",
+    "capsule.build",
+    "file.get",
+)
+
+
+def _agent_dispatch(
+    method: str,
+    params: dict[str, Any],
+    *,
+    config_path: Path | str | None,
+    profile: str | None,
+    start_dir: Path | str | None,
+) -> dict[str, Any]:
+    settings = _agent_config_settings(config_path, profile, start_dir)
+    if method == "agent.help":
+        return {
+            "schema_version": "repomori.agent.help.v1",
+            "protocol": "json-lines",
+            "request": {"id": "optional", "method": "string", "params": "object"},
+            "response": {"id": "mirrored", "ok": "boolean", "result": "object"},
+            "methods": list(AGENT_METHODS),
+        }
+    if method == "ping":
+        return {"schema_version": "repomori.agent.ping.v1", "status": "ok"}
+    if method == "memory.run":
+        return run_memory_cycle(**_agent_memory_kwargs(params, settings))
+    if method == "timeline.read":
+        return read_snapshot_timeline(
+            _agent_out_dir(params, settings),
+            limit=_agent_optional_int(params, "limit", None),
+        )
+    if method == "doctor.run":
+        return doctor_snapshot_dir(
+            _agent_out_dir(params, settings),
+            verify_packs=bool(params.get("verify_packs", settings.get("verify_packs", False))),
+        )
+    if method == "query.run":
+        return {
+            "schema_version": "repomori.agent.query.v1",
+            "results": query_pack(
+                _agent_pack(params, settings),
+                _agent_required_str(params, "text"),
+                limit=_agent_int(params, "limit", 10),
+            ),
+        }
+    if method == "context.build":
+        limit = _agent_int(params, "max_files", _agent_int(params, "limit", 8))
+        return build_context_bundle(
+            _agent_pack(params, settings),
+            _agent_required_str(params, "question"),
+            limit=limit,
+            snippet_lines=_agent_int(params, "snippet_lines", 12),
+            max_bytes=_agent_optional_int(params, "max_bytes", None),
+            snippets_per_file=_agent_int(params, "snippets_per_file", 2),
+            include_source=bool(params.get("include_source", True)),
+        )
+    if method == "handoff.build":
+        out = params.get("out") or params.get("out_dir")
+        if not isinstance(out, str) or not out.strip():
+            raise ValueError("handoff.build requires params.out or params.out_dir.")
+        return build_handoff_package(
+            _agent_pack(params, settings),
+            _agent_required_str(params, "question"),
+            out,
+            base_pack=params.get("base_pack"),
+            force=bool(params.get("force", False)),
+            copy_pack=bool(params.get("copy_pack", False)),
+            allow_unverified=bool(params.get("allow_unverified", False)),
+            max_files=_agent_int(params, "max_files", 8),
+            max_bytes=_agent_optional_int(params, "max_bytes", None),
+            snippet_lines=_agent_int(params, "snippet_lines", 12),
+            snippets_per_file=_agent_int(params, "snippets_per_file", 2),
+            capsule_max_files=_agent_optional_int(params, "capsule_max_files", None),
+            top_terms=_agent_int(params, "top_terms", 128),
+            eval_questions=params.get("eval_questions"),
+        )
+    if method == "capsule.build":
+        return build_capsule(
+            _agent_pack(params, settings),
+            max_files=_agent_optional_int(params, "max_files", None),
+            top_terms=_agent_int(params, "top_terms", 128),
+        )
+    if method == "file.get":
+        file_path = _agent_required_str(params, "path")
+        data = get_file_bytes(_agent_pack(params, settings), file_path)
+        text = _decode_text(data)
+        return {
+            "schema_version": "repomori.agent.file.v1",
+            "path": file_path,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "is_text": text is not None,
+            "text": text,
+            "base64": base64.b64encode(data).decode("ascii"),
+        }
+    raise NotImplementedError(f"Unknown agent method: {method}")
+
+
+def _agent_config_settings(
+    config_path: Path | str | None,
+    profile: str | None,
+    start_dir: Path | str | None,
+) -> dict[str, Any]:
+    if config_path is not None or profile is not None:
+        return load_memory_config(config_path, start_dir=start_dir, profile=profile).get("settings", {})
+    try:
+        return load_memory_config(None, start_dir=start_dir, profile=None).get("settings", {})
+    except FileNotFoundError:
+        return {}
+
+
+def _agent_memory_kwargs(params: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    repo = params.get("repo", settings.get("repo"))
+    out_dir = params.get("out_dir", settings.get("out_dir"))
+    if not repo:
+        raise ValueError("memory.run requires params.repo or config repo.")
+    if not out_dir:
+        raise ValueError("memory.run requires params.out_dir or config out_dir.")
+    return {
+        "repo": repo,
+        "out_dir": out_dir,
+        "handoff_question": str(params.get("handoff_question", settings.get("handoff_question", "continue this repo"))),
+        "no_handoff": bool(params.get("no_handoff", settings.get("no_handoff", False))),
+        "keep": _agent_int(params, "keep", int(settings.get("keep", 20))),
+        "prune_apply": bool(params.get("prune_apply", settings.get("prune_apply", False))),
+        "verify_packs": bool(params.get("verify_packs", settings.get("verify_packs", False))),
+        "timeline_limit": _agent_int(params, "timeline_limit", int(settings.get("timeline_limit", 5))),
+        "chunk_size": _agent_int(params, "chunk_size", int(settings.get("chunk_size", DEFAULT_CHUNK_SIZE))),
+        "compare": bool(params.get("compare", settings.get("compare", True))),
+        "compare_limit": _agent_int(params, "compare_limit", int(settings.get("compare_limit", 50))),
+    }
+
+
+def _agent_out_dir(params: dict[str, Any], settings: dict[str, Any]) -> str:
+    out_dir = params.get("out_dir", settings.get("out_dir"))
+    if not isinstance(out_dir, str) or not out_dir.strip():
+        raise ValueError("Method requires params.out_dir or config out_dir.")
+    return out_dir
+
+
+def _agent_pack(params: dict[str, Any], settings: dict[str, Any]) -> str:
+    pack = params.get("pack")
+    if isinstance(pack, str) and pack.strip():
+        return pack
+    timeline = read_snapshot_timeline(_agent_out_dir(params, settings), limit=1)
+    latest = timeline.get("latest")
+    if isinstance(latest, dict) and latest.get("pack_path"):
+        return str(latest["pack_path"])
+    raise ValueError("Method requires params.pack or a snapshot timeline with latest pack.")
+
+
+def _agent_required_str(params: dict[str, Any], key: str) -> str:
+    value = params.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Method requires params.{key}.")
+    return value
+
+
+def _agent_int(params: dict[str, Any], key: str, default: int) -> int:
+    value = params.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"params.{key} must be an integer.")
+    return value
+
+
+def _agent_optional_int(params: dict[str, Any], key: str, default: int | None) -> int | None:
+    if key not in params:
+        return default
+    value = params[key]
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"params.{key} must be an integer or null.")
+    return value
+
+
+def _agent_response(request_id: Any, result: Any) -> dict[str, Any]:
+    return {
+        "schema_version": "repomori.agent.response.v1",
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "ok": True,
+        "result": result,
+    }
+
+
+def _agent_error_response(request_id: Any, code: str, message: str) -> dict[str, Any]:
+    return {
+        "schema_version": "repomori.agent.response.v1",
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "ok": False,
+        "error": {"code": code, "message": message},
+    }
 
 
 def _sum_snapshot_field(snapshots: list[dict[str, Any]], field: str) -> int:

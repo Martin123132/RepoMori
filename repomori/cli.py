@@ -33,6 +33,7 @@ from .codec import (
     query_pack,
     read_snapshot_timeline,
     prune_snapshots,
+    run_agent_bridge,
     run_memory_cycle,
     snapshot_repo,
     tree_pack,
@@ -122,6 +123,10 @@ def main(argv: list[str] | None = None) -> int:
     compare_group.add_argument("--compare", dest="compare", action="store_true", help="Compare against latest.repomori.")
     memory.add_argument("--compare-limit", type=int)
     memory.add_argument("--json", action="store_true", help="Print memory JSON.")
+
+    agent = sub.add_parser("agent", help="Run the JSON-lines agent bridge on stdio.")
+    agent.add_argument("--config", type=Path, help="Config file path; defaults to nearest repomori.toml.")
+    agent.add_argument("--profile", help="Config profile to use.")
 
     info = sub.add_parser("info", help="Show pack metadata.")
     info.add_argument("pack", type=Path)
@@ -339,6 +344,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"prune applied: {report['summary']['prune_applied']}")
             print(f"timeline snapshots: {report['summary']['timeline_snapshot_count']}")
         return 0 if report["status"] != "fail" else 1
+    if args.command == "agent":
+        return run_agent_bridge(
+            sys.stdin,
+            sys.stdout,
+            config_path=args.config,
+            profile=args.profile,
+            start_dir=Path.cwd(),
+        )
     if args.command == "info":
         _print(info_pack(args.pack), args.json)
         return 0
