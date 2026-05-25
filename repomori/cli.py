@@ -114,6 +114,13 @@ def main(argv: list[str] | None = None) -> int:
     init_incremental_group.add_argument("--no-incremental", dest="incremental", action="store_false", help="Rebuild snapshot packs without reusing latest pack state.")
     init.add_argument("--no-compare", action="store_true", help="Do not compare against latest.repomori.")
     init.add_argument("--compare-limit", type=int, default=50)
+    init.add_argument("--diff-context", action="store_true", help="Write changed-files context during memory runs.")
+    init.add_argument("--diff-context-question", default="what changed?")
+    init.add_argument("--diff-context-max-files", type=int, default=8)
+    init.add_argument("--diff-context-snippet-lines", type=int, default=12)
+    init.add_argument("--diff-context-snippets-per-file", type=int, default=2)
+    init.add_argument("--diff-context-max-bytes", type=int, default=8192)
+    init.add_argument("--diff-context-no-source", action="store_true", help="Configure diff context without exact snippets.")
     init.add_argument("--json", action="store_true", help="Print config init JSON.")
 
     snapshot = sub.add_parser("snapshot", help="Build a timestamped pack snapshot.")
@@ -178,6 +185,17 @@ def main(argv: list[str] | None = None) -> int:
     compare_group.add_argument("--no-compare", dest="compare", action="store_false", default=None, help="Do not compare against latest.repomori.")
     compare_group.add_argument("--compare", dest="compare", action="store_true", help="Compare against latest.repomori.")
     memory.add_argument("--compare-limit", type=int)
+    diff_context_group = memory.add_mutually_exclusive_group()
+    diff_context_group.add_argument("--diff-context", dest="diff_context", action="store_true", default=None, help="Write changed-files context beside snapshot reports.")
+    diff_context_group.add_argument("--no-diff-context", dest="diff_context", action="store_false", help="Skip diff-context even if config enables it.")
+    memory.add_argument("--diff-context-question")
+    memory.add_argument("--diff-context-max-files", type=int)
+    memory.add_argument("--diff-context-snippet-lines", type=int)
+    memory.add_argument("--diff-context-snippets-per-file", type=int)
+    memory.add_argument("--diff-context-max-bytes", type=int)
+    diff_context_source_group = memory.add_mutually_exclusive_group()
+    diff_context_source_group.add_argument("--diff-context-source", dest="diff_context_include_source", action="store_true", default=None, help="Include exact diff-context snippets.")
+    diff_context_source_group.add_argument("--diff-context-no-source", dest="diff_context_include_source", action="store_false", help="Write diff-context metadata without snippets.")
     memory.add_argument("--json", action="store_true", help="Print memory JSON.")
 
     agent = sub.add_parser("agent", help="Run the JSON-lines agent bridge on stdio.")
@@ -402,6 +420,13 @@ def main(argv: list[str] | None = None) -> int:
             incremental=args.incremental,
             compare=not args.no_compare,
             compare_limit=args.compare_limit,
+            diff_context=args.diff_context,
+            diff_context_question=args.diff_context_question,
+            diff_context_limit=args.diff_context_max_files,
+            diff_context_snippet_lines=args.diff_context_snippet_lines,
+            diff_context_snippets_per_file=args.diff_context_snippets_per_file,
+            diff_context_max_bytes=args.diff_context_max_bytes,
+            diff_context_include_source=not args.diff_context_no_source,
         )
         if args.json:
             print(json.dumps(result, indent=2))
@@ -477,6 +502,13 @@ def main(argv: list[str] | None = None) -> int:
             incremental=settings["incremental"],
             compare=settings["compare"],
             compare_limit=settings["compare_limit"],
+            diff_context=settings["diff_context"],
+            diff_context_question=settings["diff_context_question"],
+            diff_context_limit=settings["diff_context_limit"],
+            diff_context_snippet_lines=settings["diff_context_snippet_lines"],
+            diff_context_snippets_per_file=settings["diff_context_snippets_per_file"],
+            diff_context_max_bytes=settings["diff_context_max_bytes"],
+            diff_context_include_source=settings["diff_context_include_source"],
         )
         if args.json:
             print(json.dumps(report, indent=2))
@@ -485,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"status: {report['status']}")
             print(f"pack: {report['summary']['pack_path']}")
             print(f"handoff: {report['summary']['handoff_dir']}")
+            print(f"diff context: {report['summary']['diff_context_status']}")
             print(f"prune applied: {report['summary']['prune_applied']}")
             print(f"timeline snapshots: {report['summary']['timeline_snapshot_count']}")
         return 0 if report["status"] != "fail" else 1
@@ -834,6 +867,13 @@ def _memory_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         "incremental": _setting(args.incremental, settings, "incremental", True),
         "compare": _setting(args.compare, settings, "compare", True),
         "compare_limit": _setting(args.compare_limit, settings, "compare_limit", 50),
+        "diff_context": _setting(args.diff_context, settings, "diff_context", False),
+        "diff_context_question": _setting(args.diff_context_question, settings, "diff_context_question", "what changed?"),
+        "diff_context_limit": _setting(args.diff_context_max_files, settings, "diff_context_limit", 8),
+        "diff_context_snippet_lines": _setting(args.diff_context_snippet_lines, settings, "diff_context_snippet_lines", 12),
+        "diff_context_snippets_per_file": _setting(args.diff_context_snippets_per_file, settings, "diff_context_snippets_per_file", 2),
+        "diff_context_max_bytes": _setting(args.diff_context_max_bytes, settings, "diff_context_max_bytes", 8192),
+        "diff_context_include_source": _setting(args.diff_context_include_source, settings, "diff_context_include_source", True),
     }
 
 

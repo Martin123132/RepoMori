@@ -962,6 +962,55 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(second["summary"]["reused_file_count"], 0)
             self.assertEqual(second["summary"]["rebuilt_file_count"], 3)
 
+    def test_run_memory_cycle_can_write_diff_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory"
+
+            first = run_memory_cycle(repo, out, no_handoff=True, diff_context=True)
+            self.assertEqual(first["summary"]["diff_context_status"], "skipped_no_previous_pack")
+            self.assertIsNone(first["diff_context"])
+
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            second = run_memory_cycle(
+                repo,
+                out,
+                no_handoff=True,
+                diff_context=True,
+                diff_context_question="close Store",
+                diff_context_limit=3,
+            )
+
+            self.assertEqual(second["summary"]["diff_context_status"], "written")
+            self.assertEqual(second["diff_context"]["schema_version"], "repomori.diff_context.v1")
+            self.assertEqual(second["diff_context"]["summary"]["changed_count"], 1)
+            self.assertIn("diff_context_json", second["artifacts"])
+            diff_json = out / second["artifacts"]["diff_context_json"]
+            diff_md = out / second["artifacts"]["diff_context_markdown"]
+            self.assertTrue(diff_json.exists())
+            self.assertTrue(diff_md.exists())
+            self.assertIn("def close", diff_md.read_text(encoding="utf-8"))
+
+            index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["latest"]["diff_context_json"], diff_json.name)
+            self.assertEqual(index["latest"]["diff_context_status"], "written")
+            doctor = doctor_snapshot_dir(out)
+            self.assertEqual(doctor["status"], "pass")
+
+            (repo / "next.py").write_text("def next_step():\n    return 'next'\n", encoding="utf-8")
+            third = run_memory_cycle(repo, out, no_handoff=True, diff_context=True, keep=1, prune_apply=True)
+            self.assertEqual(third["summary"]["diff_context_status"], "written")
+            self.assertFalse(diff_json.exists())
+            self.assertFalse(diff_md.exists())
+
     def test_init_and_load_memory_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -980,6 +1029,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(loaded["settings"]["out_dir"], str(out.resolve()))
             self.assertEqual(loaded["settings"]["keep"], 20)
             self.assertTrue(loaded["settings"]["incremental"])
+            self.assertFalse(loaded["settings"]["diff_context"])
             self.assertFalse(loaded["settings"]["prune_apply"])
 
     def test_load_memory_config_supports_named_profiles(self) -> None:
@@ -1139,6 +1189,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_schema_list", first_names)
         memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
         self.assertIn("incremental", memory_tool["inputSchema"]["properties"])
+        self.assertIn("diff_context", memory_tool["inputSchema"]["properties"])
 
         unknown_method = handle_mcp_request({"jsonrpc": "2.0", "id": 4, "method": "missing.method"})
         self.assertEqual(unknown_method["error"]["code"], -32601)
@@ -2127,6 +2178,38 @@ class RepoMoriCodecTests(unittest.TestCase):
             index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
             self.assertEqual(index["snapshot_count"], 1)
 
+    def test_cli_memory_diff_context_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-diff-context-cli"
+            run_memory_cycle(repo, out, no_handoff=True)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--no-handoff",
+                    "--diff-context",
+                    "--diff-context-question",
+                    "added",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertEqual(payload["summary"]["diff_context_status"], "written")
+            self.assertEqual(payload["diff_context"]["schema_version"], "repomori.diff_context.v1")
+            self.assertTrue((out / payload["artifacts"]["diff_context_json"]).exists())
+
     def test_cli_init_json_writes_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -2153,8 +2236,10 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.config.init.v1")
             self.assertEqual(payload["config_path"], str(config.resolve()))
             self.assertTrue(payload["settings"]["incremental"])
+            self.assertFalse(payload["settings"]["diff_context"])
             self.assertTrue(config.exists())
             self.assertIn("incremental = true", config.read_text(encoding="utf-8"))
+            self.assertIn("diff_context = false", config.read_text(encoding="utf-8"))
             self.assertIn("repomori.config.v1", config.read_text(encoding="utf-8"))
 
     def test_cli_memory_uses_config_without_repo_or_out_dir(self) -> None:

@@ -47,10 +47,10 @@ agent needs only the source-backed changes between two packs.
 Use `memory` at the end of a work session:
 
 ```powershell
-python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --prune-apply --json
+python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --diff-context --prune-apply --json
 ```
 
-This builds a fresh incremental snapshot, creates a handoff package unless disabled, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Use `stats` on the same pack directory to see how many files and chunks RepoMori avoided rebuilding.
+This builds a fresh incremental snapshot, creates a handoff package unless disabled, writes changed-files context when a previous snapshot exists, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Use `stats` on the same pack directory to see how many files and chunks RepoMori avoided rebuilding.
 
 ## What To Read Next
 

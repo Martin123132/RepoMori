@@ -31,7 +31,7 @@ Errors use the same envelope with `ok:false` and an `error` object.
 
 - `agent.help`: returns protocol and method metadata.
 - `ping`: returns a simple status payload.
-- `memory.run`: runs the configured memory cycle, using incremental snapshot reuse by default.
+- `memory.run`: runs the configured memory cycle, using incremental snapshot reuse by default; pass `diff_context:true` to write changed-files context for the new snapshot.
 - `timeline.read`: reads the configured snapshot timeline.
 - `stats.read`: reads incremental reuse and storage statistics for the snapshot timeline.
 - `doctor.run`: checks snapshot directory health.

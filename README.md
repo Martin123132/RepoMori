@@ -100,7 +100,7 @@ repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
 repomori release-check [repo] [--baseline file] [--fail-on low] [--skip-tests] [--skip-demo] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
-repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--no-incremental] [--keep n] [--prune-apply] [--json]
+repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--no-incremental] [--diff-context] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
 repomori mcp [--config file] [--profile name]
 repomori schema [schema-version] [--json]
@@ -184,13 +184,15 @@ Snapshots reuse unchanged file state from the previous latest pack by default;
 use `--no-incremental` when you want a clean rebuild. Prune remains a dry run
 unless `--prune-apply` is supplied. Use `init` to write a local `repomori.toml`
 with D-drive-safe defaults, then run `memory` with `--config` or from a
-directory beneath that config.
+directory beneath that config. Add `--diff-context` to write JSON and Markdown
+changed-files context beside the snapshot reports when a previous snapshot
+exists.
 
 `init` writes a dependency-free TOML config with named profiles. A profile stores
 the repo path, snapshot output directory, handoff question, retention count,
 prune mode, doctor verification mode, timeline limit, chunk size, incremental
-reuse mode, and compare settings. Explicit `memory` flags override config
-values.
+reuse mode, diff-context mode, and compare settings. Explicit `memory` flags
+override config values.
 
 `agent` runs a dependency-free JSON-lines bridge on stdio so other agents can
 query RepoMori without guessing shell commands. Send one JSON object per line:

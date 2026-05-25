@@ -2814,6 +2814,13 @@ def snapshot_repo(
     handoff_question: str | None = None,
     handoff_out_dir: Path | str | None = None,
     handoff_force: bool = False,
+    diff_context: bool = False,
+    diff_context_question: str = "what changed?",
+    diff_context_limit: int = 8,
+    diff_context_snippet_lines: int = 12,
+    diff_context_snippets_per_file: int = 2,
+    diff_context_max_bytes: int | None = 8192,
+    diff_context_include_source: bool = True,
 ) -> dict[str, Any]:
     """Build a timestamped pack snapshot and compare it with the previous latest pack."""
 
@@ -2823,6 +2830,17 @@ def snapshot_repo(
         raise ValueError("compare_limit must be greater than zero")
     if handoff_question is not None and not handoff_question.strip():
         raise ValueError("handoff_question must not be empty")
+    if diff_context:
+        if not diff_context_question.strip():
+            raise ValueError("diff_context_question must not be empty")
+        if diff_context_limit <= 0:
+            raise ValueError("diff_context_limit must be greater than zero")
+        if diff_context_snippet_lines <= 0:
+            raise ValueError("diff_context_snippet_lines must be greater than zero")
+        if diff_context_snippets_per_file < 0:
+            raise ValueError("diff_context_snippets_per_file must be zero or greater")
+        if diff_context_max_bytes is not None and diff_context_max_bytes < 0:
+            raise ValueError("diff_context_max_bytes must be zero or greater")
 
     started = time.time()
     repo_path = Path(repo).resolve()
@@ -2874,6 +2892,30 @@ def snapshot_repo(
         )
         handoff_check = check_handoff_package(handoff_path)
 
+    diff_context_bundle = None
+    diff_context_json = None
+    diff_context_md = None
+    diff_context_status = "disabled"
+    if diff_context:
+        if previous_pack is None:
+            diff_context_status = "skipped_no_previous_pack"
+        else:
+            diff_context_bundle = build_diff_context_bundle(
+                previous_pack,
+                pack_path,
+                diff_context_question,
+                limit=diff_context_limit,
+                snippet_lines=diff_context_snippet_lines,
+                max_bytes=diff_context_max_bytes,
+                snippets_per_file=diff_context_snippets_per_file,
+                include_source=diff_context_include_source,
+            )
+            diff_context_json = out_path / f"{pack_path.stem}.diff-context.json"
+            diff_context_md = out_path / f"{pack_path.stem}.diff-context.md"
+            _write_json(diff_context_json, diff_context_bundle)
+            diff_context_md.write_text(format_diff_context_markdown(diff_context_bundle), encoding="utf-8")
+            diff_context_status = "written"
+
     if latest_path.resolve() != pack_path.resolve():
         shutil.copy2(pack_path, latest_path)
 
@@ -2891,6 +2933,13 @@ def snapshot_repo(
             "incremental": incremental,
             "compare": compare,
             "compare_limit": compare_limit,
+            "diff_context": diff_context,
+            "diff_context_question": diff_context_question if diff_context else None,
+            "diff_context_limit": diff_context_limit,
+            "diff_context_snippet_lines": diff_context_snippet_lines,
+            "diff_context_snippets_per_file": diff_context_snippets_per_file,
+            "diff_context_max_bytes": diff_context_max_bytes,
+            "diff_context_include_source": diff_context_include_source,
         },
         "summary": {
             "elapsed_seconds": round(elapsed, 4),
@@ -2914,6 +2963,13 @@ def snapshot_repo(
             "removed_count": comparison.get("summary", {}).get("removed_count") if comparison else None,
             "handoff_dir": str(handoff_path) if handoff_path is not None else None,
             "handoff_passed": handoff_check.get("valid") if handoff_check else None,
+            "diff_context_status": diff_context_status,
+            "diff_context_json": str(diff_context_json) if diff_context_json is not None else None,
+            "diff_context_markdown": str(diff_context_md) if diff_context_md is not None else None,
+            "diff_context_selected_count": diff_context_bundle.get("summary", {}).get("selected_count") if diff_context_bundle else None,
+            "diff_context_added_count": diff_context_bundle.get("summary", {}).get("added_count") if diff_context_bundle else None,
+            "diff_context_changed_count": diff_context_bundle.get("summary", {}).get("changed_count") if diff_context_bundle else None,
+            "diff_context_removed_count": diff_context_bundle.get("summary", {}).get("removed_count") if diff_context_bundle else None,
         },
         "artifacts": {
             "pack": pack_path.name,
@@ -2927,12 +2983,16 @@ def snapshot_repo(
         "comparison": comparison,
         "handoff": handoff,
         "handoff_check": handoff_check,
+        "diff_context": diff_context_bundle,
     }
     if compare_json is not None and compare_md is not None:
         report["artifacts"]["compare_json"] = compare_json.name
         report["artifacts"]["compare_markdown"] = compare_md.name
     if handoff_path is not None:
         report["artifacts"]["handoff"] = handoff_path.name
+    if diff_context_json is not None and diff_context_md is not None:
+        report["artifacts"]["diff_context_json"] = diff_context_json.name
+        report["artifacts"]["diff_context_markdown"] = diff_context_md.name
 
     _write_json(snapshot_json, report)
     snapshot_md.write_text(format_snapshot_markdown(report), encoding="utf-8")
@@ -3068,6 +3128,24 @@ def format_snapshot_markdown(report: dict[str, Any]) -> str:
         )
     else:
         lines.extend(["No handoff package was requested.", ""])
+
+    lines.extend(["## Diff Context", ""])
+    diff_status = summary.get("diff_context_status")
+    if diff_status == "written":
+        lines.extend(
+            [
+                f"- Status: `{diff_status}`",
+                f"- Selected files: `{summary.get('diff_context_selected_count')}`",
+                f"- Added: `{summary.get('diff_context_added_count')}`",
+                f"- Changed: `{summary.get('diff_context_changed_count')}`",
+                f"- Removed: `{summary.get('diff_context_removed_count')}`",
+                f"- JSON: `{summary.get('diff_context_json')}`",
+                f"- Markdown: `{summary.get('diff_context_markdown')}`",
+                "",
+            ]
+        )
+    else:
+        lines.extend([f"Diff context status: `{diff_status or 'disabled'}`", ""])
 
     lines.extend(["## Artifacts", ""])
     for label, path in report.get("artifacts", {}).items():
@@ -3419,6 +3497,13 @@ def run_memory_cycle(
     incremental: bool = True,
     compare: bool = True,
     compare_limit: int = 50,
+    diff_context: bool = False,
+    diff_context_question: str = "what changed?",
+    diff_context_limit: int = 8,
+    diff_context_snippet_lines: int = 12,
+    diff_context_snippets_per_file: int = 2,
+    diff_context_max_bytes: int | None = 8192,
+    diff_context_include_source: bool = True,
 ) -> dict[str, Any]:
     """Run the full offline snapshot memory loop for a repository."""
 
@@ -3442,6 +3527,13 @@ def run_memory_cycle(
         compare=compare,
         compare_limit=compare_limit,
         handoff_question=snapshot_handoff_question,
+        diff_context=diff_context,
+        diff_context_question=diff_context_question,
+        diff_context_limit=diff_context_limit,
+        diff_context_snippet_lines=diff_context_snippet_lines,
+        diff_context_snippets_per_file=diff_context_snippets_per_file,
+        diff_context_max_bytes=diff_context_max_bytes,
+        diff_context_include_source=diff_context_include_source,
     )
     doctor = doctor_snapshot_dir(out_path, verify_packs=verify_packs)
     prune = prune_snapshots(out_path, keep=keep, apply=prune_apply)
@@ -3467,6 +3559,10 @@ def run_memory_cycle(
         artifacts["compare_json"] = snapshot["artifacts"]["compare_json"]
     if snapshot.get("artifacts", {}).get("compare_markdown"):
         artifacts["compare_markdown"] = snapshot["artifacts"]["compare_markdown"]
+    if snapshot.get("artifacts", {}).get("diff_context_json"):
+        artifacts["diff_context_json"] = snapshot["artifacts"]["diff_context_json"]
+    if snapshot.get("artifacts", {}).get("diff_context_markdown"):
+        artifacts["diff_context_markdown"] = snapshot["artifacts"]["diff_context_markdown"]
 
     return {
         "schema_version": "repomori.memory.v1",
@@ -3485,6 +3581,13 @@ def run_memory_cycle(
             "incremental": incremental,
             "compare": compare,
             "compare_limit": compare_limit,
+            "diff_context": diff_context,
+            "diff_context_question": diff_context_question if diff_context else None,
+            "diff_context_limit": diff_context_limit,
+            "diff_context_snippet_lines": diff_context_snippet_lines,
+            "diff_context_snippets_per_file": diff_context_snippets_per_file,
+            "diff_context_max_bytes": diff_context_max_bytes,
+            "diff_context_include_source": diff_context_include_source,
         },
         "summary": {
             "elapsed_seconds": round(time.time() - started, 4),
@@ -3505,12 +3608,20 @@ def run_memory_cycle(
             "rebuilt_file_count": snapshot_summary.get("rebuilt_file_count"),
             "handoff_dir": snapshot_summary.get("handoff_dir"),
             "handoff_passed": snapshot_summary.get("handoff_passed"),
+            "diff_context_status": snapshot_summary.get("diff_context_status"),
+            "diff_context_json": snapshot_summary.get("diff_context_json"),
+            "diff_context_markdown": snapshot_summary.get("diff_context_markdown"),
+            "diff_context_selected_count": snapshot_summary.get("diff_context_selected_count"),
+            "diff_context_added_count": snapshot_summary.get("diff_context_added_count"),
+            "diff_context_changed_count": snapshot_summary.get("diff_context_changed_count"),
+            "diff_context_removed_count": snapshot_summary.get("diff_context_removed_count"),
         },
         "artifacts": artifacts,
         "snapshot": snapshot,
         "doctor": doctor,
         "prune": prune,
         "timeline": timeline,
+        "diff_context": snapshot.get("diff_context"),
     }
 
 
@@ -3531,6 +3642,13 @@ def init_config(
     incremental: bool = True,
     compare: bool = True,
     compare_limit: int = 50,
+    diff_context: bool = False,
+    diff_context_question: str = "what changed?",
+    diff_context_limit: int = 8,
+    diff_context_snippet_lines: int = 12,
+    diff_context_snippets_per_file: int = 2,
+    diff_context_max_bytes: int = 8192,
+    diff_context_include_source: bool = True,
 ) -> dict[str, Any]:
     """Write a local RepoMori config file for memory runs."""
 
@@ -3550,8 +3668,18 @@ def init_config(
         raise ValueError("chunk_size must be greater than zero")
     if compare_limit <= 0:
         raise ValueError("compare_limit must be greater than zero")
+    if diff_context_limit <= 0:
+        raise ValueError("diff_context_limit must be greater than zero")
+    if diff_context_snippet_lines <= 0:
+        raise ValueError("diff_context_snippet_lines must be greater than zero")
+    if diff_context_snippets_per_file < 0:
+        raise ValueError("diff_context_snippets_per_file must be zero or greater")
+    if diff_context_max_bytes < 0:
+        raise ValueError("diff_context_max_bytes must be zero or greater")
     if not no_handoff and not handoff_question.strip():
         raise ValueError("handoff_question must not be empty")
+    if diff_context and not diff_context_question.strip():
+        raise ValueError("diff_context_question must not be empty")
 
     settings = {
         "repo": str(repo_path),
@@ -3566,6 +3694,13 @@ def init_config(
         "incremental": incremental,
         "compare": compare,
         "compare_limit": compare_limit,
+        "diff_context": diff_context,
+        "diff_context_question": diff_context_question,
+        "diff_context_limit": diff_context_limit,
+        "diff_context_snippet_lines": diff_context_snippet_lines,
+        "diff_context_snippets_per_file": diff_context_snippets_per_file,
+        "diff_context_max_bytes": diff_context_max_bytes,
+        "diff_context_include_source": diff_context_include_source,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_format_memory_config(profile, settings), encoding="utf-8")
@@ -4890,6 +5025,8 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
         "snapshot_markdown": artifacts.get("snapshot_markdown"),
         "compare_json": artifacts.get("compare_json"),
         "compare_markdown": artifacts.get("compare_markdown"),
+        "diff_context_json": artifacts.get("diff_context_json"),
+        "diff_context_markdown": artifacts.get("diff_context_markdown"),
         "file_count": summary.get("file_count"),
         "logical_bytes": summary.get("logical_bytes"),
         "pack_bytes": summary.get("pack_bytes"),
@@ -4902,6 +5039,11 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
         "compared_with_previous": summary.get("compared_with_previous"),
         "handoff_dir": summary.get("handoff_dir"),
         "handoff_passed": summary.get("handoff_passed"),
+        "diff_context_status": summary.get("diff_context_status"),
+        "diff_context_selected_count": summary.get("diff_context_selected_count"),
+        "diff_context_added_count": summary.get("diff_context_added_count"),
+        "diff_context_changed_count": summary.get("diff_context_changed_count"),
+        "diff_context_removed_count": summary.get("diff_context_removed_count"),
         "added_count": compare_summary.get("added_count"),
         "removed_count": compare_summary.get("removed_count"),
         "changed_count": compare_summary.get("changed_count"),
@@ -5013,6 +5155,9 @@ def _doctor_check_snapshot(
     for field in ("snapshot_json", "snapshot_markdown"):
         _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
     for field in ("compare_json", "compare_markdown"):
+        if snapshot.get(field):
+            _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
+    for field in ("diff_context_json", "diff_context_markdown"):
         if snapshot.get(field):
             _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
 
@@ -5146,6 +5291,8 @@ def _snapshot_prune_record(snapshot: dict[str, Any]) -> dict[str, Any]:
         "snapshot_markdown": snapshot.get("snapshot_markdown"),
         "compare_json": snapshot.get("compare_json"),
         "compare_markdown": snapshot.get("compare_markdown"),
+        "diff_context_json": snapshot.get("diff_context_json"),
+        "diff_context_markdown": snapshot.get("diff_context_markdown"),
         "handoff_dir": snapshot.get("handoff_dir"),
     }
 
@@ -5159,6 +5306,8 @@ def _snapshot_prune_targets(out_path: Path, snapshot: dict[str, Any]) -> tuple[l
         ("snapshot_markdown", "snapshot_markdown"),
         ("compare_json", "compare_json"),
         ("compare_markdown", "compare_markdown"),
+        ("diff_context_json", "diff_context_json"),
+        ("diff_context_markdown", "diff_context_markdown"),
     ):
         path = _recorded_snapshot_path(out_path, snapshot.get(field))
         if path is None:
@@ -5212,6 +5361,13 @@ def _format_memory_config(profile: str, settings: dict[str, Any]) -> str:
         "incremental",
         "compare",
         "compare_limit",
+        "diff_context",
+        "diff_context_question",
+        "diff_context_limit",
+        "diff_context_snippet_lines",
+        "diff_context_snippets_per_file",
+        "diff_context_max_bytes",
+        "diff_context_include_source",
     ):
         lines.append(f"{key} = {_toml_value(settings[key])}")
     return "\n".join(lines).rstrip() + "\n"
@@ -5266,6 +5422,13 @@ def _normalize_memory_config_settings(path: Path, settings: dict[str, Any]) -> d
         "incremental": True,
         "compare": True,
         "compare_limit": 50,
+        "diff_context": False,
+        "diff_context_question": "what changed?",
+        "diff_context_limit": 8,
+        "diff_context_snippet_lines": 12,
+        "diff_context_snippets_per_file": 2,
+        "diff_context_max_bytes": 8192,
+        "diff_context_include_source": True,
     }
     normalized = {**defaults, **settings}
     for key in ("repo", "out_dir"):
@@ -5276,11 +5439,12 @@ def _normalize_memory_config_settings(path: Path, settings: dict[str, Any]) -> d
         if not config_path.is_absolute():
             config_path = path.parent / config_path
         normalized[key] = str(config_path.resolve())
-    for key in ("no_handoff", "prune_apply", "verify_packs", "incremental", "compare"):
+    for key in ("no_handoff", "prune_apply", "verify_packs", "incremental", "compare", "diff_context", "diff_context_include_source"):
         normalized[key] = _coerce_config_bool(path, key, normalized[key])
-    for key in ("keep", "timeline_limit", "chunk_size", "compare_limit"):
+    for key in ("keep", "timeline_limit", "chunk_size", "compare_limit", "diff_context_limit", "diff_context_snippet_lines", "diff_context_snippets_per_file", "diff_context_max_bytes"):
         normalized[key] = _coerce_config_int(path, key, normalized[key])
     normalized["handoff_question"] = str(normalized.get("handoff_question") or "")
+    normalized["diff_context_question"] = str(normalized.get("diff_context_question") or "")
     return normalized
 
 
@@ -5367,6 +5531,13 @@ MCP_TOOLS = (
                 "incremental": {"type": "boolean"},
                 "compare": {"type": "boolean"},
                 "compare_limit": {"type": "integer"},
+                "diff_context": {"type": "boolean"},
+                "diff_context_question": {"type": "string"},
+                "diff_context_limit": {"type": "integer"},
+                "diff_context_snippet_lines": {"type": "integer"},
+                "diff_context_snippets_per_file": {"type": "integer"},
+                "diff_context_max_bytes": {"type": "integer"},
+                "diff_context_include_source": {"type": "boolean"},
             },
             "additionalProperties": False,
         },
@@ -5702,6 +5873,13 @@ def _agent_memory_kwargs(params: dict[str, Any], settings: dict[str, Any]) -> di
         "incremental": bool(params.get("incremental", settings.get("incremental", True))),
         "compare": bool(params.get("compare", settings.get("compare", True))),
         "compare_limit": _agent_int(params, "compare_limit", int(settings.get("compare_limit", 50))),
+        "diff_context": bool(params.get("diff_context", settings.get("diff_context", False))),
+        "diff_context_question": str(params.get("diff_context_question", settings.get("diff_context_question", "what changed?"))),
+        "diff_context_limit": _agent_int(params, "diff_context_limit", int(settings.get("diff_context_limit", 8))),
+        "diff_context_snippet_lines": _agent_int(params, "diff_context_snippet_lines", int(settings.get("diff_context_snippet_lines", 12))),
+        "diff_context_snippets_per_file": _agent_int(params, "diff_context_snippets_per_file", int(settings.get("diff_context_snippets_per_file", 2))),
+        "diff_context_max_bytes": _agent_int(params, "diff_context_max_bytes", int(settings.get("diff_context_max_bytes", 8192))),
+        "diff_context_include_source": bool(params.get("diff_context_include_source", settings.get("diff_context_include_source", True))),
     }
 
 
