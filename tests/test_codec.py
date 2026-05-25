@@ -42,6 +42,7 @@ from repomori.codec import (
     run_demo,
     run_memory_cycle,
     schema_catalog,
+    scan_repository,
     snapshot_repo,
     tree_pack,
     verify_pack,
@@ -442,6 +443,62 @@ class RepoMoriCodecTests(unittest.TestCase):
                 run_demo(out)
             forced = run_demo(out, force=True)
             self.assertEqual(forced["status"], "pass")
+
+    def test_scan_repository_clean_public_release_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "clean"
+            self._public_ready_repo(repo)
+
+            report = scan_repository(repo, public_release=True)
+
+            self.assertEqual(report["schema_version"], "repomori.scan.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["findings"], 0)
+            self.assertTrue(report["public_release"]["required_files"]["LICENSE.md"])
+
+    def test_scan_repository_detects_secrets_artifacts_noise_and_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "risky"
+            self._public_ready_repo(repo)
+            fake_key = "sk-proj-" + "abcdefghijklmnopqrstuvwxyz1234567890ABCDE"
+            (repo / ".env").write_text(f"OPENAI_API_KEY={fake_key}\n", encoding="utf-8")
+            local_path = "C:\\Users\\ollet" + "\\" + "OneDrive" + "\\private"
+            (repo / "local.py").write_text(f'HOME = "{local_path}"\n', encoding="utf-8")
+            (repo / "packs").mkdir()
+            (repo / "packs" / "latest.repomori").write_bytes(b"pack")
+            (repo / "node_modules").mkdir()
+            (repo / "node_modules" / "leftpad.js").write_text("module.exports = 1;\n", encoding="utf-8")
+            (repo / "large.bin").write_bytes(b"\x00" * 128)
+
+            report = scan_repository(repo, max_file_bytes=96)
+            codes = {finding["code"] for finding in report["findings"]}
+
+            self.assertEqual(report["status"], "fail")
+            self.assertIn("openai_api_key", codes)
+            self.assertIn("risky_secret_filename", codes)
+            self.assertIn("generated_artifact_dir", codes)
+            self.assertIn("repomori_pack_artifact", codes)
+            self.assertIn("dependency_or_build_noise", codes)
+            self.assertIn("windows_user_path", codes)
+            self.assertIn("large_file", codes)
+            self.assertNotIn(fake_key, json.dumps(report))
+
+    def test_scan_repository_license_posture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "private-meta"
+            repo.mkdir()
+            (repo / "README.md").write_text("# Private metadata\n", encoding="utf-8")
+            (repo / "pyproject.toml").write_text(
+                "[project]\nname = \"demo\"\nlicense = { text = \"Private\" }\n",
+                encoding="utf-8",
+            )
+
+            report = scan_repository(repo)
+            codes = {finding["code"] for finding in report["findings"]}
+
+            self.assertEqual(report["status"], "warn")
+            self.assertIn("missing_license", codes)
+            self.assertIn("private_license_metadata", codes)
 
     def test_snapshot_repo_builds_latest_and_compares_previous(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -958,6 +1015,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(catalog["schema_version"], "repomori.schema.catalog.v1")
         schema_versions = {item["schema_version"] for item in catalog["schemas"]}
         self.assertIn("repomori.memory.v1", schema_versions)
+        self.assertIn("repomori.scan.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("context.build", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
@@ -979,6 +1037,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             capsule = build_capsule(pack, max_files=2)
             handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
+            scan = scan_repository(repo)
             agent_help = handle_agent_request({"id": 1, "method": "agent.help"})
 
             golden_shapes = {
@@ -1002,6 +1061,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     "repomori.memory.v1",
                     {"schema_version", "status", "repo_path", "out_dir", "settings", "summary", "snapshot", "doctor", "prune", "timeline"},
                 ),
+                "scan": (
+                    scan,
+                    "repomori.scan.v1",
+                    {"schema_version", "status", "repo_path", "settings", "summary", "findings"},
+                ),
                 "agent_help": (
                     agent_help["result"],
                     "repomori.agent.help.v1",
@@ -1016,6 +1080,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(capsule["files"])
             self.assertEqual(handoff["status"], "complete")
             self.assertEqual(memory["status"], "pass")
+            self.assertEqual(scan["status"], "warn")
             self.assertIn("memory.run", agent_help["result"]["methods"])
 
     def test_cli_context_json_is_parseable(self) -> None:
@@ -1807,6 +1872,53 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(payload["selected"], "repomori.memory.v1")
         self.assertEqual(payload["schema"]["producer"], "run_memory_cycle")
 
+    def test_cli_scan_json_and_fail_on_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "scan-cli"
+            repo.mkdir()
+            (repo / "README.md").write_text("# Scan CLI\n", encoding="utf-8")
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "scan",
+                    str(repo),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.scan.v1")
+            self.assertEqual(payload["status"], "warn")
+            self.assertTrue(any(finding["code"] == "missing_license" for finding in payload["findings"]))
+
+            strict = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "scan",
+                    str(repo),
+                    "--fail-on",
+                    "medium",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(strict.returncode, 1)
+            self.assertEqual(json.loads(strict.stdout)["schema_version"], "repomori.scan.v1")
+
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"
         repo.mkdir()
@@ -1823,6 +1935,20 @@ class RepoMoriCodecTests(unittest.TestCase):
         if build:
             build_pack(repo, pack, BuildOptions(force=True))
         return repo, pack
+
+    def _public_ready_repo(self, repo: Path) -> None:
+        repo.mkdir()
+        (repo / "README.md").write_text("# Ready\n\nSource-available demo.\n", encoding="utf-8")
+        (repo / "LICENSE.md").write_text("PolyForm Noncommercial License 1.0.0\n", encoding="utf-8")
+        (repo / "NOTICE.md").write_text("Copyright TWO HANDS NETWORK LTD\n", encoding="utf-8")
+        (repo / "COMMERCIAL-LICENSE.md").write_text("Commercial use requires written permission.\n", encoding="utf-8")
+        (repo / "CONTRIBUTING.md").write_text("Contributions are accepted under project terms.\n", encoding="utf-8")
+        (repo / "PUBLIC_RELEASE_CHECKLIST.md").write_text("- Confirm public release posture.\n", encoding="utf-8")
+        (repo / "pyproject.toml").write_text(
+            "[project]\nname = \"ready\"\nlicense = { file = \"LICENSE.md\" }\n",
+            encoding="utf-8",
+        )
+        (repo / "app.py").write_text("def ok():\n    return True\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -147,6 +147,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "out_dir", "repo_path", "summary", "artifacts"],
     },
     {
+        "schema_version": "repomori.scan.v1",
+        "kind": "report",
+        "title": "Public safety repository scan",
+        "producer": "scan_repository",
+        "required_fields": ["schema_version", "status", "repo_path", "settings", "summary", "findings"],
+    },
+    {
         "schema_version": "repomori.config.v1",
         "kind": "config",
         "title": "RepoMori TOML config",
@@ -183,6 +190,130 @@ EXCLUDED_FILE_SUFFIXES = {
     ".db-wal",
     ".db-shm",
 }
+
+SCAN_DEFAULT_MAX_FILE_BYTES = 1024 * 1024
+SCAN_SEVERITY_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3}
+SCAN_SECRET_PATTERNS = (
+    (
+        "private_key",
+        "high",
+        re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC |DSA |)?PRIVATE KEY-----"),
+        "Private key material appears in source.",
+    ),
+    (
+        "openai_api_key",
+        "high",
+        re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b"),
+        "OpenAI-style API key appears in source.",
+    ),
+    (
+        "github_token",
+        "high",
+        re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b"),
+        "GitHub-style token appears in source.",
+    ),
+    (
+        "aws_access_key",
+        "high",
+        re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+        "AWS access key id appears in source.",
+    ),
+    (
+        "generic_secret_assignment",
+        "medium",
+        re.compile(
+            r"(?i)\b(api[_-]?key|access[_-]?token|client[_-]?secret|secret|token|password|passwd)\b"
+            r"\s*[:=]\s*['\"]?([A-Za-z0-9][A-Za-z0-9_.:/+=@-]{7,})"
+        ),
+        "Secret-like assignment appears in source.",
+    ),
+)
+SCAN_RISKY_FILENAMES = {
+    ".env",
+    ".env.development",
+    ".env.local",
+    ".env.production",
+    ".env.test",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_rsa",
+}
+SCAN_GENERATED_DIR_NAMES = {
+    "bench",
+    "benchmark",
+    "benchmarks",
+    "handoff",
+    "handoffs",
+    "pack",
+    "packs",
+}
+SCAN_NOISE_DIR_NAMES = {
+    ".cache",
+    ".gradle",
+    ".mypy_cache",
+    ".next",
+    ".nuxt",
+    ".parcel-cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".turbo",
+    ".venv",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+}
+SCAN_LICENSE_NAMES = {"licence", "licence.md", "license", "license.md", "license.txt"}
+SCAN_PUBLIC_REQUIRED_FILES = (
+    "LICENSE.md",
+    "NOTICE.md",
+    "COMMERCIAL-LICENSE.md",
+    "CONTRIBUTING.md",
+    "PUBLIC_RELEASE_CHECKLIST.md",
+)
+SCAN_BINARY_EXTENSIONS = {
+    ".7z",
+    ".bmp",
+    ".dll",
+    ".exe",
+    ".gif",
+    ".ico",
+    ".jar",
+    ".jpeg",
+    ".jpg",
+    ".pdf",
+    ".png",
+    ".tar",
+    ".webp",
+    ".zip",
+}
+SCAN_PERSONAL_PATH_PATTERNS = (
+    (
+        "windows_user_path",
+        "low",
+        re.compile(r"[A-Za-z]:\\Users\\[^\\\s\"'<>|]+"),
+        "Local Windows user path appears in source.",
+    ),
+    (
+        "onedrive_path",
+        "low",
+        re.compile(r"(?i)(?:\\|/|^)OneDrive(?:\\|/)"),
+        "OneDrive path appears in source.",
+    ),
+    (
+        "temp_drive_path",
+        "low",
+        re.compile(r"(?i)\bD:\\Temp\\[^\\\s\"'<>|]*"),
+        "D-drive temp path appears in source.",
+    ),
+)
 
 LANG_BY_EXT = {
     ".bat": "batch",
@@ -318,6 +449,163 @@ def build_pack(repo: Path | str, output: Path | str, options: BuildOptions | Non
         conn.commit()
     stats["pack_bytes"] = output_path.stat().st_size
     return stats
+
+
+def scan_repository(
+    repo: Path | str,
+    *,
+    max_file_bytes: int = SCAN_DEFAULT_MAX_FILE_BYTES,
+    include_hidden: bool = False,
+    public_release: bool = False,
+) -> dict[str, Any]:
+    """Scan a repository for public-release and packing risks without network calls."""
+
+    repo_path = Path(repo).resolve()
+    if not repo_path.is_dir():
+        raise ValueError(f"Repository folder not found: {repo_path}")
+    if max_file_bytes <= 0:
+        raise ValueError("max_file_bytes must be greater than zero")
+
+    started = time.time()
+    findings: list[dict[str, Any]] = []
+    files_scanned = 0
+    dirs_checked = 0
+    bytes_scanned = 0
+    binary_by_dir: Counter[str] = Counter()
+    total_by_dir: Counter[str] = Counter()
+
+    _scan_license_posture(repo_path, findings, public_release=public_release)
+
+    for root, dirs, files in os.walk(repo_path):
+        root_path = Path(root)
+        dirs_checked += 1
+        kept_dirs = []
+        for dirname in sorted(dirs):
+            dir_path = root_path / dirname
+            rel_dir = _scan_relpath(repo_path, dir_path)
+            lower_name = dirname.lower()
+            if lower_name in {".git", "__pycache__"}:
+                continue
+            if lower_name in SCAN_GENERATED_DIR_NAMES:
+                _scan_add(
+                    findings,
+                    "medium",
+                    "generated_artifact_dir",
+                    rel_dir,
+                    "Generated RepoMori-style artifact directory is present.",
+                )
+            if lower_name in SCAN_NOISE_DIR_NAMES:
+                _scan_add(
+                    findings,
+                    "low",
+                    "dependency_or_build_noise",
+                    rel_dir,
+                    "Dependency, build, or cache directory is present.",
+                )
+            if not include_hidden and dirname.startswith(".") and dirname != ".github":
+                continue
+            kept_dirs.append(dirname)
+        dirs[:] = kept_dirs
+
+        for filename in sorted(files):
+            path = root_path / filename
+            if not path.is_file():
+                continue
+            if not include_hidden and filename.startswith(".") and filename.lower() not in SCAN_RISKY_FILENAMES:
+                continue
+            rel = _scan_relpath(repo_path, path)
+            parent_rel = _scan_relpath(repo_path, path.parent)
+            lower_name = filename.lower()
+
+            try:
+                size = path.stat().st_size
+            except OSError as exc:
+                _scan_add(findings, "low", "unreadable_file", rel, f"Could not stat file: {exc}")
+                continue
+
+            files_scanned += 1
+            total_by_dir[parent_rel] += 1
+
+            if path.suffix.lower() == ".repomori":
+                _scan_add(
+                    findings,
+                    "medium",
+                    "repomori_pack_artifact",
+                    rel,
+                    "Generated .repomori pack is present in the repository tree.",
+                    size=size,
+                )
+            if lower_name in SCAN_RISKY_FILENAMES or lower_name.endswith((".pem", ".key")):
+                _scan_add(
+                    findings,
+                    "high" if lower_name in {"id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"} else "medium",
+                    "risky_secret_filename",
+                    rel,
+                    "Secret-bearing filename is present in the repository tree.",
+                    size=size,
+                )
+            if size > max_file_bytes:
+                _scan_add(
+                    findings,
+                    "medium",
+                    "large_file",
+                    rel,
+                    f"File is larger than the scan threshold ({max_file_bytes} bytes).",
+                    size=size,
+                )
+
+            data = _scan_read_prefix(path, max_file_bytes)
+            if data is None:
+                _scan_add(findings, "low", "unreadable_file", rel, "Could not read file bytes.", size=size)
+                continue
+            bytes_scanned += len(data)
+            text = _decode_text(data)
+            if text is None:
+                binary_by_dir[parent_rel] += 1
+                if path.suffix.lower() in SCAN_BINARY_EXTENSIONS:
+                    _scan_add(
+                        findings,
+                        "info",
+                        "binary_file",
+                        rel,
+                        "Binary file is present; confirm it belongs in a public source repo.",
+                        size=size,
+                    )
+                continue
+
+            _scan_text_for_secrets(rel, text, findings)
+            _scan_text_for_personal_paths(rel, text, findings)
+
+    _scan_binary_heavy_dirs(binary_by_dir, total_by_dir, findings)
+    public_report = _scan_public_release_report(repo_path, findings, enabled=public_release)
+    summary = _scan_summary(findings)
+    summary.update(
+        {
+            "files_scanned": files_scanned,
+            "dirs_checked": dirs_checked,
+            "bytes_scanned": bytes_scanned,
+            "generated_artifacts": sum(1 for item in findings if item["code"] in {"generated_artifact_dir", "repomori_pack_artifact"}),
+            "secret_findings": sum(1 for item in findings if item["code"] in {"private_key", "openai_api_key", "github_token", "aws_access_key", "generic_secret_assignment", "risky_secret_filename"}),
+            "license_findings": sum(1 for item in findings if item["code"] in {"missing_license", "private_license_metadata", "missing_public_release_file"}),
+            "elapsed_seconds": round(time.time() - started, 4),
+        }
+    )
+    status = "fail" if summary["high"] else "warn" if summary["findings"] else "pass"
+    report = {
+        "schema_version": "repomori.scan.v1",
+        "status": status,
+        "repo_path": str(repo_path),
+        "settings": {
+            "max_file_bytes": max_file_bytes,
+            "include_hidden": include_hidden,
+            "public_release": public_release,
+        },
+        "summary": summary,
+        "findings": findings,
+    }
+    if public_report is not None:
+        report["public_release"] = public_report
+    return report
 
 
 def info_pack(pack: Path | str) -> dict[str, Any]:
@@ -4883,6 +5171,242 @@ def _put_metadata(conn: sqlite3.Connection, values: dict[str, Any]) -> None:
 def _metadata(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute("SELECT key, value FROM metadata").fetchall()
     return {row["key"]: _safe_json(row["value"], row["value"]) for row in rows}
+
+
+def _scan_relpath(repo_path: Path, path: Path) -> str:
+    try:
+        rel = path.resolve().relative_to(repo_path.resolve())
+    except ValueError:
+        return str(path)
+    value = rel.as_posix()
+    return value if value else "."
+
+
+def _scan_add(
+    findings: list[dict[str, Any]],
+    severity: str,
+    code: str,
+    path: str,
+    message: str,
+    *,
+    line: int | None = None,
+    match: str | None = None,
+    size: int | None = None,
+) -> None:
+    item: dict[str, Any] = {
+        "severity": severity,
+        "code": code,
+        "path": path,
+        "message": message,
+    }
+    if line is not None:
+        item["line"] = line
+    if match is not None:
+        item["match"] = match
+    if size is not None:
+        item["size"] = size
+    findings.append(item)
+
+
+def _scan_read_prefix(path: Path, max_file_bytes: int) -> bytes | None:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(max_file_bytes)
+    except OSError:
+        return None
+
+
+def _scan_text_for_secrets(rel: str, text: str, findings: list[dict[str, Any]]) -> None:
+    for code, severity, pattern, message in SCAN_SECRET_PATTERNS:
+        seen = 0
+        for match in pattern.finditer(text):
+            matched = match.group(2) if code == "generic_secret_assignment" and match.lastindex else match.group(0)
+            if code == "generic_secret_assignment" and _scan_looks_like_placeholder(matched):
+                continue
+            _scan_add(
+                findings,
+                severity,
+                code,
+                rel,
+                message,
+                line=_scan_line_number(text, match.start()),
+                match=_scan_redact(matched),
+            )
+            seen += 1
+            if seen >= 5:
+                break
+
+
+def _scan_text_for_personal_paths(rel: str, text: str, findings: list[dict[str, Any]]) -> None:
+    for code, severity, pattern, message in SCAN_PERSONAL_PATH_PATTERNS:
+        seen = 0
+        for match in pattern.finditer(text):
+            _scan_add(
+                findings,
+                severity,
+                code,
+                rel,
+                message,
+                line=_scan_line_number(text, match.start()),
+                match=_scan_redact(match.group(0)),
+            )
+            seen += 1
+            if seen >= 3:
+                break
+
+
+def _scan_line_number(text: str, offset: int) -> int:
+    return text.count("\n", 0, offset) + 1
+
+
+def _scan_redact(value: str) -> str:
+    compact = value.strip()
+    if len(compact) <= 8:
+        return "***"
+    return f"{compact[:4]}...{compact[-4:]}"
+
+
+def _scan_looks_like_placeholder(value: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in {"changeme", "example", "placeholder", "password", "secret", "token"}:
+        return True
+    if "example" in lowered or "placeholder" in lowered:
+        return True
+    if lowered.startswith(("your-", "your_", "insert-", "insert_")):
+        return True
+    if set(lowered) <= {"x"}:
+        return True
+    return False
+
+
+def _scan_license_posture(repo_path: Path, findings: list[dict[str, Any]], *, public_release: bool) -> None:
+    try:
+        root_files = {path.name.lower(): path for path in repo_path.iterdir() if path.is_file()}
+    except OSError:
+        root_files = {}
+    has_license = any(name in SCAN_LICENSE_NAMES for name in root_files)
+    if not has_license:
+        _scan_add(findings, "medium", "missing_license", ".", "No root license file was found.")
+
+    pyproject = repo_path / "pyproject.toml"
+    if pyproject.exists():
+        text = _decode_text(_scan_read_prefix(pyproject, SCAN_DEFAULT_MAX_FILE_BYTES) or b"")
+        if text and re.search(r"(?im)^\s*license\s*=\s*(?:\"Private\"|\{[^}]*text\s*=\s*\"Private\")", text):
+            _scan_add(
+                findings,
+                "medium",
+                "private_license_metadata",
+                "pyproject.toml",
+                "Project metadata still describes the license as Private.",
+            )
+
+    license_texts = []
+    for name in SCAN_LICENSE_NAMES:
+        path = root_files.get(name)
+        if not path:
+            continue
+        text = _decode_text(_scan_read_prefix(path, SCAN_DEFAULT_MAX_FILE_BYTES) or b"")
+        if text:
+            license_texts.append(text.lower())
+    joined = "\n".join(license_texts)
+    if "polyform noncommercial" in joined and any(marker in joined for marker in ("mit license", "apache license", "bsd license")):
+        _scan_add(
+            findings,
+            "high" if public_release else "medium",
+            "conflicting_license_notice",
+            ".",
+            "License text appears to mix noncommercial and permissive license notices.",
+        )
+
+
+def _scan_public_release_report(
+    repo_path: Path,
+    findings: list[dict[str, Any]],
+    *,
+    enabled: bool,
+) -> dict[str, Any] | None:
+    if not enabled:
+        return None
+
+    required_files = {name: (repo_path / name).exists() for name in SCAN_PUBLIC_REQUIRED_FILES}
+    for name, exists in required_files.items():
+        if not exists:
+            _scan_add(
+                findings,
+                "medium" if name in {"LICENSE.md", "NOTICE.md"} else "low",
+                "missing_public_release_file",
+                name,
+                "Expected public-release guardrail file is missing.",
+            )
+
+    checklist_path = repo_path / "PUBLIC_RELEASE_CHECKLIST.md"
+    checklist = {
+        "path": "PUBLIC_RELEASE_CHECKLIST.md",
+        "found": checklist_path.exists(),
+        "checked_items": 0,
+        "unchecked_items": 0,
+        "total_checkbox_items": 0,
+    }
+    if checklist_path.exists():
+        text = _decode_text(_scan_read_prefix(checklist_path, SCAN_DEFAULT_MAX_FILE_BYTES) or b"") or ""
+        checked = len(re.findall(r"(?im)^\s*-\s*\[[xX]\]\s+", text))
+        unchecked = len(re.findall(r"(?im)^\s*-\s*\[\s\]\s+", text))
+        checklist.update(
+            {
+                "checked_items": checked,
+                "unchecked_items": unchecked,
+                "total_checkbox_items": checked + unchecked,
+            }
+        )
+        if unchecked:
+            _scan_add(
+                findings,
+                "low",
+                "unchecked_public_release_item",
+                "PUBLIC_RELEASE_CHECKLIST.md",
+                f"Public release checklist still has {unchecked} unchecked item(s).",
+            )
+    return {
+        "enabled": True,
+        "required_files": required_files,
+        "checklist": checklist,
+    }
+
+
+def _scan_binary_heavy_dirs(
+    binary_by_dir: Counter[str],
+    total_by_dir: Counter[str],
+    findings: list[dict[str, Any]],
+) -> None:
+    for rel in sorted(binary_by_dir):
+        binary_count = binary_by_dir[rel]
+        total = total_by_dir.get(rel, 0)
+        if total >= 5 and binary_count / max(total, 1) >= 0.8:
+            _scan_add(
+                findings,
+                "low",
+                "binary_heavy_dir",
+                rel,
+                f"Directory is mostly binary files ({binary_count}/{total}).",
+            )
+
+
+def _scan_summary(findings: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = Counter(str(item.get("severity", "info")) for item in findings)
+    max_severity = "none"
+    if findings:
+        max_severity = max(
+            (str(item.get("severity", "info")) for item in findings),
+            key=lambda value: SCAN_SEVERITY_ORDER.get(value, -1),
+        )
+    return {
+        "findings": len(findings),
+        "high": counts.get("high", 0),
+        "medium": counts.get("medium", 0),
+        "low": counts.get("low", 0),
+        "info": counts.get("info", 0),
+        "max_severity": max_severity,
+    }
 
 
 def _open_pack(pack: Path | str) -> sqlite3.Connection:

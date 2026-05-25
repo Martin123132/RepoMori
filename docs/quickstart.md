@@ -21,10 +21,15 @@ python -m repomori timeline D:\Temp\repomori-demo\packs --format json
 ## Use Your Own Repository
 
 ```powershell
+python -m repomori scan D:\Dev\YourRepo --public-release --json
 python -m repomori init D:\Dev\YourRepo --out-dir D:\Dev\YourRepo\packs
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --json
 python -m repomori context D:\Dev\YourRepo\packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
 ```
+
+`scan` is optional but recommended before publishing or building public packs.
+It stays offline and reports likely secrets, generated artifacts, build noise,
+large files, local path traces, and license guardrail gaps.
 
 ## Recommended Local Workflow
 
@@ -41,4 +46,5 @@ This builds a fresh snapshot, creates a handoff package unless disabled, checks 
 - [MCP setup](mcp-setup.md)
 - [Schema notes](schemas.md)
 - [Agent protocol](agent-protocol.md)
+- [Public safety scan](public-safety-scan.md)
 - [License FAQ](license-faq.md)

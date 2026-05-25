@@ -48,6 +48,7 @@ bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
 
 ```powershell
 python -m repomori demo --out D:\Temp\repomori-demo --force --json
+python -m repomori scan D:\Dev\RepoMori --public-release --json
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
@@ -94,6 +95,7 @@ exactness matters.
 ```text
 repomori build <repo> <pack>
 repomori demo --out <dir> [--force] [--json]
+repomori scan <repo> [--public-release] [--fail-on high] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--json]
 repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
@@ -129,6 +131,13 @@ exact source text goes into the context bundle.
 a tiny demo repo, builds `demo.repomori`, verifies it, creates context, runs a
 memory cycle, checks the MCP bridge, and writes `demo.json` plus a local
 `README.md` with follow-up commands.
+
+`scan` checks a repository before packing or publishing. It looks for likely
+secrets, private-key files, generated `.repomori` packs, handoff and benchmark
+artifacts, dependency/build noise, huge files, binary-heavy folders, local path
+traces, and license/public-release guardrail gaps. It is local-only and
+dependency-free. Use `--fail-on high` for secret-style failures only, or make it
+stricter with `--fail-on medium`.
 
 `diagnose` explains why a question ranked files the way it did. It reports
 query tokens and phrases, per-file score breakdowns, matched and missed terms,
@@ -256,6 +265,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [MCP setup](docs/mcp-setup.md)
 - [Agent protocol](docs/agent-protocol.md)
 - [Schemas](docs/schemas.md)
+- [Public safety scan](docs/public-safety-scan.md)
 - [License FAQ](docs/license-faq.md)
 - [Public release checklist](PUBLIC_RELEASE_CHECKLIST.md)
 

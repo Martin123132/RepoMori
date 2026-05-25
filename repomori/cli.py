@@ -38,6 +38,7 @@ from .codec import (
     run_mcp_bridge,
     run_memory_cycle,
     schema_catalog,
+    scan_repository,
     snapshot_repo,
     tree_pack,
     verify_pack,
@@ -64,6 +65,14 @@ def main(argv: list[str] | None = None) -> int:
     demo.add_argument("--question", default="sqlite connect Store", help="Question used for query, context, and MCP checks.")
     demo.add_argument("--chunk-size", type=int, default=256 * 1024)
     demo.add_argument("--json", action="store_true", help="Print demo JSON.")
+
+    scan = sub.add_parser("scan", help="Scan a repository for public-release and packing risks.")
+    scan.add_argument("repo", type=Path)
+    scan.add_argument("--max-file-bytes", type=int, default=1024 * 1024)
+    scan.add_argument("--include-hidden", action="store_true", help="Scan hidden dotfiles and dot-directories.")
+    scan.add_argument("--public-release", action="store_true", help="Check source-available public-release guardrails.")
+    scan.add_argument("--fail-on", choices=("info", "low", "medium", "high"), default="high")
+    scan.add_argument("--json", action="store_true", help="Print scan JSON.")
 
     init = sub.add_parser("init", help="Write a RepoMori config file.")
     init.add_argument("repo", type=Path, help="Repository folder to remember.")
@@ -291,6 +300,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"context: {Path(report['out_dir']) / report['artifacts']['context_markdown']}")
             print(f"config: {report['summary']['config_path']}")
         return 0 if report["status"] == "pass" else 1
+    if args.command == "scan":
+        report = scan_repository(
+            args.repo,
+            max_file_bytes=args.max_file_bytes,
+            include_hidden=args.include_hidden,
+            public_release=args.public_release,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            _print_scan(report)
+        return 1 if _scan_has_threshold(report, args.fail_on) else 0
     if args.command == "init":
         result = init_config(
             args.repo,
@@ -617,6 +638,36 @@ def _eval_questions(questions: list[str] | None, questions_file: Path | None) ->
             if line.strip() and not line.lstrip().startswith("#")
         )
     return values or None
+
+
+def _print_scan(report: dict) -> None:
+    summary = report.get("summary", {})
+    print(f"scan: {report.get('repo_path')}")
+    print(f"status: {report.get('status')}")
+    print(
+        "findings: "
+        f"{summary.get('findings', 0)} "
+        f"high={summary.get('high', 0)} "
+        f"medium={summary.get('medium', 0)} "
+        f"low={summary.get('low', 0)} "
+        f"info={summary.get('info', 0)}"
+    )
+    for finding in report.get("findings", [])[:20]:
+        location = finding.get("path", ".")
+        if finding.get("line") is not None:
+            location = f"{location}:{finding['line']}"
+        print(f"- {finding.get('severity')} {finding.get('code')} {location}: {finding.get('message')}")
+    extra = len(report.get("findings", [])) - 20
+    if extra > 0:
+        print(f"... {extra} more finding(s)")
+
+
+def _scan_has_threshold(report: dict, threshold: str) -> bool:
+    minimum = {"info": 0, "low": 1, "medium": 2, "high": 3}[threshold]
+    for finding in report.get("findings", []):
+        if {"info": 0, "low": 1, "medium": 2, "high": 3}.get(finding.get("severity"), -1) >= minimum:
+            return True
+    return False
 
 
 def _memory_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:

@@ -13,6 +13,7 @@ Use this before changing the GitHub repository visibility to public.
 ## Repository Audit
 
 - Run a secret scan for API keys, tokens, private keys, passwords, and personal data.
+- Run `python -m repomori scan D:\Dev\RepoMori --public-release --fail-on medium --json`.
 - Check git history for secrets or private files, not just the current checkout.
 - Remove generated `.repomori` packs, handoff folders, benchmark outputs, and snapshot directories unless intentionally published.
 - Confirm examples use safe D-drive paths and no private customer/project names.
