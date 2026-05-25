@@ -99,12 +99,12 @@ repomori build <repo> <pack> [--base pack] [--force] [--json]
 repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
 repomori release-check [repo] [--baseline file] [--fail-on low] [--skip-tests] [--skip-demo] [--json]
-repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--json]
-repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--keep n] [--prune-apply] [--json]
+repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
+repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--no-incremental] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
 repomori mcp [--config file] [--profile name]
 repomori schema [schema-version] [--json]
-repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-compare] [--json]
+repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-incremental] [--no-compare] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
 repomori prune <snapshot-dir> [--keep n] [--apply] [--json]
@@ -152,6 +152,8 @@ report.
 unchanged file records, compressed chunks, symbols, imports, and search index
 rows from the base pack, and rebuilds only added or changed files. Removed files
 from the base are simply left out of the new pack.
+`snapshot` and `memory` use this same reuse path automatically when a previous
+latest pack exists.
 
 `diagnose` explains why a question ranked files the way it did. It reports
 query tokens and phrases, per-file score breakdowns, matched and missed terms,
@@ -170,14 +172,17 @@ everything.
 `memory` is the recommended repeatable workflow for the end of a work session.
 It builds a snapshot, creates a default handoff package, runs snapshot doctor,
 plans or applies prune, and returns the recent timeline in one offline report.
-Prune remains a dry run unless `--prune-apply` is supplied. Use `init` to write
-a local `repomori.toml` with D-drive-safe defaults, then run `memory` with
-`--config` or from a directory beneath that config.
+Snapshots reuse unchanged file state from the previous latest pack by default;
+use `--no-incremental` when you want a clean rebuild. Prune remains a dry run
+unless `--prune-apply` is supplied. Use `init` to write a local `repomori.toml`
+with D-drive-safe defaults, then run `memory` with `--config` or from a
+directory beneath that config.
 
 `init` writes a dependency-free TOML config with named profiles. A profile stores
 the repo path, snapshot output directory, handoff question, retention count,
-prune mode, doctor verification mode, timeline limit, chunk size, and compare
-settings. Explicit `memory` flags override config values.
+prune mode, doctor verification mode, timeline limit, chunk size, incremental
+reuse mode, and compare settings. Explicit `memory` flags override config
+values.
 
 `agent` runs a dependency-free JSON-lines bridge on stdio so other agents can
 query RepoMori without guessing shell commands. Send one JSON object per line:
@@ -228,11 +233,13 @@ The MCP tool names are `repomori_help`, `repomori_memory_run`,
 
 `snapshot` builds timestamped packs into an output directory, updates
 `latest.repomori`, and automatically compares the new pack against the previous
-latest pack when one exists. It also writes snapshot JSON/Markdown reports and
-compare reports for machine-readable project memory over time, plus a
-`snapshots.json` index that records the timeline of pack hashes and change
-summaries. Use `--handoff` to create a handoff package for the new snapshot,
-using the previous snapshot as `--base-pack` when available.
+latest pack when one exists. It also reuses unchanged file records and chunks
+from that previous pack by default, then writes snapshot JSON/Markdown reports
+and compare reports for machine-readable project memory over time, plus a
+`snapshots.json` index that records the timeline of pack hashes, incremental
+reuse counts, and change summaries. Use `--no-incremental` to rebuild every file
+and `--handoff` to create a handoff package for the new snapshot, using the
+previous snapshot as `--base-pack` when available.
 
 `timeline` reads `snapshots.json` and reports recent snapshots, pack hashes,
 verification status, handoff locations, and aggregate added/removed/changed

@@ -7,6 +7,7 @@
 - Added scan baselines, ignore codes, and CI public-safety scanning.
 - Added `release-check` command for schema, scan, tests, and demo smoke.
 - Added incremental `build --base` pack creation for unchanged file reuse.
+- Added automatic incremental snapshot and memory runs using the latest pack.
 - Added public launch docs, issue templates, badges, and project `.gitignore`.
 - Added `memory` cycle command for snapshot, handoff, doctor, prune, and timeline.
 - Added `init` config profiles through `repomori.toml`.

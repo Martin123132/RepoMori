@@ -2548,6 +2548,7 @@ def snapshot_repo(
     out_dir: Path | str,
     *,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    incremental: bool = True,
     compare: bool = True,
     compare_limit: int = 50,
     handoff_question: str | None = None,
@@ -2575,6 +2576,7 @@ def snapshot_repo(
     latest_path = out_path / "latest.repomori"
     previous_latest = latest_path if latest_path.exists() else None
     previous_pack = _snapshot_previous_pack(out_path) or previous_latest
+    incremental_base = previous_pack if incremental and previous_pack is not None else None
 
     build = build_pack(
         repo_path,
@@ -2583,6 +2585,7 @@ def snapshot_repo(
             chunk_size=chunk_size,
             force=False,
             exclude_paths=_snapshot_exclude_paths(repo_path, out_path),
+            base_pack=incremental_base,
         ),
     )
     verify = verify_pack(pack_path)
@@ -2625,6 +2628,7 @@ def snapshot_repo(
         "created_at": int(started),
         "settings": {
             "chunk_size": chunk_size,
+            "incremental": incremental,
             "compare": compare,
             "compare_limit": compare_limit,
         },
@@ -2638,6 +2642,11 @@ def snapshot_repo(
             "file_count": build.get("file_count"),
             "text_file_count": build.get("text_file_count"),
             "binary_file_count": build.get("binary_file_count"),
+            "incremental": build.get("incremental"),
+            "incremental_base_pack": build.get("base_pack_path"),
+            "reused_file_count": build.get("reused_file_count"),
+            "rebuilt_file_count": build.get("rebuilt_file_count"),
+            "reused_chunk_count": build.get("reused_chunk_count"),
             "verify_passed": verify.get("verified"),
             "compared_with_previous": comparison is not None,
             "changed_count": comparison.get("summary", {}).get("changed_count") if comparison else None,
@@ -2757,6 +2766,11 @@ def format_snapshot_markdown(report: dict[str, Any]) -> str:
         f"- Binary files: `{summary.get('binary_file_count')}`",
         f"- Logical bytes: `{summary.get('logical_bytes')}`",
         f"- Pack bytes: `{summary.get('pack_bytes')}`",
+        f"- Incremental: `{summary.get('incremental')}`",
+        f"- Incremental base: `{summary.get('incremental_base_pack')}`",
+        f"- Reused files: `{summary.get('reused_file_count')}`",
+        f"- Rebuilt files: `{summary.get('rebuilt_file_count')}`",
+        f"- Reused chunks: `{summary.get('reused_chunk_count')}`",
         f"- Verify passed: `{summary.get('verify_passed')}`",
         f"- Elapsed seconds: `{summary.get('elapsed_seconds')}`",
         "",
@@ -3078,6 +3092,7 @@ def run_memory_cycle(
     verify_packs: bool = False,
     timeline_limit: int = 5,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    incremental: bool = True,
     compare: bool = True,
     compare_limit: int = 50,
 ) -> dict[str, Any]:
@@ -3099,6 +3114,7 @@ def run_memory_cycle(
         repo_path,
         out_path,
         chunk_size=chunk_size,
+        incremental=incremental,
         compare=compare,
         compare_limit=compare_limit,
         handoff_question=snapshot_handoff_question,
@@ -3142,6 +3158,7 @@ def run_memory_cycle(
             "verify_packs": verify_packs,
             "timeline_limit": timeline_limit,
             "chunk_size": chunk_size,
+            "incremental": incremental,
             "compare": compare,
             "compare_limit": compare_limit,
         },
@@ -3158,6 +3175,10 @@ def run_memory_cycle(
             "timeline_returned_count": timeline.get("returned_count"),
             "pack_path": snapshot_summary.get("pack_path"),
             "latest_pack": snapshot_summary.get("latest_pack"),
+            "incremental": snapshot_summary.get("incremental"),
+            "incremental_base_pack": snapshot_summary.get("incremental_base_pack"),
+            "reused_file_count": snapshot_summary.get("reused_file_count"),
+            "rebuilt_file_count": snapshot_summary.get("rebuilt_file_count"),
             "handoff_dir": snapshot_summary.get("handoff_dir"),
             "handoff_passed": snapshot_summary.get("handoff_passed"),
         },
@@ -3183,6 +3204,7 @@ def init_config(
     verify_packs: bool = False,
     timeline_limit: int = 5,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    incremental: bool = True,
     compare: bool = True,
     compare_limit: int = 50,
 ) -> dict[str, Any]:
@@ -3217,6 +3239,7 @@ def init_config(
         "verify_packs": verify_packs,
         "timeline_limit": timeline_limit,
         "chunk_size": chunk_size,
+        "incremental": incremental,
         "compare": compare,
         "compare_limit": compare_limit,
     }
@@ -4318,6 +4341,11 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
         "file_count": summary.get("file_count"),
         "logical_bytes": summary.get("logical_bytes"),
         "pack_bytes": summary.get("pack_bytes"),
+        "incremental": summary.get("incremental"),
+        "incremental_base_pack": summary.get("incremental_base_pack"),
+        "reused_file_count": summary.get("reused_file_count"),
+        "rebuilt_file_count": summary.get("rebuilt_file_count"),
+        "reused_chunk_count": summary.get("reused_chunk_count"),
         "verify_passed": summary.get("verify_passed"),
         "compared_with_previous": summary.get("compared_with_previous"),
         "handoff_dir": summary.get("handoff_dir"),
@@ -4593,6 +4621,7 @@ def _format_memory_config(profile: str, settings: dict[str, Any]) -> str:
         "verify_packs",
         "timeline_limit",
         "chunk_size",
+        "incremental",
         "compare",
         "compare_limit",
     ):
@@ -4646,6 +4675,7 @@ def _normalize_memory_config_settings(path: Path, settings: dict[str, Any]) -> d
         "verify_packs": False,
         "timeline_limit": 5,
         "chunk_size": DEFAULT_CHUNK_SIZE,
+        "incremental": True,
         "compare": True,
         "compare_limit": 50,
     }
@@ -4658,7 +4688,7 @@ def _normalize_memory_config_settings(path: Path, settings: dict[str, Any]) -> d
         if not config_path.is_absolute():
             config_path = path.parent / config_path
         normalized[key] = str(config_path.resolve())
-    for key in ("no_handoff", "prune_apply", "verify_packs", "compare"):
+    for key in ("no_handoff", "prune_apply", "verify_packs", "incremental", "compare"):
         normalized[key] = _coerce_config_bool(path, key, normalized[key])
     for key in ("keep", "timeline_limit", "chunk_size", "compare_limit"):
         normalized[key] = _coerce_config_int(path, key, normalized[key])
@@ -4744,6 +4774,7 @@ MCP_TOOLS = (
                 "verify_packs": {"type": "boolean"},
                 "timeline_limit": {"type": "integer"},
                 "chunk_size": {"type": "integer"},
+                "incremental": {"type": "boolean"},
                 "compare": {"type": "boolean"},
                 "compare_limit": {"type": "integer"},
             },
@@ -5024,6 +5055,7 @@ def _agent_memory_kwargs(params: dict[str, Any], settings: dict[str, Any]) -> di
         "verify_packs": bool(params.get("verify_packs", settings.get("verify_packs", False))),
         "timeline_limit": _agent_int(params, "timeline_limit", int(settings.get("timeline_limit", 5))),
         "chunk_size": _agent_int(params, "chunk_size", int(settings.get("chunk_size", DEFAULT_CHUNK_SIZE))),
+        "incremental": bool(params.get("incremental", settings.get("incremental", True))),
         "compare": bool(params.get("compare", settings.get("compare", True))),
         "compare_limit": _agent_int(params, "compare_limit", int(settings.get("compare_limit", 50))),
     }

@@ -36,7 +36,8 @@ large files, local path traces, and license guardrail gaps. Write a baseline
 only for intentional findings you want future scans to acknowledge.
 `release-check` combines schema sanity, strict scan, unit tests, and demo smoke.
 Use `build --base` when you already have a recent pack and want to reuse
-unchanged file state.
+unchanged file state. `memory` and `snapshot` do that automatically against the
+latest pack unless you pass `--no-incremental`.
 
 ## Recommended Local Workflow
 
@@ -46,7 +47,7 @@ Use `memory` at the end of a work session:
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --prune-apply --json
 ```
 
-This builds a fresh snapshot, creates a handoff package unless disabled, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline.
+This builds a fresh incremental snapshot, creates a handoff package unless disabled, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline.
 
 ## What To Read Next
 

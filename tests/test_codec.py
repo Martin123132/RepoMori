@@ -591,6 +591,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(first["schema_version"], "repomori.snapshot.v1")
             self.assertEqual(first["status"], "pass")
             self.assertIsNone(first["comparison"])
+            self.assertTrue(first["settings"]["incremental"])
+            self.assertFalse(first["summary"]["incremental"])
+            self.assertIsNone(first["summary"]["incremental_base_pack"])
             self.assertTrue((out / "latest.repomori").exists())
             self.assertTrue((out / first["artifacts"]["snapshot_json"]).exists())
             self.assertTrue((out / first["artifacts"]["snapshot_markdown"]).exists())
@@ -604,6 +607,10 @@ class RepoMoriCodecTests(unittest.TestCase):
             second = snapshot_repo(repo, out)
             self.assertEqual(second["schema_version"], "repomori.snapshot.v1")
             self.assertEqual(second["status"], "pass")
+            self.assertTrue(second["summary"]["incremental"])
+            self.assertEqual(second["summary"]["incremental_base_pack"], first["summary"]["pack_path"])
+            self.assertEqual(second["summary"]["reused_file_count"], 3)
+            self.assertEqual(second["summary"]["rebuilt_file_count"], 1)
             self.assertIsNotNone(second["comparison"])
             self.assertEqual(second["comparison"]["summary"]["added_count"], 1)
             self.assertIn("compare_json", second["artifacts"])
@@ -613,6 +620,8 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(index["snapshot_count"], 2)
             self.assertEqual(index["latest"]["pack_path"], second["summary"]["pack_path"])
             self.assertEqual(index["latest"]["added_count"], 1)
+            self.assertTrue(index["latest"]["incremental"])
+            self.assertEqual(index["latest"]["reused_file_count"], 3)
 
             timeline = read_snapshot_timeline(out, limit=1)
             self.assertEqual(timeline["schema_version"], "repomori.timeline.v1")
@@ -626,8 +635,26 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             markdown = format_snapshot_markdown(second)
             self.assertIn("# RepoMori Snapshot", markdown)
+            self.assertIn("Incremental", markdown)
+            self.assertIn("Reused files", markdown)
             self.assertIn("## Comparison", markdown)
             self.assertIn("Added", markdown)
+
+    def test_snapshot_repo_can_disable_incremental_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            first = snapshot_repo(repo, out)
+            second = snapshot_repo(repo, out, incremental=False)
+
+            self.assertFalse(second["settings"]["incremental"])
+            self.assertFalse(second["build"]["incremental"])
+            self.assertIsNone(second["summary"]["incremental_base_pack"])
+            self.assertEqual(second["summary"]["previous_latest_pack"], first["summary"]["pack_path"])
+            self.assertEqual(second["summary"]["reused_file_count"], 0)
+            self.assertEqual(second["summary"]["rebuilt_file_count"], 3)
+            self.assertEqual(second["comparison"]["summary"]["unchanged_count"], 3)
 
     def test_snapshot_repo_can_build_handoff_with_previous_base(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -769,6 +796,8 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["schema_version"], "repomori.memory.v1")
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["settings"]["handoff_question"], "continue this repo")
+            self.assertTrue(report["settings"]["incremental"])
+            self.assertFalse(report["summary"]["incremental"])
             self.assertEqual(report["snapshot"]["schema_version"], "repomori.snapshot.v1")
             self.assertEqual(report["doctor"]["schema_version"], "repomori.doctor.v1")
             self.assertEqual(report["prune"]["schema_version"], "repomori.prune.v1")
@@ -803,6 +832,10 @@ class RepoMoriCodecTests(unittest.TestCase):
             (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
             dry_run = run_memory_cycle(repo, out, no_handoff=True, keep=1)
 
+            self.assertTrue(dry_run["summary"]["incremental"])
+            self.assertEqual(dry_run["summary"]["incremental_base_pack"], first["summary"]["pack_path"])
+            self.assertEqual(dry_run["summary"]["reused_file_count"], 3)
+            self.assertEqual(dry_run["summary"]["rebuilt_file_count"], 1)
             self.assertFalse(dry_run["prune"]["applied"])
             self.assertEqual(len(dry_run["prune"]["candidates"]), 1)
             self.assertTrue(first_pack.exists())
@@ -818,6 +851,21 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(Path(applied["summary"]["pack_path"]).exists())
             index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
             self.assertEqual(index["snapshot_count"], 1)
+
+    def test_run_memory_cycle_can_disable_incremental_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory"
+
+            first = run_memory_cycle(repo, out, no_handoff=True)
+            second = run_memory_cycle(repo, out, no_handoff=True, incremental=False)
+
+            self.assertFalse(second["settings"]["incremental"])
+            self.assertFalse(second["snapshot"]["build"]["incremental"])
+            self.assertEqual(second["summary"]["incremental_base_pack"], None)
+            self.assertEqual(second["snapshot"]["summary"]["previous_latest_pack"], first["summary"]["pack_path"])
+            self.assertEqual(second["summary"]["reused_file_count"], 0)
+            self.assertEqual(second["summary"]["rebuilt_file_count"], 3)
 
     def test_init_and_load_memory_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -836,6 +884,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(loaded["settings"]["repo"], str(repo.resolve()))
             self.assertEqual(loaded["settings"]["out_dir"], str(out.resolve()))
             self.assertEqual(loaded["settings"]["keep"], 20)
+            self.assertTrue(loaded["settings"]["incremental"])
             self.assertFalse(loaded["settings"]["prune_apply"])
 
     def test_load_memory_config_supports_named_profiles(self) -> None:
@@ -970,6 +1019,8 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(first_names, second_names)
         self.assertIn("repomori_context_build", first_names)
         self.assertIn("repomori_schema_list", first_names)
+        memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
+        self.assertIn("incremental", memory_tool["inputSchema"]["properties"])
 
         unknown_method = handle_mcp_request({"jsonrpc": "2.0", "id": 4, "method": "missing.method"})
         self.assertEqual(unknown_method["error"]["code"], -32601)
@@ -1528,11 +1579,53 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(output)
             self.assertEqual(payload["schema_version"], "repomori.snapshot.v1")
             self.assertEqual(payload["status"], "pass")
+            self.assertTrue(payload["settings"]["incremental"])
+            self.assertFalse(payload["build"]["incremental"])
             self.assertTrue((out / "latest.repomori").exists())
             self.assertTrue((out / payload["artifacts"]["snapshot_json"]).exists())
             index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
             self.assertEqual(index["schema_version"], "repomori.snapshots.v1")
             self.assertEqual(index["snapshot_count"], 1)
+
+    def test_cli_snapshot_no_incremental_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshot-no-incremental-cli"
+            subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "snapshot",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "snapshot",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--no-incremental",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.snapshot.v1")
+            self.assertFalse(payload["settings"]["incremental"])
+            self.assertFalse(payload["build"]["incremental"])
+            self.assertEqual(payload["summary"]["reused_file_count"], 0)
 
     def test_cli_snapshot_handoff_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1725,6 +1818,34 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIsNone(payload["summary"]["handoff_dir"])
             self.assertNotIn("handoff", payload["artifacts"])
 
+    def test_cli_memory_no_incremental_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-no-incremental-cli"
+            run_memory_cycle(repo, out, no_handoff=True)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--no-handoff",
+                    "--no-incremental",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertFalse(payload["settings"]["incremental"])
+            self.assertFalse(payload["snapshot"]["build"]["incremental"])
+            self.assertEqual(payload["summary"]["reused_file_count"], 0)
+
     def test_cli_memory_prune_apply_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -1783,7 +1904,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(output)
             self.assertEqual(payload["schema_version"], "repomori.config.init.v1")
             self.assertEqual(payload["config_path"], str(config.resolve()))
+            self.assertTrue(payload["settings"]["incremental"])
             self.assertTrue(config.exists())
+            self.assertIn("incremental = true", config.read_text(encoding="utf-8"))
             self.assertIn("repomori.config.v1", config.read_text(encoding="utf-8"))
 
     def test_cli_memory_uses_config_without_repo_or_out_dir(self) -> None:
@@ -1827,6 +1950,7 @@ class RepoMoriCodecTests(unittest.TestCase):
                     "--config",
                     str(config),
                     "--with-handoff",
+                    "--no-incremental",
                     "--keep",
                     "1",
                     "--json",
@@ -1838,6 +1962,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(output)
             self.assertEqual(payload["schema_version"], "repomori.memory.v1")
             self.assertFalse(payload["settings"]["no_handoff"])
+            self.assertFalse(payload["settings"]["incremental"])
             self.assertEqual(payload["settings"]["keep"], 1)
             self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "manifest.json").exists())
 

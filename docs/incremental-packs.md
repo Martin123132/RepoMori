@@ -26,3 +26,15 @@ fields:
 
 The new pack is still self-contained: `verify`, `query`, `context`, `capsule`,
 `handoff`, and `get` work without the base pack.
+
+Snapshot and memory workflows use incremental builds automatically. If
+`latest.repomori` or an indexed previous snapshot exists, RepoMori uses it as
+the base for the next snapshot:
+
+```powershell
+python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --json
+python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --json
+```
+
+Use `--no-incremental` on `snapshot`, `memory`, or `init` when you want future
+runs to rebuild every file instead.

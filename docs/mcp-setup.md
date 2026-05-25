@@ -35,6 +35,8 @@ python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
 ```
 
 The MCP tools use the latest snapshot pack from the configured timeline when a tool call does not provide `pack`.
+`repomori_memory_run` also reuses that latest pack as the incremental base for
+the next snapshot unless the tool call sets `incremental` to `false`.
 
 ## Tools
 

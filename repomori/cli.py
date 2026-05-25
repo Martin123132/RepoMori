@@ -105,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--verify-packs", action="store_true", help="Run full pack verification during doctor.")
     init.add_argument("--timeline-limit", type=int, default=5, help="Recent snapshots to return.")
     init.add_argument("--chunk-size", type=int, default=256 * 1024)
+    init_incremental_group = init.add_mutually_exclusive_group()
+    init_incremental_group.add_argument("--incremental", dest="incremental", action="store_true", default=True, help="Reuse the latest pack as a memory base when available.")
+    init_incremental_group.add_argument("--no-incremental", dest="incremental", action="store_false", help="Rebuild snapshot packs without reusing latest pack state.")
     init.add_argument("--no-compare", action="store_true", help="Do not compare against latest.repomori.")
     init.add_argument("--compare-limit", type=int, default=50)
     init.add_argument("--json", action="store_true", help="Print config init JSON.")
@@ -113,6 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     snapshot.add_argument("repo", type=Path)
     snapshot.add_argument("--out-dir", type=Path, required=True, help="Directory for snapshot packs and reports.")
     snapshot.add_argument("--chunk-size", type=int, default=256 * 1024)
+    snapshot_incremental_group = snapshot.add_mutually_exclusive_group()
+    snapshot_incremental_group.add_argument("--incremental", dest="incremental", action="store_true", default=True, help="Reuse the latest pack as a base when available.")
+    snapshot_incremental_group.add_argument("--no-incremental", dest="incremental", action="store_false", help="Rebuild every file instead of reusing previous pack state.")
     snapshot.add_argument("--no-compare", action="store_true", help="Do not compare against latest.repomori.")
     snapshot.add_argument("--compare-limit", type=int, default=50)
     snapshot.add_argument("--handoff", help="Build a handoff package for this snapshot using this question.")
@@ -155,6 +161,9 @@ def main(argv: list[str] | None = None) -> int:
     verify_group.add_argument("--no-verify-packs", dest="verify_packs", action="store_false", help="Skip full pack verification during doctor.")
     memory.add_argument("--timeline-limit", type=int, help="Recent snapshots to return.")
     memory.add_argument("--chunk-size", type=int)
+    memory_incremental_group = memory.add_mutually_exclusive_group()
+    memory_incremental_group.add_argument("--incremental", dest="incremental", action="store_true", default=None, help="Reuse the latest pack as a memory base when available.")
+    memory_incremental_group.add_argument("--no-incremental", dest="incremental", action="store_false", help="Rebuild snapshot packs without reusing latest pack state.")
     compare_group = memory.add_mutually_exclusive_group()
     compare_group.add_argument("--no-compare", dest="compare", action="store_false", default=None, help="Do not compare against latest.repomori.")
     compare_group.add_argument("--compare", dest="compare", action="store_true", help="Compare against latest.repomori.")
@@ -367,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
             verify_packs=args.verify_packs,
             timeline_limit=args.timeline_limit,
             chunk_size=args.chunk_size,
+            incremental=args.incremental,
             compare=not args.no_compare,
             compare_limit=args.compare_limit,
         )
@@ -383,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
             args.repo,
             args.out_dir,
             chunk_size=args.chunk_size,
+            incremental=args.incremental,
             compare=not args.no_compare,
             compare_limit=args.compare_limit,
             handoff_question=args.handoff,
@@ -427,6 +438,7 @@ def main(argv: list[str] | None = None) -> int:
             verify_packs=settings["verify_packs"],
             timeline_limit=settings["timeline_limit"],
             chunk_size=settings["chunk_size"],
+            incremental=settings["incremental"],
             compare=settings["compare"],
             compare_limit=settings["compare_limit"],
         )
@@ -760,6 +772,7 @@ def _memory_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         "verify_packs": _setting(args.verify_packs, settings, "verify_packs", False),
         "timeline_limit": _setting(args.timeline_limit, settings, "timeline_limit", 5),
         "chunk_size": _setting(args.chunk_size, settings, "chunk_size", 256 * 1024),
+        "incremental": _setting(args.incremental, settings, "incremental", True),
         "compare": _setting(args.compare, settings, "compare", True),
         "compare_limit": _setting(args.compare_limit, settings, "compare_limit", 50),
     }
