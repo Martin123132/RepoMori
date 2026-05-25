@@ -35,6 +35,7 @@ from .codec import (
     prune_snapshots,
     run_agent_bridge,
     run_memory_cycle,
+    schema_catalog,
     snapshot_repo,
     tree_pack,
     verify_pack,
@@ -127,6 +128,10 @@ def main(argv: list[str] | None = None) -> int:
     agent = sub.add_parser("agent", help="Run the JSON-lines agent bridge on stdio.")
     agent.add_argument("--config", type=Path, help="Config file path; defaults to nearest repomori.toml.")
     agent.add_argument("--profile", help="Config profile to use.")
+
+    schema = sub.add_parser("schema", help="Show supported RepoMori schemas and agent methods.")
+    schema.add_argument("schema_version", nargs="?", help="Specific schema version to show.")
+    schema.add_argument("--json", action="store_true", help="Print schema JSON.")
 
     info = sub.add_parser("info", help="Show pack metadata.")
     info.add_argument("pack", type=Path)
@@ -352,6 +357,25 @@ def main(argv: list[str] | None = None) -> int:
             profile=args.profile,
             start_dir=Path.cwd(),
         )
+    if args.command == "schema":
+        try:
+            report = schema_catalog(args.schema_version)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if args.json:
+            print(json.dumps(report, indent=2))
+        elif args.schema_version:
+            schema = report["schema"]
+            print(f"{schema['schema_version']}: {schema['title']}")
+            print(f"kind: {schema['kind']}")
+            print(f"producer: {schema['producer']}")
+            print("required fields: " + ", ".join(schema["required_fields"]))
+        else:
+            print("schemas:")
+            for schema in report["schemas"]:
+                print(f"- {schema['schema_version']} [{schema['kind']}] {schema['title']}")
+            print("agent methods: " + ", ".join(report["agent_methods"]))
+        return 0
     if args.command == "info":
         _print(info_pack(args.pack), args.json)
         return 0

@@ -37,6 +37,7 @@ from repomori.codec import (
     prune_snapshots,
     read_snapshot_timeline,
     run_memory_cycle,
+    schema_catalog,
     snapshot_repo,
     tree_pack,
     verify_pack,
@@ -774,6 +775,69 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(invalid_response["ok"])
             self.assertEqual(invalid_response["error"]["code"], "invalid_request")
 
+    def test_schema_catalog_lists_contracts_and_methods(self) -> None:
+        catalog = schema_catalog()
+        self.assertEqual(catalog["schema_version"], "repomori.schema.catalog.v1")
+        schema_versions = {item["schema_version"] for item in catalog["schemas"]}
+        self.assertIn("repomori.memory.v1", schema_versions)
+        self.assertIn("repomori.agent.response.v1", schema_versions)
+        self.assertIn("context.build", catalog["agent_methods"])
+
+        memory = schema_catalog("repomori.memory.v1")
+        self.assertEqual(memory["selected"], "repomori.memory.v1")
+        self.assertEqual(memory["schema"]["producer"], "run_memory_cycle")
+        self.assertIn("timeline", memory["schema"]["required_fields"])
+
+    def test_golden_fixture_core_output_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, pack = self._demo_pack(root, build=True)
+            handoff_dir = root / "handoff"
+            memory_dir = root / "memory"
+
+            context = build_context_bundle(pack, "sqlite Store", limit=1, max_bytes=200)
+            capsule = build_capsule(pack, max_files=2)
+            handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
+            memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
+            agent_help = handle_agent_request({"id": 1, "method": "agent.help"})
+
+            golden_shapes = {
+                "context": (
+                    context,
+                    "repomori.context.v1",
+                    {"schema_version", "question", "pack", "selection", "sources", "source_manifest"},
+                ),
+                "capsule": (
+                    capsule,
+                    "repomori.capsule.v1",
+                    {"schema_version", "key", "pack", "selection", "files", "dictionary", "manifest"},
+                ),
+                "handoff": (
+                    handoff,
+                    "repomori.handoff.v1",
+                    {"schema_version", "status", "question", "out_dir", "artifacts", "verification"},
+                ),
+                "memory": (
+                    memory,
+                    "repomori.memory.v1",
+                    {"schema_version", "status", "repo_path", "out_dir", "settings", "summary", "snapshot", "doctor", "prune", "timeline"},
+                ),
+                "agent_help": (
+                    agent_help["result"],
+                    "repomori.agent.help.v1",
+                    {"schema_version", "protocol", "request", "response", "methods"},
+                ),
+            }
+            for _name, (payload, schema_version, required_keys) in golden_shapes.items():
+                self.assertEqual(payload["schema_version"], schema_version)
+                self.assertTrue(required_keys.issubset(payload.keys()))
+
+            self.assertEqual(context["sources"][0]["path"], "app.py")
+            self.assertTrue(capsule["files"])
+            self.assertEqual(handoff["status"], "complete")
+            self.assertEqual(memory["status"], "pass")
+            self.assertIn("memory.run", agent_help["result"]["methods"])
+
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -1443,6 +1507,43 @@ class RepoMoriCodecTests(unittest.TestCase):
         payload = json.loads(output)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"]["code"], "invalid_json")
+
+    def test_cli_schema_json_is_parseable(self) -> None:
+        output = subprocess.check_output(
+            [
+                sys.executable,
+                "-m",
+                "repomori",
+                "schema",
+                "--json",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+        )
+
+        payload = json.loads(output)
+        self.assertEqual(payload["schema_version"], "repomori.schema.catalog.v1")
+        self.assertIn("context.build", payload["agent_methods"])
+        self.assertTrue(any(item["schema_version"] == "repomori.memory.v1" for item in payload["schemas"]))
+
+    def test_cli_schema_specific_json_is_parseable(self) -> None:
+        output = subprocess.check_output(
+            [
+                sys.executable,
+                "-m",
+                "repomori",
+                "schema",
+                "repomori.memory.v1",
+                "--json",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+        )
+
+        payload = json.loads(output)
+        self.assertEqual(payload["schema_version"], "repomori.schema.catalog.v1")
+        self.assertEqual(payload["selected"], "repomori.memory.v1")
+        self.assertEqual(payload["schema"]["producer"], "run_memory_cycle")
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

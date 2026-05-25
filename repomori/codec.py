@@ -31,6 +31,114 @@ DEFAULT_EVAL_QUESTIONS = (
     "What tests cover the project behavior?",
 )
 
+SCHEMA_DEFINITIONS = (
+    {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "pack",
+        "title": "RepoMori pack metadata",
+        "producer": "build_pack",
+        "required_fields": ["schema_version", "repo_path", "pack_path", "chunk_size"],
+    },
+    {
+        "schema_version": "repomori.context.v1",
+        "kind": "report",
+        "title": "Source-backed agent context bundle",
+        "producer": "build_context_bundle",
+        "required_fields": ["schema_version", "question", "pack", "selection", "sources", "source_manifest"],
+    },
+    {
+        "schema_version": "repomori.capsule.v1",
+        "kind": "report",
+        "title": "Dense machine-readable pack capsule",
+        "producer": "build_capsule",
+        "required_fields": ["schema_version", "key", "pack", "selection", "files", "dictionary", "manifest"],
+    },
+    {
+        "schema_version": "repomori.handoff.v1",
+        "kind": "manifest",
+        "title": "Agent handoff package manifest",
+        "producer": "build_handoff_package",
+        "required_fields": ["schema_version", "status", "question", "out_dir", "artifacts", "verification"],
+    },
+    {
+        "schema_version": "repomori.memory.v1",
+        "kind": "report",
+        "title": "Snapshot memory cycle report",
+        "producer": "run_memory_cycle",
+        "required_fields": ["schema_version", "status", "repo_path", "out_dir", "settings", "summary", "snapshot", "doctor", "prune", "timeline"],
+    },
+    {
+        "schema_version": "repomori.doctor.v1",
+        "kind": "report",
+        "title": "Snapshot directory doctor report",
+        "producer": "doctor_snapshot_dir",
+        "required_fields": ["schema_version", "status", "error_count", "warning_count", "summary", "errors", "warnings"],
+    },
+    {
+        "schema_version": "repomori.prune.v1",
+        "kind": "report",
+        "title": "Safe snapshot prune plan or result",
+        "producer": "prune_snapshots",
+        "required_fields": ["schema_version", "applied", "keep", "retained", "candidates", "deleted", "skipped", "errors"],
+    },
+    {
+        "schema_version": "repomori.timeline.v1",
+        "kind": "report",
+        "title": "Snapshot timeline report",
+        "producer": "read_snapshot_timeline",
+        "required_fields": ["schema_version", "out_dir", "snapshot_count", "returned_count", "latest", "summary", "snapshots"],
+    },
+    {
+        "schema_version": "repomori.snapshot.v1",
+        "kind": "report",
+        "title": "Single snapshot build report",
+        "producer": "snapshot_repo",
+        "required_fields": ["schema_version", "status", "repo_path", "out_dir", "summary", "artifacts", "verify"],
+    },
+    {
+        "schema_version": "repomori.agent.response.v1",
+        "kind": "protocol",
+        "title": "JSON-lines agent bridge response envelope",
+        "producer": "run_agent_bridge",
+        "required_fields": ["schema_version", "jsonrpc", "id", "ok"],
+    },
+    {
+        "schema_version": "repomori.agent.help.v1",
+        "kind": "protocol",
+        "title": "Agent bridge help payload",
+        "producer": "agent.help",
+        "required_fields": ["schema_version", "protocol", "request", "response", "methods"],
+    },
+    {
+        "schema_version": "repomori.agent.query.v1",
+        "kind": "protocol",
+        "title": "Agent bridge query wrapper",
+        "producer": "query.run",
+        "required_fields": ["schema_version", "results"],
+    },
+    {
+        "schema_version": "repomori.agent.file.v1",
+        "kind": "protocol",
+        "title": "Agent bridge exact file payload",
+        "producer": "file.get",
+        "required_fields": ["schema_version", "path", "size", "sha256", "is_text", "text", "base64"],
+    },
+    {
+        "schema_version": "repomori.schema.catalog.v1",
+        "kind": "catalog",
+        "title": "Schema catalog payload",
+        "producer": "schema_catalog",
+        "required_fields": ["schema_version", "schemas", "agent_methods"],
+    },
+    {
+        "schema_version": "repomori.config.v1",
+        "kind": "config",
+        "title": "RepoMori TOML config",
+        "producer": "init_config",
+        "required_fields": ["schema_version", "default_profile", "profiles"],
+    },
+)
+
 EXCLUDED_DIRS = {
     ".git",
     ".hg",
@@ -2570,6 +2678,30 @@ def load_memory_config(
         "config_path": str(path),
         "profile": selected,
         "settings": settings,
+    }
+
+
+def schema_catalog(schema_version: str | None = None) -> dict[str, Any]:
+    """Return supported RepoMori schema and agent method metadata."""
+
+    schemas = [dict(item) for item in SCHEMA_DEFINITIONS]
+    if schema_version is not None:
+        matches = [item for item in schemas if item["schema_version"] == schema_version]
+        if not matches:
+            raise ValueError(f"Unknown RepoMori schema: {schema_version}")
+        return {
+            "schema_version": "repomori.schema.catalog.v1",
+            "selected": schema_version,
+            "schema_count": 1,
+            "schemas": matches,
+            "schema": matches[0],
+            "agent_methods": list(AGENT_METHODS),
+        }
+    return {
+        "schema_version": "repomori.schema.catalog.v1",
+        "schema_count": len(schemas),
+        "schemas": schemas,
+        "agent_methods": list(AGENT_METHODS),
     }
 
 

@@ -30,6 +30,7 @@ from .codec import (
     handle_agent_request,
     run_agent_bridge,
     run_memory_cycle,
+    schema_catalog,
     snapshot_repo,
     verify_pack,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "handle_agent_request",
     "run_agent_bridge",
     "run_memory_cycle",
+    "schema_catalog",
     "snapshot_repo",
     "verify_pack",
 ]
