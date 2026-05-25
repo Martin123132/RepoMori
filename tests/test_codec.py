@@ -80,6 +80,34 @@ class RepoMoriCodecTests(unittest.TestCase):
             tree = tree_pack(pack)
             self.assertEqual([row["path"] for row in tree], ["README.md", "app.py", "blob.bin"])
 
+    def test_build_with_base_reuses_unchanged_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, base_pack = self._demo_pack(root)
+            build_pack(repo, base_pack, BuildOptions(force=True))
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            target_pack = root / "target.repomori"
+
+            summary = build_pack(repo, target_pack, BuildOptions(force=True, base_pack=base_pack))
+
+            self.assertTrue(summary["incremental"])
+            self.assertEqual(summary["base_pack_path"], str(base_pack.resolve()))
+            self.assertEqual(summary["file_count"], 3)
+            self.assertEqual(summary["reused_file_count"], 2)
+            self.assertEqual(summary["rebuilt_file_count"], 1)
+            self.assertGreaterEqual(summary["reused_chunk_count"], 2)
+            self.assertTrue(verify_pack(target_pack)["verified"])
+            self.assertEqual(get_file_bytes(target_pack, "app.py"), (repo / "app.py").read_bytes())
+            self.assertEqual(query_pack(target_pack, "close Store", limit=1)[0]["path"], "app.py")
+
     def test_diagnose_query_explains_ranking_and_snippets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _repo, pack = self._demo_pack(Path(tmp), build=True)
@@ -1167,6 +1195,37 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["selection"]["limit"], 1)
             self.assertLessEqual(payload["selection"]["source_bytes"], 40)
             self.assertIn("source_manifest", payload)
+
+    def test_cli_build_base_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, base_pack = self._demo_pack(root)
+            build_pack(repo, base_pack, BuildOptions(force=True))
+            (repo / "README.md").write_text("# Demo\n\nStorage engine notes unchanged.\n", encoding="utf-8")
+            target_pack = root / "target.repomori"
+
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "build",
+                    str(repo),
+                    str(target_pack),
+                    "--base",
+                    str(base_pack),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.pack.v1")
+            self.assertTrue(payload["incremental"])
+            self.assertEqual(payload["reused_file_count"], 2)
+            self.assertEqual(payload["rebuilt_file_count"], 1)
+            self.assertTrue(verify_pack(target_pack)["verified"])
 
     def test_cli_diagnose_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

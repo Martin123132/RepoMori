@@ -403,6 +403,7 @@ class BuildOptions:
     chunk_size: int = DEFAULT_CHUNK_SIZE
     force: bool = False
     exclude_paths: tuple[Path | str, ...] = ()
+    base_pack: Path | str | None = None
 
 
 def build_pack(repo: Path | str, output: Path | str, options: BuildOptions | None = None) -> dict[str, Any]:
@@ -411,10 +412,16 @@ def build_pack(repo: Path | str, output: Path | str, options: BuildOptions | Non
     opts = options or BuildOptions()
     repo_path = Path(repo).resolve()
     output_path = Path(output).resolve()
+    base_pack_path = Path(opts.base_pack).resolve() if opts.base_pack is not None else None
     if not repo_path.is_dir():
         raise ValueError(f"Repository folder not found: {repo_path}")
     if opts.chunk_size <= 0:
         raise ValueError("chunk_size must be greater than zero")
+    if base_pack_path is not None:
+        if not base_pack_path.exists():
+            raise FileNotFoundError(f"Base pack not found: {base_pack_path}")
+        if base_pack_path == output_path:
+            raise ValueError("base_pack must not be the same path as output")
     if output_path.exists():
         if not opts.force:
             raise FileExistsError(f"Pack already exists: {output_path}")
@@ -436,6 +443,13 @@ def build_pack(repo: Path | str, output: Path | str, options: BuildOptions | Non
         "compressed_chunk_bytes": 0,
         "symbol_count": 0,
         "import_count": 0,
+        "incremental": base_pack_path is not None,
+        "base_pack_path": str(base_pack_path) if base_pack_path is not None else None,
+        "base_pack_schema_version": None,
+        "base_file_count": 0,
+        "reused_file_count": 0,
+        "rebuilt_file_count": 0,
+        "reused_chunk_count": 0,
     }
 
     with closing(sqlite3.connect(output_path)) as conn:
@@ -447,12 +461,42 @@ def build_pack(repo: Path | str, output: Path | str, options: BuildOptions | Non
                 "repo_path": str(repo_path),
                 "created_at": int(started),
                 "chunk_size": opts.chunk_size,
+                "base_pack_path": str(base_pack_path) if base_pack_path is not None else None,
             },
         )
-        for path in _iter_repo_files(repo_path, output_path, opts.exclude_paths):
-            file_stats = _ingest_file(conn, repo_path, path, opts.chunk_size)
-            for key, value in file_stats.items():
-                stats[key] += value
+        base_conn = _open_pack(base_pack_path) if base_pack_path is not None else None
+        try:
+            base_files: dict[str, sqlite3.Row] = {}
+            if base_conn is not None:
+                base_metadata = _metadata(base_conn)
+                stats["base_pack_schema_version"] = base_metadata.get("schema_version")
+                if stats["base_pack_schema_version"] != SCHEMA_VERSION:
+                    raise ValueError(
+                        f"Unexpected base pack schema: {stats['base_pack_schema_version']}"
+                    )
+                base_files = _pack_file_index(base_conn)
+                stats["base_file_count"] = len(base_files)
+
+            for path in _iter_repo_files(repo_path, output_path, opts.exclude_paths):
+                rel = _normalize_repo_path(path.relative_to(repo_path).as_posix())
+                base_row = base_files.get(rel)
+                if base_conn is not None and base_row is not None:
+                    current_sha256, current_size = _hash_file(path)
+                    if current_sha256 == base_row["sha256"] and current_size == base_row["size"]:
+                        file_stats = _copy_file_from_base(conn, base_conn, base_row, path)
+                        stats["reused_file_count"] += 1
+                        stats["reused_chunk_count"] += file_stats.pop("reused_chunk_count", 0)
+                    else:
+                        file_stats = _ingest_file(conn, repo_path, path, opts.chunk_size)
+                        stats["rebuilt_file_count"] += 1
+                else:
+                    file_stats = _ingest_file(conn, repo_path, path, opts.chunk_size)
+                    stats["rebuilt_file_count"] += 1
+                for key, value in file_stats.items():
+                    stats[key] += value
+        finally:
+            if base_conn is not None:
+                base_conn.close()
         chunk_row = conn.execute(
             "SELECT COUNT(*) AS count, COALESCE(SUM(raw_size),0) AS raw, COALESCE(SUM(compressed_size),0) AS compressed FROM chunks"
         ).fetchone()
@@ -462,6 +506,19 @@ def build_pack(repo: Path | str, output: Path | str, options: BuildOptions | Non
         elapsed = time.time() - started
         stats["elapsed_seconds"] = round(elapsed, 4)
         _put_metadata(conn, {"build_summary": stats})
+        if base_pack_path is not None:
+            _put_metadata(
+                conn,
+                {
+                    "incremental_base": {
+                        "pack_path": str(base_pack_path),
+                        "schema_version": stats["base_pack_schema_version"],
+                        "file_count": stats["base_file_count"],
+                        "reused_file_count": stats["reused_file_count"],
+                        "rebuilt_file_count": stats["rebuilt_file_count"],
+                    }
+                },
+            )
         conn.commit()
     stats["pack_bytes"] = output_path.stat().st_size
     return stats
@@ -5282,6 +5339,151 @@ def _put_metadata(conn: sqlite3.Connection, values: dict[str, Any]) -> None:
 def _metadata(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute("SELECT key, value FROM metadata").fetchall()
     return {row["key"]: _safe_json(row["value"], row["value"]) for row in rows}
+
+
+def _hash_file(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            size += len(block)
+            digest.update(block)
+    return digest.hexdigest(), size
+
+
+def _pack_file_index(conn: sqlite3.Connection) -> dict[str, sqlite3.Row]:
+    rows = conn.execute(
+        """
+        SELECT
+            path, size, mtime, mode, sha256, chunk_count, language, is_text,
+            line_count, token_count, summary_json
+        FROM files
+        """
+    ).fetchall()
+    return {str(row["path"]): row for row in rows}
+
+
+def _copy_file_from_base(
+    conn: sqlite3.Connection,
+    base_conn: sqlite3.Connection,
+    base_row: sqlite3.Row,
+    current_path: Path,
+) -> dict[str, int]:
+    rel = str(base_row["path"])
+    chunk_rows = base_conn.execute(
+        """
+        SELECT
+            fc.path,
+            fc.chunk_index,
+            fc.chunk_id,
+            fc.raw_size AS file_raw_size,
+            fc.sha256 AS file_sha256,
+            c.id,
+            c.compressor,
+            c.raw_size,
+            c.compressed_size,
+            c.data
+        FROM file_chunks fc
+        LEFT JOIN chunks c ON c.id = fc.chunk_id
+        WHERE fc.path=?
+        ORDER BY fc.chunk_index
+        """,
+        (rel,),
+    ).fetchall()
+    if len(chunk_rows) != int(base_row["chunk_count"]) or any(row["id"] is None for row in chunk_rows):
+        raise ValueError(f"Base pack has incomplete chunk links for {rel}")
+
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO chunks(id, compressor, raw_size, compressed_size, data)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                row["id"],
+                row["compressor"],
+                int(row["raw_size"]),
+                int(row["compressed_size"]),
+                sqlite3.Binary(row["data"]),
+            )
+            for row in chunk_rows
+        ],
+    )
+
+    st = current_path.stat()
+    conn.execute(
+        """
+        INSERT INTO files(
+            path, size, mtime, mode, sha256, chunk_count, language, is_text,
+            line_count, token_count, summary_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            rel,
+            int(base_row["size"]),
+            st.st_mtime,
+            stat.S_IMODE(st.st_mode),
+            base_row["sha256"],
+            int(base_row["chunk_count"]),
+            base_row["language"],
+            int(base_row["is_text"]),
+            int(base_row["line_count"]),
+            int(base_row["token_count"]),
+            base_row["summary_json"],
+        ),
+    )
+    conn.executemany(
+        """
+        INSERT INTO file_chunks(path, chunk_index, chunk_id, raw_size, sha256)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                rel,
+                int(row["chunk_index"]),
+                row["chunk_id"],
+                int(row["file_raw_size"]),
+                row["file_sha256"],
+            )
+            for row in chunk_rows
+        ],
+    )
+    _copy_index_rows(conn, base_conn, "symbols", rel, ("path", "kind", "name", "line", "signature"))
+    _copy_index_rows(conn, base_conn, "imports", rel, ("path", "target", "line"))
+    _copy_index_rows(conn, base_conn, "search_index", rel, ("path", "field", "value"))
+
+    stats = _stats_from_file_row(base_row)
+    stats["reused_chunk_count"] = len(chunk_rows)
+    return stats
+
+
+def _copy_index_rows(
+    conn: sqlite3.Connection,
+    base_conn: sqlite3.Connection,
+    table: str,
+    rel: str,
+    columns: tuple[str, ...],
+) -> None:
+    column_sql = ", ".join(columns)
+    placeholders = ", ".join("?" for _ in columns)
+    rows = base_conn.execute(f"SELECT {column_sql} FROM {table} WHERE path=?", (rel,)).fetchall()
+    conn.executemany(
+        f"INSERT INTO {table}({column_sql}) VALUES ({placeholders})",
+        [tuple(row[column] for column in columns) for row in rows],
+    )
+
+
+def _stats_from_file_row(row: sqlite3.Row) -> dict[str, int]:
+    summary = _safe_json(row["summary_json"], {})
+    return {
+        "file_count": 1,
+        "text_file_count": 1 if int(row["is_text"]) else 0,
+        "binary_file_count": 0 if int(row["is_text"]) else 1,
+        "logical_bytes": int(row["size"]),
+        "symbol_count": len(summary.get("symbols", [])) if isinstance(summary, dict) else 0,
+        "import_count": len(summary.get("imports", [])) if isinstance(summary, dict) else 0,
+    }
 
 
 def _scan_relpath(repo_path: Path, path: Path) -> str:

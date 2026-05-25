@@ -54,6 +54,7 @@ python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
 python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --prune-apply --json
+python -m repomori build D:\Dev\RepoMori D:\Dev\RepoMori\packs\next.repomori --base D:\Dev\RepoMori\packs\latest.repomori --force --json
 python -m repomori agent --config D:\Dev\RepoMori\repomori.toml
 python -m repomori mcp --config D:\Dev\RepoMori\repomori.toml
 python -m repomori schema --json
@@ -94,7 +95,7 @@ exactness matters.
 ## Commands
 
 ```text
-repomori build <repo> <pack>
+repomori build <repo> <pack> [--base pack] [--force] [--json]
 repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
 repomori release-check [repo] [--baseline file] [--fail-on low] [--skip-tests] [--skip-demo] [--json]
@@ -146,6 +147,11 @@ known findings and `--ignore-code` only for broad local policy choices.
 catalog sanity checks, strict `scan`, `python -m unittest discover -s tests`,
 and a quickstart `demo` smoke, then returns one `repomori.release_check.v1`
 report.
+
+`build --base` creates an incremental pack. It hashes current files, reuses
+unchanged file records, compressed chunks, symbols, imports, and search index
+rows from the base pack, and rebuilds only added or changed files. Removed files
+from the base are simply left out of the new pack.
 
 `diagnose` explains why a question ranked files the way it did. It reports
 query tokens and phrases, per-file score breakdowns, matched and missed terms,
@@ -275,6 +281,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Schemas](docs/schemas.md)
 - [Public safety scan](docs/public-safety-scan.md)
 - [Release check](docs/release-check.md)
+- [Incremental packs](docs/incremental-packs.md)
 - [License FAQ](docs/license-faq.md)
 - [Public release checklist](PUBLIC_RELEASE_CHECKLIST.md)
 

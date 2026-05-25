@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("repo", type=Path)
     build.add_argument("pack", type=Path)
     build.add_argument("--chunk-size", type=int, default=256 * 1024)
+    build.add_argument("--base", type=Path, help="Reuse unchanged file records and chunks from an existing pack.")
     build.add_argument("--force", action="store_true", help="Overwrite an existing pack.")
     build.add_argument("--json", action="store_true", help="Print JSON output.")
 
@@ -297,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         result = build_pack(
             args.repo,
             args.pack,
-            BuildOptions(chunk_size=args.chunk_size, force=args.force),
+            BuildOptions(chunk_size=args.chunk_size, force=args.force, base_pack=args.base),
         )
         _print(result, args.json)
         return 0

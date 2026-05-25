@@ -23,9 +23,10 @@ python -m repomori timeline D:\Temp\repomori-demo\packs --format json
 ```powershell
 python -m repomori scan D:\Dev\YourRepo --public-release --json
 python -m repomori scan D:\Dev\YourRepo --public-release --write-baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
-python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori init D:\Dev\YourRepo --out-dir D:\Dev\YourRepo\packs
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --json
+python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\packs\next.repomori --base D:\Dev\YourRepo\packs\latest.repomori --force --json
+python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori context D:\Dev\YourRepo\packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
 ```
 
@@ -34,6 +35,8 @@ It stays offline and reports likely secrets, generated artifacts, build noise,
 large files, local path traces, and license guardrail gaps. Write a baseline
 only for intentional findings you want future scans to acknowledge.
 `release-check` combines schema sanity, strict scan, unit tests, and demo smoke.
+Use `build --base` when you already have a recent pack and want to reuse
+unchanged file state.
 
 ## Recommended Local Workflow
 
@@ -52,4 +55,5 @@ This builds a fresh snapshot, creates a handoff package unless disabled, checks 
 - [Agent protocol](agent-protocol.md)
 - [Public safety scan](public-safety-scan.md)
 - [Release check](release-check.md)
+- [Incremental packs](incremental-packs.md)
 - [License FAQ](license-faq.md)
