@@ -37,6 +37,7 @@ Errors use the same envelope with `ok:false` and an `error` object.
 - `doctor.run`: checks snapshot directory health.
 - `query.run`: runs pack query; uses latest configured pack if `pack` is omitted.
 - `context.build`: builds a source-backed context bundle.
+- `diff_context.build`: builds source-backed changed-files context between two packs.
 - `handoff.build`: writes a handoff package directory.
 - `capsule.build`: exports a capsule payload.
 - `file.get`: retrieves exact file bytes as text when decodable plus base64.
@@ -46,6 +47,9 @@ Errors use the same envelope with `ok:false` and an `error` object.
 
 Methods that operate on a pack accept `params.pack`. If omitted, RepoMori reads
 the configured snapshot timeline and uses the latest indexed pack.
+`diff_context.build` accepts `params.base_pack` and `params.target_pack`; if
+they are omitted, it uses the previous and latest snapshots from the configured
+timeline.
 
 ## MCP Stdio Bridge
 
@@ -90,6 +94,7 @@ machine-readable `structuredContent`.
 - `repomori_doctor_run`: checks snapshot directory health.
 - `repomori_query_run`: searches a pack or latest configured snapshot pack.
 - `repomori_context_build`: builds a source-backed context bundle.
+- `repomori_diff_context_build`: builds source-backed changed-files context.
 - `repomori_handoff_build`: writes a handoff package directory.
 - `repomori_capsule_build`: exports a capsule payload.
 - `repomori_file_get`: retrieves exact file bytes.

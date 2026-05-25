@@ -15,6 +15,7 @@ from repomori.codec import (
     build_repo_brief,
     build_capsule,
     build_context_bundle,
+    build_diff_context_bundle,
     build_handoff_package,
     build_pack,
     check_handoff_package,
@@ -27,6 +28,7 @@ from repomori.codec import (
     format_compare_markdown,
     format_eval_markdown,
     format_context_markdown,
+    format_diff_context_markdown,
     format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
@@ -261,6 +263,54 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(bundle["sources"][0]["snippet_status"], "binary_or_undecodable")
             self.assertEqual(bundle["sources"][0]["snippets"], [])
             self.assertEqual(bundle["source_manifest"][0]["snippet_count"], 0)
+
+    def test_diff_context_includes_changed_added_and_removed_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, base_pack = self._demo_pack(root)
+            build_pack(repo, base_pack, BuildOptions(force=True))
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            (repo / "blob.bin").unlink()
+            target_pack = root / "target.repomori"
+            build_pack(repo, target_pack, BuildOptions(force=True, base_pack=base_pack))
+
+            bundle = build_diff_context_bundle(
+                base_pack,
+                target_pack,
+                "close added blob",
+                limit=4,
+                snippet_lines=4,
+                snippets_per_file=2,
+            )
+
+            self.assertEqual(bundle["schema_version"], "repomori.diff_context.v1")
+            self.assertEqual(bundle["summary"]["changed_count"], 1)
+            self.assertEqual(bundle["summary"]["added_count"], 1)
+            self.assertEqual(bundle["summary"]["removed_count"], 1)
+            sources = {source["path"]: source for source in bundle["sources"]}
+            self.assertEqual(sources["app.py"]["change_type"], "changed")
+            self.assertEqual(sources["app.py"]["source_pack"], "target")
+            self.assertTrue(any("def close" in snippet["text"] for snippet in sources["app.py"]["snippets"]))
+            self.assertEqual(sources["new.py"]["change_type"], "added")
+            self.assertIn("return 'new'", sources["new.py"]["snippets"][0]["text"])
+            self.assertEqual(sources["blob.bin"]["change_type"], "removed")
+            self.assertEqual(sources["blob.bin"]["source_pack"], "base")
+            self.assertEqual(sources["blob.bin"]["snippet_status"], "binary_or_undecodable")
+            self.assertTrue(any(item["source_pack"] == "base" for item in bundle["source_manifest"]))
+
+            markdown = format_diff_context_markdown(bundle)
+            self.assertIn("# RepoMori Diff Context", markdown)
+            self.assertIn("Change type", markdown)
+            self.assertIn("def close", markdown)
 
     def test_verify_pack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1009,6 +1059,12 @@ class RepoMoriCodecTests(unittest.TestCase):
             )
             self.assertTrue(memory_response["ok"])
             self.assertEqual(memory_response["result"]["schema_version"], "repomori.memory.v1")
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            second_memory = handle_agent_request(
+                {"id": "memory2", "method": "memory.run", "params": {"keep": 2}},
+                config_path=config,
+            )
+            self.assertTrue(second_memory["ok"])
 
             doctor_response = handle_agent_request({"id": "doctor", "method": "doctor.run"}, config_path=config)
             self.assertTrue(doctor_response["ok"])
@@ -1027,6 +1083,14 @@ class RepoMoriCodecTests(unittest.TestCase):
             )
             self.assertTrue(stats_response["ok"])
             self.assertEqual(stats_response["result"]["schema_version"], "repomori.stats.v1")
+
+            diff_response = handle_agent_request(
+                {"id": "diff", "method": "diff_context.build", "params": {"question": "added", "max_files": 2}},
+                config_path=config,
+            )
+            self.assertTrue(diff_response["ok"])
+            self.assertEqual(diff_response["result"]["schema_version"], "repomori.diff_context.v1")
+            self.assertEqual(diff_response["result"]["summary"]["added_count"], 1)
 
             capsule_response = handle_agent_request(
                 {"id": "capsule", "method": "capsule.build", "params": {"max_files": 1}},
@@ -1070,6 +1134,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         second_names = [tool["name"] for tool in second_list["result"]["tools"]]
         self.assertEqual(first_names, second_names)
         self.assertIn("repomori_context_build", first_names)
+        self.assertIn("repomori_diff_context_build", first_names)
         self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
         memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
@@ -1113,6 +1178,8 @@ class RepoMoriCodecTests(unittest.TestCase):
             config = Path(tmp) / "repomori.toml"
             init_config(repo, out, config_path=config, no_handoff=True)
             run_memory_cycle(repo, out, no_handoff=True)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            run_memory_cycle(repo, out, no_handoff=True)
 
             query_response = handle_mcp_request(
                 {
@@ -1146,6 +1213,23 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(context_response["result"]["isError"])
             self.assertEqual(context_response["result"]["structuredContent"]["schema_version"], "repomori.context.v1")
             self.assertEqual(context_response["result"]["structuredContent"]["sources"][0]["path"], "app.py")
+
+            diff_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "diff",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "repomori_diff_context_build",
+                        "arguments": {"question": "added", "max_files": 2},
+                    },
+                },
+                config_path=config,
+            )
+            self.assertFalse(diff_response["result"]["isError"])
+            self.assertEqual(diff_response["result"]["structuredContent"]["schema_version"], "repomori.diff_context.v1")
+            self.assertEqual(diff_response["result"]["structuredContent"]["summary"]["added_count"], 1)
+            self.assertIn("added", diff_response["result"]["content"][0]["text"])
 
             doctor_response = handle_mcp_request(
                 {
@@ -1218,9 +1302,12 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_check.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.stats.v1", schema_versions)
+        self.assertIn("repomori.diff_context.v1", schema_versions)
         self.assertIn("context.build", catalog["agent_methods"])
+        self.assertIn("diff_context.build", catalog["agent_methods"])
         self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
+        self.assertIn("repomori_diff_context_build", catalog["mcp_tools"])
         self.assertIn("repomori_stats_read", catalog["mcp_tools"])
         self.assertIn("repomori_schema_list", catalog["mcp_tools"])
 
@@ -1233,6 +1320,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(stats["selected"], "repomori.stats.v1")
         self.assertEqual(stats["schema"]["producer"], "read_snapshot_stats")
 
+        diff_context = schema_catalog("repomori.diff_context.v1")
+        self.assertEqual(diff_context["selected"], "repomori.diff_context.v1")
+        self.assertEqual(diff_context["schema"]["producer"], "build_diff_context_bundle")
+
     def test_golden_fixture_core_output_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1244,6 +1335,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             capsule = build_capsule(pack, max_files=2)
             handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
+            diff_context = build_diff_context_bundle(pack, memory["summary"]["pack_path"])
             stats = read_snapshot_stats(memory_dir)
             scan = scan_repository(repo)
             agent_help = handle_agent_request({"id": 1, "method": "agent.help"})
@@ -1263,6 +1355,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     handoff,
                     "repomori.handoff.v1",
                     {"schema_version", "status", "question", "out_dir", "artifacts", "verification"},
+                ),
+                "diff_context": (
+                    diff_context,
+                    "repomori.diff_context.v1",
+                    {"schema_version", "question", "base_pack", "target_pack", "summary", "selection", "sources", "source_manifest"},
                 ),
                 "memory": (
                     memory,
@@ -1292,6 +1389,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(context["sources"][0]["path"], "app.py")
             self.assertTrue(capsule["files"])
             self.assertEqual(handoff["status"], "complete")
+            self.assertEqual(diff_context["summary"]["changed_count"], 0)
             self.assertEqual(memory["status"], "pass")
             self.assertEqual(stats["snapshot_count"], 1)
             self.assertEqual(scan["status"], "warn")
@@ -1324,6 +1422,47 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["sources"][0]["path"], "app.py")
             self.assertEqual(payload["selection"]["limit"], 1)
             self.assertLessEqual(payload["selection"]["source_bytes"], 40)
+            self.assertIn("source_manifest", payload)
+
+    def test_cli_diff_context_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, base_pack = self._demo_pack(root)
+            build_pack(repo, base_pack, BuildOptions(force=True))
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            target_pack = root / "target.repomori"
+            build_pack(repo, target_pack, BuildOptions(force=True, base_pack=base_pack))
+
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "diff-context",
+                    str(base_pack),
+                    str(target_pack),
+                    "close Store",
+                    "--format",
+                    "json",
+                    "--max-files",
+                    "1",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.diff_context.v1")
+            self.assertEqual(payload["summary"]["changed_count"], 1)
+            self.assertEqual(payload["sources"][0]["path"], "app.py")
             self.assertIn("source_manifest", payload)
 
     def test_cli_build_base_json_is_parseable(self) -> None:

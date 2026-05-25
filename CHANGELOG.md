@@ -9,6 +9,7 @@
 - Added incremental `build --base` pack creation for unchanged file reuse.
 - Added automatic incremental snapshot and memory runs using the latest pack.
 - Added snapshot `stats` reports for incremental reuse and storage savings.
+- Added `diff-context` for source-backed changed-files agent context.
 - Added public launch docs, issue templates, badges, and project `.gitignore`.
 - Added `memory` cycle command for snapshot, handoff, doctor, prune, and timeline.
 - Added `init` config profiles through `repomori.toml`.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import difflib
 import hashlib
 import json
 import os
@@ -49,6 +50,13 @@ SCHEMA_DEFINITIONS = (
         "title": "Source-backed agent context bundle",
         "producer": "build_context_bundle",
         "required_fields": ["schema_version", "question", "pack", "selection", "sources", "source_manifest"],
+    },
+    {
+        "schema_version": "repomori.diff_context.v1",
+        "kind": "report",
+        "title": "Source-backed changed-files context bundle",
+        "producer": "build_diff_context_bundle",
+        "required_fields": ["schema_version", "question", "base_pack", "target_pack", "summary", "selection", "sources", "source_manifest"],
     },
     {
         "schema_version": "repomori.capsule.v1",
@@ -1472,6 +1480,251 @@ def format_context_markdown(bundle: dict[str, Any]) -> str:
                 f"- `{item.get('path')}` sha256=`{item.get('sha256')}` "
                 f"size=`{item.get('size')}` snippets=`{item.get('snippet_count')}` "
                 f"source_bytes=`{item.get('source_bytes', 0)}`"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_diff_context_bundle(
+    base_pack: Path | str,
+    target_pack: Path | str,
+    question: str = "what changed?",
+    *,
+    limit: int = 8,
+    snippet_lines: int = 12,
+    max_bytes: int | None = None,
+    snippets_per_file: int = 2,
+    include_source: bool = True,
+) -> dict[str, Any]:
+    """Build a source-backed context bundle for files changed between two packs."""
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    if snippet_lines <= 0:
+        raise ValueError("snippet_lines must be greater than zero")
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes must be zero or greater")
+    if snippets_per_file < 0:
+        raise ValueError("snippets_per_file must be zero or greater")
+    if not question.strip():
+        raise ValueError("question must not be empty")
+
+    started = time.time()
+    base_info = info_pack(base_pack)
+    target_info = info_pack(target_pack)
+    base_records = _pack_file_records(base_pack)
+    target_records = _pack_file_records(target_pack)
+    base_paths = set(base_records)
+    target_paths = set(target_records)
+    added_paths = sorted(target_paths - base_paths)
+    removed_paths = sorted(base_paths - target_paths)
+    shared_paths = sorted(base_paths & target_paths)
+    changed_paths = [
+        path
+        for path in shared_paths
+        if _compare_record_reasons(base_records[path], target_records[path])
+    ]
+    unchanged_count = len(shared_paths) - len(changed_paths)
+
+    candidates = []
+    for path in added_paths:
+        record = target_records[path]
+        candidates.append(
+            _diff_context_candidate(
+                "added",
+                record,
+                question,
+                change_reasons=["added"],
+                before=None,
+                after=record,
+            )
+        )
+    for path in changed_paths:
+        before = base_records[path]
+        after = target_records[path]
+        reasons = _compare_record_reasons(before, after)
+        candidates.append(
+            _diff_context_candidate(
+                "changed",
+                after,
+                question,
+                change_reasons=reasons,
+                before=before,
+                after=after,
+                summary_delta=_summary_delta(before.get("_summary", {}), after.get("_summary", {})),
+            )
+        )
+    for path in removed_paths:
+        record = base_records[path]
+        candidates.append(
+            _diff_context_candidate(
+                "removed",
+                record,
+                question,
+                change_reasons=["removed"],
+                before=record,
+                after=None,
+            )
+        )
+
+    candidates.sort(key=lambda item: (-float(item["score"]), _diff_context_type_order(item["change_type"]), item["path"]))
+    selected = candidates[:limit]
+    remaining_bytes = max_bytes
+    source_bytes = 0
+    sources = []
+    for item in selected:
+        source_pack = target_pack if item["source_pack"] == "target" else base_pack
+        peer_pack = base_pack if item["change_type"] == "changed" else None
+        snippets, status, used_bytes = _diff_context_snippets(
+            source_pack,
+            question,
+            item,
+            snippet_lines,
+            snippets_per_file,
+            remaining_bytes,
+            include_source,
+            peer_pack=peer_pack,
+        )
+        source_bytes += used_bytes
+        if remaining_bytes is not None:
+            remaining_bytes = max(0, remaining_bytes - used_bytes)
+        source = dict(item)
+        source.update(
+            {
+                "snippet_status": status,
+                "source_bytes": used_bytes,
+                "snippets": snippets,
+            }
+        )
+        sources.append(source)
+
+    return {
+        "schema_version": "repomori.diff_context.v1",
+        "question": question,
+        "base_pack": _pack_identity(base_info),
+        "target_pack": _pack_identity(target_info),
+        "settings": {
+            "limit": limit,
+            "snippet_lines": snippet_lines,
+            "max_bytes": max_bytes,
+            "snippets_per_file": snippets_per_file,
+            "include_source": include_source,
+        },
+        "summary": {
+            "added_count": len(added_paths),
+            "removed_count": len(removed_paths),
+            "changed_count": len(changed_paths),
+            "unchanged_count": unchanged_count,
+            "selected_count": len(sources),
+            "source_bytes": source_bytes,
+            "elapsed_seconds": round(time.time() - started, 4),
+        },
+        "selection": {
+            "limit": limit,
+            "candidate_count": len(candidates),
+            "selected_count": len(sources),
+            "truncated": len(candidates) > limit,
+        },
+        "sources": sources,
+        "source_manifest": [
+            {
+                "path": source["path"],
+                "change_type": source["change_type"],
+                "source_pack": source["source_pack"],
+                "sha256": source["sha256"],
+                "size": source["size"],
+                "snippet_count": len(source["snippets"]),
+                "snippet_status": source["snippet_status"],
+                "source_bytes": source["source_bytes"],
+            }
+            for source in sources
+        ],
+        "comparison": compare_packs(base_pack, target_pack, limit=limit),
+    }
+
+
+def format_diff_context_markdown(bundle: dict[str, Any]) -> str:
+    """Render a diff context bundle as source-backed Markdown."""
+
+    summary = bundle.get("summary", {})
+    settings = bundle.get("settings", {})
+    lines = [
+        "# RepoMori Diff Context",
+        "",
+        f"Question: {bundle.get('question', '')}",
+        "",
+        "## Packs",
+        "",
+        f"- Base: `{bundle.get('base_pack', {}).get('pack_path')}`",
+        f"- Target: `{bundle.get('target_pack', {}).get('pack_path')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Added: `{summary.get('added_count')}`",
+        f"- Removed: `{summary.get('removed_count')}`",
+        f"- Changed: `{summary.get('changed_count')}`",
+        f"- Unchanged: `{summary.get('unchanged_count')}`",
+        f"- Selected: `{summary.get('selected_count')}`",
+        f"- Source bytes: `{summary.get('source_bytes')}`",
+        f"- Max bytes: `{settings.get('max_bytes')}`",
+        "",
+        "## Changed Context",
+        "",
+    ]
+    sources = bundle.get("sources", [])
+    if not sources:
+        lines.extend(["No added, changed, or removed files were selected.", ""])
+    for source in sources:
+        lines.extend(
+            [
+                f"### {source.get('path')}",
+                "",
+                f"- Change type: `{source.get('change_type')}`",
+                f"- Source pack: `{source.get('source_pack')}`",
+                f"- Score: `{source.get('score')}`",
+                f"- Language: `{source.get('language') or 'unknown'}`",
+                f"- Size: `{source.get('size')}`",
+                f"- SHA-256: `{source.get('sha256')}`",
+                f"- Change reasons: `{', '.join(source.get('change_reasons', [])) or 'none'}`",
+                f"- Snippet status: `{source.get('snippet_status')}`",
+                f"- Source bytes: `{source.get('source_bytes', 0)}`",
+                "",
+            ]
+        )
+        delta = source.get("summary_delta", {})
+        for key in ("added_symbols", "removed_symbols", "added_imports", "removed_imports", "added_headings", "removed_headings"):
+            values = delta.get(key, [])
+            if values:
+                lines.append(f"- {key}: " + ", ".join(f"`{value}`" for value in values[:8]))
+        if delta:
+            lines.append("")
+        snippets = source.get("snippets", [])
+        if not snippets:
+            lines.extend(["No text snippets available.", ""])
+            continue
+        for snippet in snippets:
+            language = source.get("language") or ""
+            lines.extend(
+                [
+                    f"Lines {snippet['start_line']}-{snippet['end_line']} ({snippet['matched']}):",
+                    "",
+                    f"```{_markdown_fence_language(language)}",
+                    snippet["text"],
+                    "```",
+                    "",
+                ]
+            )
+
+    lines.extend(["## Source Manifest", ""])
+    manifest = bundle.get("source_manifest", [])
+    if not manifest:
+        lines.extend(["No sources selected.", ""])
+    else:
+        for item in manifest:
+            lines.append(
+                f"- `{item.get('path')}` change=`{item.get('change_type')}` "
+                f"pack=`{item.get('source_pack')}` sha256=`{item.get('sha256')}` "
+                f"size=`{item.get('size')}` snippets=`{item.get('snippet_count')}`"
             )
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -3787,6 +4040,164 @@ def _make_snippet(
     return None
 
 
+def _diff_context_candidate(
+    change_type: str,
+    record: dict[str, Any],
+    question: str,
+    *,
+    change_reasons: list[str],
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+    summary_delta: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
+    source_pack = "base" if change_type == "removed" else "target"
+    summary = record.get("summary", {})
+    delta = summary_delta or {}
+    return {
+        "path": record["path"],
+        "change_type": change_type,
+        "source_pack": source_pack,
+        "language": record.get("language"),
+        "size": record.get("size"),
+        "sha256": record.get("sha256"),
+        "score": _diff_context_score(change_type, record, question, change_reasons, delta),
+        "why": [f"change:{change_type}", *[f"reason:{reason}" for reason in change_reasons]],
+        "change_reasons": change_reasons,
+        "summary": summary,
+        "summary_delta": delta,
+        "before": _visible_file_record(before) if before is not None else None,
+        "after": _visible_file_record(after) if after is not None else None,
+    }
+
+
+def _diff_context_score(
+    change_type: str,
+    record: dict[str, Any],
+    question: str,
+    change_reasons: list[str],
+    summary_delta: dict[str, list[str]],
+) -> float:
+    score = {"added": 100.0, "changed": 90.0, "removed": 70.0}.get(change_type, 50.0)
+    score += len(change_reasons) * 3.0
+    score += min(float(record.get("token_count") or 0) / 100.0, 10.0)
+    score += min(sum(len(values) for values in summary_delta.values()) * 1.5, 12.0)
+    haystack = _diff_context_haystack(record)
+    for token in _query_tokens(question):
+        if token in haystack:
+            score += 5.0
+    return round(score, 2)
+
+
+def _diff_context_haystack(record: dict[str, Any]) -> str:
+    summary = record.get("_summary") or record.get("summary", {})
+    values = [str(record.get("path", "")), str(record.get("language") or "")]
+    values.extend(str(term) for term in summary.get("top_terms", []))
+    for field, key in (("symbols", "name"), ("imports", "target"), ("headings", "text")):
+        for item in summary.get(field, []):
+            values.append(str(item.get(key, "")))
+    return " ".join(values).lower()
+
+
+def _diff_context_type_order(change_type: str) -> int:
+    return {"added": 0, "changed": 1, "removed": 2}.get(change_type, 3)
+
+
+def _diff_context_snippets(
+    source_pack: Path | str,
+    question: str,
+    result: dict[str, Any],
+    snippet_lines: int,
+    snippets_per_file: int,
+    max_bytes: int | None,
+    include_source: bool,
+    *,
+    peer_pack: Path | str | None = None,
+) -> tuple[list[dict[str, Any]], str, int]:
+    if not include_source:
+        return [], "source_omitted", 0
+    if snippets_per_file == 0:
+        return [], "snippet_limit_zero", 0
+    if max_bytes is not None and max_bytes <= 0:
+        return [], "budget_exhausted", 0
+
+    data = get_file_bytes(source_pack, str(result["path"]))
+    text = _decode_text(data)
+    if text is None:
+        return [], "binary_or_undecodable", 0
+    lines = text.splitlines()
+    if not lines:
+        return [], "empty_text", 0
+
+    anchors: list[tuple[int, str]] = []
+    if result.get("change_type") == "changed" and peer_pack is not None:
+        anchors.extend(_diff_context_line_anchors(peer_pack, source_pack, str(result["path"])))
+    if result.get("change_type") in {"added", "removed"}:
+        anchors.extend(_first_useful_anchor(lines, f"diff:{result.get('change_type')}"))
+    anchors.extend(_snippet_anchors(question, result, lines))
+    anchors = _dedupe_anchors(anchors, len(lines))
+
+    snippets = []
+    used_bytes = 0
+    remaining_bytes = max_bytes
+    seen_ranges: set[tuple[int, int]] = set()
+    for line_no, matched in anchors:
+        snippet = _make_snippet(lines, line_no, matched, snippet_lines, remaining_bytes)
+        if snippet is None:
+            continue
+        start = snippet["start_line"]
+        end = snippet["end_line"]
+        if (start, end) in seen_ranges:
+            continue
+        seen_ranges.add((start, end))
+        snippets.append(snippet)
+        snippet_bytes = int(snippet["byte_count"])
+        used_bytes += snippet_bytes
+        if remaining_bytes is not None:
+            remaining_bytes = max(0, remaining_bytes - snippet_bytes)
+        if len(snippets) >= snippets_per_file:
+            break
+    status = "text" if snippets else ("budget_exhausted" if max_bytes is not None else "no_snippet")
+    return snippets, status, used_bytes
+
+
+def _diff_context_line_anchors(
+    base_pack: Path | str,
+    target_pack: Path | str,
+    path: str,
+) -> list[tuple[int, str]]:
+    try:
+        before_text = _decode_text(get_file_bytes(base_pack, path))
+        after_text = _decode_text(get_file_bytes(target_pack, path))
+    except KeyError:
+        return []
+    if before_text is None or after_text is None:
+        return []
+    before_lines = before_text.splitlines()
+    after_lines = after_text.splitlines()
+    if not after_lines:
+        return []
+    anchors = []
+    matcher = difflib.SequenceMatcher(None, before_lines, after_lines, autojunk=False)
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if j1 < len(after_lines):
+            line = j1 + 1
+        elif j2 > 0:
+            line = j2
+        else:
+            line = 1
+        anchors.append((line, f"diff:{tag}"))
+    return anchors
+
+
+def _first_useful_anchor(lines: list[str], label: str) -> list[tuple[int, str]]:
+    for index, line in enumerate(lines, start=1):
+        if line.strip():
+            return [(index, label)]
+    return []
+
+
 def _eval_source_summary(source: dict[str, Any]) -> dict[str, Any]:
     return {
         "path": source.get("path"),
@@ -4920,6 +5331,7 @@ AGENT_METHODS = (
     "doctor.run",
     "query.run",
     "context.build",
+    "diff_context.build",
     "handoff.build",
     "capsule.build",
     "file.get",
@@ -5033,6 +5445,29 @@ MCP_TOOLS = (
                 "include_source": {"type": "boolean"},
             },
             "required": ["question"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_diff_context_build",
+        "title": "RepoMori Diff Context Build",
+        "description": "Build source-backed context for added, changed, and removed files between two packs.",
+        "agent_method": "diff_context.build",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "base_pack": {"type": "string"},
+                "target_pack": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "question": {"type": "string"},
+                "limit": {"type": "integer"},
+                "max_files": {"type": "integer"},
+                "snippet_lines": {"type": "integer"},
+                "snippets_per_file": {"type": "integer"},
+                "max_bytes": {"type": ["integer", "null"]},
+                "include_source": {"type": "boolean"},
+            },
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -5178,6 +5613,20 @@ def _agent_dispatch(
             snippets_per_file=_agent_int(params, "snippets_per_file", 2),
             include_source=bool(params.get("include_source", True)),
         )
+    if method == "diff_context.build":
+        base_pack, target_pack = _agent_pack_pair(params, settings)
+        limit = _agent_int(params, "max_files", _agent_int(params, "limit", 8))
+        question = str(params.get("question", "what changed?"))
+        return build_diff_context_bundle(
+            base_pack,
+            target_pack,
+            question,
+            limit=limit,
+            snippet_lines=_agent_int(params, "snippet_lines", 12),
+            max_bytes=_agent_optional_int(params, "max_bytes", None),
+            snippets_per_file=_agent_int(params, "snippets_per_file", 2),
+            include_source=bool(params.get("include_source", True)),
+        )
     if method == "handoff.build":
         out = params.get("out") or params.get("out_dir")
         if not isinstance(out, str) or not out.strip():
@@ -5272,6 +5721,29 @@ def _agent_pack(params: dict[str, Any], settings: dict[str, Any]) -> str:
     if isinstance(latest, dict) and latest.get("pack_path"):
         return str(latest["pack_path"])
     raise ValueError("Method requires params.pack or a snapshot timeline with latest pack.")
+
+
+def _agent_pack_pair(params: dict[str, Any], settings: dict[str, Any]) -> tuple[str, str]:
+    base_pack = params.get("base_pack")
+    target_pack = params.get("target_pack")
+    if isinstance(base_pack, str) and base_pack.strip() and isinstance(target_pack, str) and target_pack.strip():
+        return base_pack, target_pack
+    out_dir = params.get("out_dir", settings.get("out_dir"))
+    if not isinstance(out_dir, str) or not out_dir.strip():
+        raise ValueError("diff_context.build requires params.base_pack and params.target_pack, or params.out_dir/config out_dir.")
+    timeline = read_snapshot_timeline(out_dir, limit=2)
+    snapshots = timeline.get("snapshots", [])
+    if len(snapshots) < 2:
+        raise ValueError("diff_context.build requires at least two snapshots in the timeline.")
+    latest = snapshots[0]
+    previous = snapshots[1]
+    if not isinstance(latest, dict) or not isinstance(previous, dict):
+        raise ValueError("diff_context.build could not resolve latest and previous snapshots.")
+    latest_pack = latest.get("pack_path")
+    previous_pack = previous.get("pack_path")
+    if not latest_pack or not previous_pack:
+        raise ValueError("diff_context.build snapshot entries must include pack_path.")
+    return str(previous_pack), str(latest_pack)
 
 
 def _agent_required_str(params: dict[str, Any], key: str) -> str:
@@ -5411,6 +5883,15 @@ def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
         lines.append(f"source_bytes: {selection.get('source_bytes')}")
         for item in sources[:5]:
             lines.append(f"- {item.get('path')} score={item.get('score')}")
+    elif name == "repomori_diff_context_build":
+        summary = payload.get("summary", {})
+        sources = payload.get("sources", [])
+        lines.append(f"added: {summary.get('added_count')}")
+        lines.append(f"changed: {summary.get('changed_count')}")
+        lines.append(f"removed: {summary.get('removed_count')}")
+        lines.append(f"sources: {len(sources)}")
+        for item in sources[:5]:
+            lines.append(f"- {item.get('change_type')} {item.get('path')} score={item.get('score')}")
     elif name == "repomori_file_get":
         lines.append(f"path: {payload.get('path')}")
         lines.append(f"size: {payload.get('size')}")

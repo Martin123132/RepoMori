@@ -47,6 +47,7 @@ the next snapshot unless the tool call sets `incremental` to `false`.
 - `repomori_doctor_run`
 - `repomori_query_run`
 - `repomori_context_build`
+- `repomori_diff_context_build`
 - `repomori_handoff_build`
 - `repomori_capsule_build`
 - `repomori_file_get`

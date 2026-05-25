@@ -13,6 +13,7 @@ from .codec import (
     build_repo_brief,
     build_capsule,
     build_context_bundle,
+    build_diff_context_bundle,
     build_handoff_package,
     build_pack,
     check_handoff_package,
@@ -23,6 +24,7 @@ from .codec import (
     format_brief_markdown,
     format_compare_markdown,
     format_context_markdown,
+    format_diff_context_markdown,
     format_eval_markdown,
     format_stats_markdown,
     format_snapshot_markdown,
@@ -242,6 +244,19 @@ def main(argv: list[str] | None = None) -> int:
     context.add_argument("--no-source", action="store_true", help="Return rankings and metadata without snippets.")
     context.add_argument("--format", choices=("markdown", "json"), default="markdown")
     context.add_argument("--out", type=Path, help="Write the context bundle to this file.")
+
+    diff_context = sub.add_parser("diff-context", help="Build source-backed changed-files context.")
+    diff_context.add_argument("base_pack", type=Path)
+    diff_context.add_argument("target_pack", type=Path)
+    diff_context.add_argument("question", nargs="?", default="what changed?")
+    diff_context.add_argument("--limit", type=int, default=8)
+    diff_context.add_argument("--max-files", type=int, help="Alias for --limit.")
+    diff_context.add_argument("--snippet-lines", type=int, default=12)
+    diff_context.add_argument("--snippets-per-file", type=int, default=2)
+    diff_context.add_argument("--max-bytes", type=int, help="Maximum total snippet text bytes.")
+    diff_context.add_argument("--no-source", action="store_true", help="Return change metadata without snippets.")
+    diff_context.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    diff_context.add_argument("--out", type=Path, help="Write the diff context bundle to this file.")
 
     verify = sub.add_parser("verify", help="Verify pack chunks, hashes, and source recovery.")
     verify.add_argument("pack", type=Path)
@@ -580,6 +595,29 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(bundle, indent=2)
             if args.format == "json"
             else format_context_markdown(bundle)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0
+    if args.command == "diff-context":
+        limit = args.max_files if args.max_files is not None else args.limit
+        bundle = build_diff_context_bundle(
+            args.base_pack,
+            args.target_pack,
+            args.question,
+            limit=limit,
+            snippet_lines=args.snippet_lines,
+            max_bytes=args.max_bytes,
+            snippets_per_file=args.snippets_per_file,
+            include_source=not args.no_source,
+        )
+        output = (
+            json.dumps(bundle, indent=2)
+            if args.format == "json"
+            else format_diff_context_markdown(bundle)
         )
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)
