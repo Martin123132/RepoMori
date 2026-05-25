@@ -1,4 +1,4 @@
-Required Notice: Copyright (c) 2026 Martin Ollett.
+Required Notice: Copyright (c) 2026 TWO HANDS NETWORK LTD.
 Required Notice: RepoMori is source-available for personal and non-commercial use. Commercial use, including incorporation into paid products, hosted services, managed services, enterprise products, or commercial AI coding/agent products, requires a separate written license from the licensor.
 
 # PolyForm Noncommercial License 1.0.0

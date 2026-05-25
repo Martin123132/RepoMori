@@ -8,7 +8,7 @@
 - Added dependency-free MCP stdio bridge over the same local agent methods.
 - Added snapshot doctor and safe prune operations.
 - Added schema catalog command and schema/protocol documentation.
-- Added source-available license, commercial-use notice, contribution terms, and public release checklist.
+- Added source-available company license, commercial-use notice, contribution terms, and public release checklist.
 
 ## 0.1.0
 

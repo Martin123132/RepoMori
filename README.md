@@ -26,6 +26,9 @@ See [LICENSE.md](LICENSE.md), [NOTICE.md](NOTICE.md),
 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md), and
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+RepoMori was created by Martin Ollett and is owned/licensed by
+TWO HANDS NETWORK LTD.
+
 ## Quick Start
 
 ```powershell

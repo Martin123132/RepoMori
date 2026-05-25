@@ -5,7 +5,8 @@ Use this before changing the GitHub repository visibility to public.
 ## Legal And License
 
 - Confirm `LICENSE.md`, `NOTICE.md`, `COMMERCIAL-LICENSE.md`, and `CONTRIBUTING.md` match the intended permissions.
-- Confirm the copyright holder name is correct.
+- Confirm the copyright holder name is correct: `TWO HANDS NETWORK LTD`.
+- Confirm internal records or written assignment show that TWO HANDS NETWORK LTD owns or is licensed to enforce the RepoMori IP.
 - Do not describe RepoMori as "open source"; use "source-available" and "free for personal and non-commercial use".
 - Consider a lawyer review before public release if commercial enforcement matters.
 

@@ -7,7 +7,7 @@ By submitting a pull request, patch, issue comment containing code, or other con
 - you have the right to submit the contribution;
 - your contribution is your own original work, or you clearly identify any third-party material and its license;
 - your contribution is licensed to the project under the same public license as RepoMori;
-- Martin Ollett may also use, modify, distribute, sublicense, and relicense your contribution as part of RepoMori, including under separate commercial licenses;
+- TWO HANDS NETWORK LTD may also use, modify, distribute, sublicense, and relicense your contribution as part of RepoMori, including under separate commercial licenses;
 - your contribution is provided without warranty.
 
 Do not submit secrets, API keys, private repository data, customer data, generated `.repomori` packs containing private source, or code copied from a source whose license is incompatible with RepoMori.
