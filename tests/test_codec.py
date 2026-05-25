@@ -41,6 +41,7 @@ from repomori.codec import (
     run_mcp_bridge,
     run_demo,
     run_memory_cycle,
+    run_release_check,
     schema_catalog,
     scan_baseline_from_report,
     scan_repository,
@@ -531,6 +532,27 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(written["ignored_count"], 1)
             ignored_by_file = scan_repository(repo, public_release=True, baseline=baseline_path)
             self.assertEqual(ignored_by_file["status"], "pass")
+
+    def test_run_release_check_schema_scan_and_demo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release"
+            self._public_ready_repo(repo)
+            demo_out = repo / ".release-check-demo"
+
+            report = run_release_check(
+                repo,
+                run_tests=False,
+                run_demo_smoke=True,
+                demo_out=demo_out,
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.release_check.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["checks"]["schema"]["ok"])
+            self.assertTrue(report["checks"]["scan"]["ok"])
+            self.assertEqual(report["checks"]["tests"]["status"], "skipped")
+            self.assertEqual(report["checks"]["demo"]["demo_status"], "pass")
+            self.assertFalse(demo_out.exists())
 
     def test_snapshot_repo_builds_latest_and_compares_previous(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1049,6 +1071,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.memory.v1", schema_versions)
         self.assertIn("repomori.scan.v1", schema_versions)
         self.assertIn("repomori.scan.baseline.v1", schema_versions)
+        self.assertIn("repomori.release_check.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("context.build", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
@@ -2031,6 +2054,35 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             self.assertEqual(ignore_code_result.returncode, 0, ignore_code_result.stderr)
             self.assertEqual(json.loads(ignore_code_result.stdout)["summary"]["ignored_findings"], 1)
+
+    def test_cli_release_check_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-cli"
+            self._public_ready_repo(repo)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-check",
+                    str(repo),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.release_check.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["checks"]["tests"]["status"], "skipped")
+            self.assertEqual(payload["checks"]["demo"]["status"], "skipped")
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

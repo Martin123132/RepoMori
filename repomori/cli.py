@@ -35,6 +35,7 @@ from .codec import (
     prune_snapshots,
     run_agent_bridge,
     run_demo,
+    run_release_check,
     run_mcp_bridge,
     run_memory_cycle,
     schema_catalog,
@@ -77,6 +78,18 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--write-baseline", type=Path, help="Write current active findings to a baseline JSON file.")
     scan.add_argument("--fail-on", choices=("info", "low", "medium", "high"), default="high")
     scan.add_argument("--json", action="store_true", help="Print scan JSON.")
+
+    release_check = sub.add_parser("release-check", help="Run local release readiness checks.")
+    release_check.add_argument("repo", type=Path, nargs="?", default=Path.cwd(), help="Repository folder to check.")
+    release_check.add_argument("--baseline", type=Path, help="Scan baseline; defaults to <repo>/.repomori-scan-baseline.json when present.")
+    release_check.add_argument("--fail-on", choices=("info", "low", "medium", "high"), default="low")
+    release_check.add_argument("--no-public-release", action="store_true", help="Skip public-release guardrail checks in scan.")
+    release_check.add_argument("--skip-tests", action="store_true", help="Skip unittest discovery.")
+    release_check.add_argument("--skip-demo", action="store_true", help="Skip quickstart demo smoke.")
+    release_check.add_argument("--demo-out", type=Path, help="Demo smoke output directory.")
+    release_check.add_argument("--keep-demo", action="store_true", help="Keep demo smoke output directory.")
+    release_check.add_argument("--tests-dir", default="tests", help="Directory passed to unittest discover.")
+    release_check.add_argument("--json", action="store_true", help="Print release-check JSON.")
 
     init = sub.add_parser("init", help="Write a RepoMori config file.")
     init.add_argument("repo", type=Path, help="Repository folder to remember.")
@@ -322,6 +335,23 @@ def main(argv: list[str] | None = None) -> int:
         if args.write_baseline:
             return 0
         return 1 if _scan_has_threshold(report, args.fail_on) else 0
+    if args.command == "release-check":
+        report = run_release_check(
+            args.repo,
+            baseline=args.baseline,
+            fail_on=args.fail_on,
+            public_release=not args.no_public_release,
+            run_tests=not args.skip_tests,
+            run_demo_smoke=not args.skip_demo,
+            demo_out=args.demo_out,
+            keep_demo=args.keep_demo,
+            tests_dir=args.tests_dir,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            _print_release_check(report)
+        return 0 if report["status"] == "pass" else 1
     if args.command == "init":
         result = init_config(
             args.repo,
@@ -681,6 +711,28 @@ def _scan_has_threshold(report: dict, threshold: str) -> bool:
         if {"info": 0, "low": 1, "medium": 2, "high": 3}.get(finding.get("severity"), -1) >= minimum:
             return True
     return False
+
+
+def _print_release_check(report: dict) -> None:
+    summary = report.get("summary", {})
+    print(f"release-check: {report.get('repo_path')}")
+    print(f"status: {report.get('status')}")
+    print(f"elapsed: {summary.get('elapsed_seconds')}s")
+    failed = summary.get("failed_checks") or []
+    print("failed checks: " + (", ".join(failed) if failed else "none"))
+    for name, check in report.get("checks", {}).items():
+        detail = check.get("status")
+        if name == "scan":
+            scan_summary = check.get("summary", {})
+            detail += (
+                f" findings={scan_summary.get('findings', 0)}"
+                f" ignored={scan_summary.get('ignored_findings', 0)}"
+            )
+        elif name == "tests":
+            detail += f" returncode={check.get('returncode')}"
+        elif name == "demo":
+            detail += f" demo_status={check.get('demo_status', check.get('status'))}"
+        print(f"- {name}: {detail}")
 
 
 def _memory_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:

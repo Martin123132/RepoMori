@@ -49,6 +49,7 @@ bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
 ```powershell
 python -m repomori demo --out D:\Temp\repomori-demo --force --json
 python -m repomori scan D:\Dev\RepoMori --public-release --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
@@ -96,6 +97,7 @@ exactness matters.
 repomori build <repo> <pack>
 repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
+repomori release-check [repo] [--baseline file] [--fail-on low] [--skip-tests] [--skip-demo] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--json]
 repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
@@ -139,6 +141,11 @@ traces, and license/public-release guardrail gaps. It is local-only and
 dependency-free. Use `--fail-on high` for secret-style failures only, or make it
 stricter with `--fail-on medium` or `--fail-on low`. Use `--baseline` for exact
 known findings and `--ignore-code` only for broad local policy choices.
+
+`release-check` is the local pre-push/public-release gate. It runs schema
+catalog sanity checks, strict `scan`, `python -m unittest discover -s tests`,
+and a quickstart `demo` smoke, then returns one `repomori.release_check.v1`
+report.
 
 `diagnose` explains why a question ranked files the way it did. It reports
 query tokens and phrases, per-file score breakdowns, matched and missed terms,
@@ -267,6 +274,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Agent protocol](docs/agent-protocol.md)
 - [Schemas](docs/schemas.md)
 - [Public safety scan](docs/public-safety-scan.md)
+- [Release check](docs/release-check.md)
 - [License FAQ](docs/license-faq.md)
 - [Public release checklist](PUBLIC_RELEASE_CHECKLIST.md)
 

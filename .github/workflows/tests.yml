@@ -18,12 +18,12 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests
 
-  public-safety-scan:
+  release-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run public safety scan
-        run: python -m repomori scan . --public-release --baseline .repomori-scan-baseline.json --fail-on low --json
+      - name: Run release check
+        run: python -m repomori release-check . --baseline .repomori-scan-baseline.json --fail-on low --json

@@ -63,9 +63,9 @@ binary fixtures:
 python -m repomori scan D:\Dev\RepoMori --ignore-code binary_file --json
 ```
 
-RepoMori's GitHub Actions workflow runs the strict form on every push and pull
-request:
+RepoMori's GitHub Actions workflow runs the stricter `release-check` command on
+every push and pull request:
 
 ```powershell
-python -m repomori scan . --public-release --baseline .repomori-scan-baseline.json --fail-on low --json
+python -m repomori release-check . --baseline .repomori-scan-baseline.json --fail-on low --json
 ```

@@ -15,6 +15,8 @@ import re
 import shutil
 import sqlite3
 import stat
+import subprocess
+import sys
 import time
 import zlib
 from collections import Counter, defaultdict
@@ -159,6 +161,13 @@ SCHEMA_DEFINITIONS = (
         "title": "Public safety scan baseline",
         "producer": "scan_baseline_from_report",
         "required_fields": ["schema_version", "source_schema_version", "repo_path", "created_at", "ignore"],
+    },
+    {
+        "schema_version": "repomori.release_check.v1",
+        "kind": "report",
+        "title": "Local release readiness check",
+        "producer": "run_release_check",
+        "required_fields": ["schema_version", "status", "repo_path", "settings", "summary", "checks"],
     },
     {
         "schema_version": "repomori.config.v1",
@@ -627,6 +636,87 @@ def scan_repository(
     if public_report is not None:
         report["public_release"] = public_report
     return report
+
+
+def run_release_check(
+    repo: Path | str,
+    *,
+    baseline: Path | str | None = None,
+    fail_on: str = "low",
+    public_release: bool = True,
+    run_tests: bool = True,
+    run_demo_smoke: bool = True,
+    demo_out: Path | str | None = None,
+    keep_demo: bool = False,
+    tests_dir: Path | str = "tests",
+) -> dict[str, Any]:
+    """Run the local pre-release readiness loop."""
+
+    repo_path = Path(repo).resolve()
+    if not repo_path.is_dir():
+        raise ValueError(f"Repository folder not found: {repo_path}")
+    if fail_on not in SCAN_SEVERITY_ORDER:
+        raise ValueError("fail_on must be one of: info, low, medium, high")
+
+    started = time.time()
+    baseline_path = Path(baseline).resolve() if baseline is not None else repo_path / ".repomori-scan-baseline.json"
+    baseline_arg: Path | None = baseline_path if baseline_path.exists() else None
+
+    schema_check = _release_schema_check()
+    scan = scan_repository(
+        repo_path,
+        public_release=public_release,
+        baseline=baseline_arg,
+    )
+    scan_ok = not _scan_has_severity_threshold(scan, fail_on)
+    tests_check = _release_tests_check(repo_path, tests_dir) if run_tests else _release_skipped_check("tests")
+    demo_check = (
+        _release_demo_check(repo_path, demo_out=demo_out, keep_demo=keep_demo)
+        if run_demo_smoke
+        else _release_skipped_check("demo")
+    )
+
+    checks = {
+        "schema": schema_check,
+        "scan": {
+            "name": "scan",
+            "ok": scan_ok,
+            "status": "pass" if scan_ok else "fail",
+            "fail_on": fail_on,
+            "baseline_path": str(baseline_arg) if baseline_arg else None,
+            "summary": scan.get("summary", {}),
+            "report": scan,
+        },
+        "tests": tests_check,
+        "demo": demo_check,
+    }
+    failed = [name for name, check in checks.items() if not check.get("ok")]
+    status = "pass" if not failed else "fail"
+    elapsed = round(time.time() - started, 4)
+    return {
+        "schema_version": "repomori.release_check.v1",
+        "status": status,
+        "repo_path": str(repo_path),
+        "settings": {
+            "baseline": str(baseline_path) if baseline_path.exists() else None,
+            "fail_on": fail_on,
+            "public_release": public_release,
+            "run_tests": run_tests,
+            "run_demo_smoke": run_demo_smoke,
+            "demo_out": str(Path(demo_out).resolve()) if demo_out is not None else None,
+            "keep_demo": keep_demo,
+            "tests_dir": str(tests_dir),
+        },
+        "summary": {
+            "elapsed_seconds": elapsed,
+            "failed_checks": failed,
+            "scan_findings": scan.get("summary", {}).get("findings"),
+            "scan_ignored_findings": scan.get("summary", {}).get("ignored_findings"),
+            "tests_returncode": tests_check.get("returncode"),
+            "demo_status": demo_check.get("demo_status"),
+        },
+        "checks": checks,
+    }
 
 
 def info_pack(pack: Path | str) -> dict[str, Any]:
@@ -5371,6 +5461,150 @@ def write_scan_baseline(report: dict[str, Any], path: Path | str) -> dict[str, A
         "ignored_count": len(baseline["ignore"]),
         "baseline": baseline,
     }
+
+
+def _release_schema_check() -> dict[str, Any]:
+    started = time.time()
+    try:
+        catalog = schema_catalog()
+        schema_versions = [item["schema_version"] for item in catalog.get("schemas", [])]
+        duplicate_versions = sorted(
+            version
+            for version, count in Counter(schema_versions).items()
+            if count > 1
+        )
+        missing_required = [
+            item.get("schema_version")
+            for item in catalog.get("schemas", [])
+            if not item.get("schema_version") or not item.get("required_fields")
+        ]
+        ok = not duplicate_versions and not missing_required
+        return {
+            "name": "schema",
+            "ok": ok,
+            "status": "pass" if ok else "fail",
+            "schema_count": catalog.get("schema_count"),
+            "duplicate_versions": duplicate_versions,
+            "missing_required": missing_required,
+            "elapsed_seconds": round(time.time() - started, 4),
+        }
+    except Exception as exc:
+        return {
+            "name": "schema",
+            "ok": False,
+            "status": "fail",
+            "error": str(exc),
+            "elapsed_seconds": round(time.time() - started, 4),
+        }
+
+
+def _release_tests_check(repo_path: Path, tests_dir: Path | str) -> dict[str, Any]:
+    started = time.time()
+    command = [sys.executable, "-m", "unittest", "discover", "-s", str(tests_dir)]
+    completed = subprocess.run(
+        command,
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    ok = completed.returncode == 0
+    return {
+        "name": "tests",
+        "ok": ok,
+        "status": "pass" if ok else "fail",
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout_tail": _release_tail(completed.stdout),
+        "stderr_tail": _release_tail(completed.stderr),
+        "elapsed_seconds": round(time.time() - started, 4),
+    }
+
+
+def _release_demo_check(
+    repo_path: Path,
+    *,
+    demo_out: Path | str | None,
+    keep_demo: bool,
+) -> dict[str, Any]:
+    started = time.time()
+    out_path = Path(demo_out).resolve() if demo_out is not None else repo_path.parent / f".repomori-release-check-{int(time.time() * 1000)}"
+    result: dict[str, Any]
+    try:
+        demo = run_demo(out_path, force=True)
+        ok = demo.get("status") == "pass"
+        result = {
+            "name": "demo",
+            "ok": ok,
+            "status": "pass" if ok else "fail",
+            "demo_status": demo.get("status"),
+            "out_dir": str(out_path),
+            "kept": keep_demo,
+            "summary": demo.get("summary", {}),
+            "elapsed_seconds": round(time.time() - started, 4),
+        }
+    except Exception as exc:
+        result = {
+            "name": "demo",
+            "ok": False,
+            "status": "fail",
+            "out_dir": str(out_path),
+            "kept": keep_demo,
+            "error": str(exc),
+            "elapsed_seconds": round(time.time() - started, 4),
+        }
+    finally:
+        if not keep_demo and out_path.exists():
+            try:
+                if not _release_path_is_cleanup_safe(repo_path, out_path):
+                    raise ValueError(f"Refusing to clean unexpected release-check path: {out_path}")
+                shutil.rmtree(out_path)
+            except Exception as exc:
+                result["ok"] = False
+                result["status"] = "fail"
+                result["cleanup_error"] = str(exc)
+                result["elapsed_seconds"] = round(time.time() - started, 4)
+    return result
+
+
+def _release_skipped_check(name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "ok": True,
+        "status": "skipped",
+        "skipped": True,
+        "elapsed_seconds": 0.0,
+    }
+
+
+def _release_tail(value: str, *, limit: int = 4000) -> str:
+    if len(value) <= limit:
+        return value
+    return value[-limit:]
+
+
+def _release_path_is_cleanup_safe(repo_path: Path, out_path: Path) -> bool:
+    resolved = out_path.resolve()
+    repo_resolved = repo_path.resolve()
+    if resolved == repo_resolved:
+        return False
+    if resolved == repo_resolved.parent or resolved == repo_resolved.anchor:
+        return False
+    if resolved.name.startswith(".repomori-release-check-") and resolved.parent == repo_resolved.parent:
+        return True
+    try:
+        relative = resolved.relative_to(repo_resolved)
+    except ValueError:
+        return False
+    return relative.parts and relative.parts[0] in {".release-check-demo", ".repomori-release-check"}
+
+
+def _scan_has_severity_threshold(report: dict[str, Any], threshold: str) -> bool:
+    minimum = SCAN_SEVERITY_ORDER[threshold]
+    return any(
+        SCAN_SEVERITY_ORDER.get(str(finding.get("severity")), -1) >= minimum
+        for finding in report.get("findings", [])
+    )
 
 
 def _scan_text_for_personal_paths(rel: str, text: str, findings: list[dict[str, Any]]) -> None:
