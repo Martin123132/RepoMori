@@ -24,6 +24,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.snapshot.v1`: single snapshot build report.
 - `repomori.config.v1`: `repomori.toml` profile config.
 - `repomori.schema.catalog.v1`: schema registry output.
+- `repomori.demo.v1`: local quickstart demo report.
 
 ## Agent Schemas
 

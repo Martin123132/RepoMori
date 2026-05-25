@@ -2,6 +2,8 @@
 
 ## 0.2.0
 
+- Added `demo` command and checked-in quickstart example for first-time users.
+- Added public launch docs, issue templates, badges, and project `.gitignore`.
 - Added `memory` cycle command for snapshot, handoff, doctor, prune, and timeline.
 - Added `init` config profiles through `repomori.toml`.
 - Added dependency-free JSON-lines `agent` bridge.

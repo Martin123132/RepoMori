@@ -1,5 +1,10 @@
 # RepoMori
 
+[![tests](https://github.com/Martin123132/RepoMori/actions/workflows/tests.yml/badge.svg)](https://github.com/Martin123132/RepoMori/actions/workflows/tests.yml)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE.md)
+[![source available](https://img.shields.io/badge/source--available-non--commercial-informational)](NOTICE.md)
+
 RepoMori turns a source repository into a compact, machine-readable `.repomori`
 pack that AI agents and local tools can query without rereading the whole
 codebase.
@@ -29,9 +34,20 @@ See [LICENSE.md](LICENSE.md), [NOTICE.md](NOTICE.md),
 RepoMori was created by Martin Ollett and is owned/licensed by
 TWO HANDS NETWORK LTD.
 
+## Try It In 60 Seconds
+
+```powershell
+python -m repomori demo --out D:\Temp\repomori-demo --force --json
+```
+
+That creates a tiny demo repository, builds and verifies a `.repomori` pack,
+creates source-backed context, runs a memory cycle, and checks the MCP tool
+bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
+
 ## Quick Start
 
 ```powershell
+python -m repomori demo --out D:\Temp\repomori-demo --force --json
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
@@ -77,6 +93,7 @@ exactness matters.
 
 ```text
 repomori build <repo> <pack>
+repomori demo --out <dir> [--force] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--json]
 repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
@@ -107,6 +124,11 @@ matching files, restores exact text from compressed chunks, adds line-numbered
 snippets, and includes a source manifest with file hashes for verification.
 Use `--max-bytes`, `--snippets-per-file`, and `--no-source` to control how much
 exact source text goes into the context bundle.
+
+`demo` creates a complete local quickstart under an output directory. It writes
+a tiny demo repo, builds `demo.repomori`, verifies it, creates context, runs a
+memory cycle, checks the MCP bridge, and writes `demo.json` plus a local
+`README.md` with follow-up commands.
 
 `diagnose` explains why a question ranked files the way it did. It reports
 query tokens and phrases, per-file score breakdowns, matched and missed terms,
@@ -227,6 +249,15 @@ JSON artifacts, and any copied `.repomori` pack.
 
 `bench` runs the full local proof loop for a repository: build, verify, brief,
 eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
+
+## Docs
+
+- [Quickstart](docs/quickstart.md)
+- [MCP setup](docs/mcp-setup.md)
+- [Agent protocol](docs/agent-protocol.md)
+- [Schemas](docs/schemas.md)
+- [License FAQ](docs/license-faq.md)
+- [Public release checklist](PUBLIC_RELEASE_CHECKLIST.md)
 
 You can run the same commands without installing the package:
 

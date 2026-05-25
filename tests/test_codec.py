@@ -39,6 +39,7 @@ from repomori.codec import (
     prune_snapshots,
     read_snapshot_timeline,
     run_mcp_bridge,
+    run_demo,
     run_memory_cycle,
     schema_catalog,
     snapshot_repo,
@@ -416,6 +417,30 @@ class RepoMoriCodecTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 benchmark_repo(repo, out, question="sqlite Store")
             forced = benchmark_repo(repo, out, question="sqlite Store", force=True)
+            self.assertEqual(forced["status"], "pass")
+
+    def test_run_demo_outputs_quickstart_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "demo-run"
+
+            report = run_demo(out)
+
+            self.assertEqual(report["schema_version"], "repomori.demo.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["query_top_path"], "app.py")
+            self.assertEqual(report["summary"]["mcp_context_schema"], "repomori.context.v1")
+            self.assertIn("repomori_context_build", report["mcp"]["tool_names"])
+            self.assertTrue((out / "demo-repo" / "app.py").exists())
+            self.assertTrue((out / "demo.repomori").exists())
+            self.assertTrue((out / "context.md").exists())
+            self.assertTrue((out / "repomori.toml").exists())
+            self.assertTrue((out / "packs" / "latest.repomori").exists())
+            self.assertEqual(json.loads((out / "demo.json").read_text(encoding="utf-8")), report)
+            self.assertIn("python -m repomori mcp", (out / "README.md").read_text(encoding="utf-8"))
+
+            with self.assertRaises(FileExistsError):
+                run_demo(out)
+            forced = run_demo(out, force=True)
             self.assertEqual(forced["status"], "pass")
 
     def test_snapshot_repo_builds_latest_and_compares_previous(self) -> None:
@@ -1275,6 +1300,31 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "pass")
             self.assertTrue((out / "bench.json").exists())
             self.assertTrue((out / "handoff" / "manifest.json").exists())
+
+    def test_cli_demo_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "demo-cli"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "demo",
+                    "--out",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.demo.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["summary"]["query_top_path"], "app.py")
+            self.assertTrue((out / "demo.json").exists())
+            self.assertTrue((out / "demo-repo" / "app.py").exists())
+            self.assertTrue((out / "packs" / "latest.repomori").exists())
 
     def test_cli_snapshot_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -140,6 +140,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "tools"],
     },
     {
+        "schema_version": "repomori.demo.v1",
+        "kind": "report",
+        "title": "Local quickstart demo report",
+        "producer": "run_demo",
+        "required_fields": ["schema_version", "status", "out_dir", "repo_path", "summary", "artifacts"],
+    },
+    {
         "schema_version": "repomori.config.v1",
         "kind": "config",
         "title": "RepoMori TOML config",
@@ -1974,6 +1981,112 @@ def benchmark_repo(
     return report
 
 
+def run_demo(
+    out_dir: Path | str,
+    *,
+    force: bool = False,
+    question: str = "sqlite connect Store",
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> dict[str, Any]:
+    """Create and run a complete local RepoMori quickstart demo."""
+
+    if not question.strip():
+        raise ValueError("question must not be empty")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than zero")
+
+    started = time.time()
+    out_path = Path(out_dir).resolve()
+    _prepare_demo_dir(out_path, force)
+
+    repo_path = out_path / "demo-repo"
+    pack_path = out_path / "demo.repomori"
+    context_path = out_path / "context.md"
+    config_path = out_path / "repomori.toml"
+    packs_path = out_path / "packs"
+    readme_path = out_path / "README.md"
+    demo_json_path = out_path / "demo.json"
+
+    _write_demo_repo(repo_path)
+    build = build_pack(repo_path, pack_path, BuildOptions(chunk_size=chunk_size, force=True))
+    verify = verify_pack(pack_path)
+    query = query_pack(pack_path, question, limit=3)
+    context = build_context_bundle(pack_path, question, limit=2, max_bytes=1200)
+    context_path.write_text(format_context_markdown(context), encoding="utf-8")
+    config = init_config(repo_path, packs_path, config_path=config_path, no_handoff=True, force=True)
+    memory = run_memory_cycle(repo_path, packs_path, no_handoff=True, timeline_limit=3, chunk_size=chunk_size)
+    mcp_tools = handle_mcp_request({"jsonrpc": "2.0", "id": "tools", "method": "tools/list"})
+    mcp_context = handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "context",
+            "method": "tools/call",
+            "params": {
+                "name": "repomori_context_build",
+                "arguments": {"question": question, "max_files": 1, "max_bytes": 800},
+            },
+        },
+        config_path=config_path,
+    )
+
+    mcp_tool_names = [
+        item.get("name")
+        for item in (mcp_tools or {}).get("result", {}).get("tools", [])
+        if isinstance(item, dict)
+    ]
+    mcp_context_result = (mcp_context or {}).get("result", {})
+    mcp_ok = isinstance(mcp_context_result, dict) and not mcp_context_result.get("isError")
+    status = "pass" if verify.get("verified") and query and context.get("sources") and memory.get("status") != "fail" and mcp_ok else "fail"
+    elapsed = time.time() - started
+    summary = {
+        "elapsed_seconds": round(elapsed, 4),
+        "pack_path": str(pack_path),
+        "config_path": str(config_path),
+        "memory_out_dir": str(packs_path),
+        "pack_bytes": build.get("pack_bytes"),
+        "logical_bytes": build.get("logical_bytes"),
+        "file_count": build.get("file_count"),
+        "query_top_path": query[0].get("path") if query else None,
+        "context_source_count": len(context.get("sources", [])),
+        "memory_status": memory.get("status"),
+        "mcp_tool_count": len(mcp_tool_names),
+        "mcp_context_schema": mcp_context_result.get("structuredContent", {}).get("schema_version") if isinstance(mcp_context_result, dict) else None,
+    }
+    artifacts = {
+        "demo_repo": repo_path.name,
+        "pack": pack_path.name,
+        "context_markdown": context_path.name,
+        "config": config_path.name,
+        "memory_out_dir": packs_path.name,
+        "demo_json": demo_json_path.name,
+        "readme": readme_path.name,
+    }
+    report = {
+        "schema_version": "repomori.demo.v1",
+        "status": status,
+        "out_dir": str(out_path),
+        "repo_path": str(repo_path),
+        "question": question,
+        "settings": {"chunk_size": chunk_size, "force": force},
+        "summary": summary,
+        "artifacts": artifacts,
+        "build": build,
+        "verify": verify,
+        "query": query,
+        "context": context,
+        "config": config,
+        "memory": memory,
+        "mcp": {
+            "tools": mcp_tools,
+            "context_call": mcp_context,
+            "tool_names": mcp_tool_names,
+        },
+    }
+    readme_path.write_text(_demo_output_readme(report), encoding="utf-8")
+    _write_json(demo_json_path, report)
+    return report
+
+
 def snapshot_repo(
     repo: Path | str,
     out_dir: Path | str,
@@ -3102,6 +3215,92 @@ def _prepare_handoff_dir(out_path: Path, force: bool) -> None:
         else:
             out_path.unlink()
     out_path.mkdir(parents=True, exist_ok=False)
+
+
+def _prepare_demo_dir(out_path: Path, force: bool) -> None:
+    if out_path.exists():
+        if not force:
+            raise FileExistsError(f"Demo output already exists: {out_path}")
+        if out_path.is_dir():
+            shutil.rmtree(out_path)
+        else:
+            out_path.unlink()
+    out_path.mkdir(parents=True, exist_ok=False)
+
+
+def _write_demo_repo(repo_path: Path) -> None:
+    (repo_path / "docs").mkdir(parents=True, exist_ok=True)
+    (repo_path / "tests").mkdir(parents=True, exist_ok=True)
+    (repo_path / "README.md").write_text(
+        "# Demo Store\n\n"
+        "A tiny repository used to prove RepoMori packs, context bundles, memory runs, and MCP tools.\n\n"
+        "The important code is the sqlite-backed `Store` class in `app.py`.\n",
+        encoding="utf-8",
+    )
+    (repo_path / "app.py").write_text(
+        "import sqlite3\n"
+        "from pathlib import Path\n\n\n"
+        "class Store:\n"
+        "    def __init__(self, path='notes.sqlite'):\n"
+        "        self.path = Path(path)\n\n"
+        "    def connect(self):\n"
+        "        return sqlite3.connect(str(self.path))\n\n"
+        "    def setup(self):\n"
+        "        with self.connect() as conn:\n"
+        "            conn.execute('create table if not exists notes (title text, body text)')\n\n"
+        "    def save_note(self, title, body):\n"
+        "        self.setup()\n"
+        "        with self.connect() as conn:\n"
+        "            conn.execute('insert into notes values (?, ?)', (title, body))\n\n"
+        "    def list_titles(self):\n"
+        "        self.setup()\n"
+        "        with self.connect() as conn:\n"
+        "            rows = conn.execute('select title from notes order by title').fetchall()\n"
+        "        return [row[0] for row in rows]\n\n\n"
+        "def main():\n"
+        "    store = Store()\n"
+        "    store.save_note('repomori', 'machine-readable repository memory')\n"
+        "    return store.list_titles()\n",
+        encoding="utf-8",
+    )
+    (repo_path / "docs" / "architecture.md").write_text(
+        "# Architecture\n\n"
+        "The demo has one storage boundary. `Store.connect` owns sqlite connection creation, "
+        "while `save_note` and `list_titles` use that boundary instead of opening their own database handles.\n",
+        encoding="utf-8",
+    )
+    (repo_path / "tests" / "test_store.py").write_text(
+        "from app import Store\n\n\n"
+        "def test_store_lists_saved_titles(tmp_path):\n"
+        "    store = Store(tmp_path / 'notes.sqlite')\n"
+        "    store.save_note('alpha', 'first')\n"
+        "    store.save_note('beta', 'second')\n"
+        "    assert store.list_titles() == ['alpha', 'beta']\n",
+        encoding="utf-8",
+    )
+    (repo_path / ".gitignore").write_text("__pycache__/\n*.pyc\n*.sqlite\n", encoding="utf-8")
+
+
+def _demo_output_readme(report: dict[str, Any]) -> str:
+    out_dir = report.get("out_dir")
+    pack = report.get("summary", {}).get("pack_path")
+    config = report.get("summary", {}).get("config_path")
+    question = report.get("question")
+    return (
+        "# RepoMori Demo Output\n\n"
+        f"- Status: `{report.get('status')}`\n"
+        f"- Demo repo: `{report.get('repo_path')}`\n"
+        f"- Pack: `{pack}`\n"
+        f"- Config: `{config}`\n"
+        f"- Question: `{question}`\n\n"
+        "Try these next:\n\n"
+        "```powershell\n"
+        f"python -m repomori query {pack} \"{question}\" --json\n"
+        f"python -m repomori context {pack} \"{question}\" --format markdown --out {out_dir}\\context.md\n"
+        f"python -m repomori memory --config {config} --json\n"
+        f"python -m repomori mcp --config {config}\n"
+        "```\n"
+    )
 
 
 def _write_json(path: Path, payload: dict[str, Any], *, compact: bool = False) -> None:

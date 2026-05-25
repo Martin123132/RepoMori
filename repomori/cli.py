@@ -34,6 +34,7 @@ from .codec import (
     read_snapshot_timeline,
     prune_snapshots,
     run_agent_bridge,
+    run_demo,
     run_mcp_bridge,
     run_memory_cycle,
     schema_catalog,
@@ -56,6 +57,13 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--chunk-size", type=int, default=256 * 1024)
     build.add_argument("--force", action="store_true", help="Overwrite an existing pack.")
     build.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    demo = sub.add_parser("demo", help="Create and run a complete local quickstart demo.")
+    demo.add_argument("--out", type=Path, required=True, help="Directory to write the demo repo and artifacts.")
+    demo.add_argument("--force", action="store_true", help="Overwrite an existing demo output directory.")
+    demo.add_argument("--question", default="sqlite connect Store", help="Question used for query, context, and MCP checks.")
+    demo.add_argument("--chunk-size", type=int, default=256 * 1024)
+    demo.add_argument("--json", action="store_true", help="Print demo JSON.")
 
     init = sub.add_parser("init", help="Write a RepoMori config file.")
     init.add_argument("repo", type=Path, help="Repository folder to remember.")
@@ -267,6 +275,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         _print(result, args.json)
         return 0
+    if args.command == "demo":
+        report = run_demo(
+            args.out,
+            force=args.force,
+            question=args.question,
+            chunk_size=args.chunk_size,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"demo: {report['out_dir']}")
+            print(f"status: {report['status']}")
+            print(f"pack: {report['summary']['pack_path']}")
+            print(f"context: {Path(report['out_dir']) / report['artifacts']['context_markdown']}")
+            print(f"config: {report['summary']['config_path']}")
+        return 0 if report["status"] == "pass" else 1
     if args.command == "init":
         result = init_config(
             args.repo,

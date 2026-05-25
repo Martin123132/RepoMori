@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Commercial licensing
+    url: https://github.com/Martin123132/RepoMori/blob/main/COMMERCIAL-LICENSE.md
+    about: Read the commercial-use boundaries before using RepoMori in a paid product or hosted service.
