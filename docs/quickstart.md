@@ -22,6 +22,7 @@ python -m repomori timeline D:\Temp\repomori-demo\packs --format json
 
 ```powershell
 python -m repomori scan D:\Dev\YourRepo --public-release --json
+python -m repomori scan D:\Dev\YourRepo --public-release --write-baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori init D:\Dev\YourRepo --out-dir D:\Dev\YourRepo\packs
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --json
 python -m repomori context D:\Dev\YourRepo\packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
@@ -29,7 +30,8 @@ python -m repomori context D:\Dev\YourRepo\packs\latest.repomori "where is stora
 
 `scan` is optional but recommended before publishing or building public packs.
 It stays offline and reports likely secrets, generated artifacts, build noise,
-large files, local path traces, and license guardrail gaps.
+large files, local path traces, and license guardrail gaps. Write a baseline
+only for intentional findings you want future scans to acknowledge.
 
 ## Recommended Local Workflow
 

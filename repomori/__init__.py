@@ -34,9 +34,11 @@ from .codec import (
     run_mcp_bridge,
     run_memory_cycle,
     schema_catalog,
+    scan_baseline_from_report,
     scan_repository,
     snapshot_repo,
     verify_pack,
+    write_scan_baseline,
 )
 
 __all__ = [
@@ -73,7 +75,9 @@ __all__ = [
     "run_mcp_bridge",
     "run_memory_cycle",
     "schema_catalog",
+    "scan_baseline_from_report",
     "scan_repository",
     "snapshot_repo",
     "verify_pack",
+    "write_scan_baseline",
 ]

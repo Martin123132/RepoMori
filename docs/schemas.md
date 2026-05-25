@@ -26,6 +26,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.schema.catalog.v1`: schema registry output.
 - `repomori.demo.v1`: local quickstart demo report.
 - `repomori.scan.v1`: local public-safety repository scan report.
+- `repomori.scan.baseline.v1`: acknowledged public-safety scan findings.
 
 ## Agent Schemas
 

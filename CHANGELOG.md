@@ -4,6 +4,7 @@
 
 - Added `demo` command and checked-in quickstart example for first-time users.
 - Added `scan` command for local public-safety and pack-readiness checks.
+- Added scan baselines, ignore codes, and CI public-safety scanning.
 - Added public launch docs, issue templates, badges, and project `.gitignore`.
 - Added `memory` cycle command for snapshot, handoff, doctor, prune, and timeline.
 - Added `init` config profiles through `repomori.toml`.

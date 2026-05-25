@@ -7,6 +7,8 @@ It does not call a network service, an AI model, or a secret-scanning API.
 python -m repomori scan D:\Dev\RepoMori --public-release --json
 python -m repomori scan D:\Dev\RepoMori --fail-on high
 python -m repomori scan D:\Dev\RepoMori --fail-on medium --json
+python -m repomori scan D:\Dev\RepoMori --write-baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
+python -m repomori scan D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --fail-on low --json
 ```
 
 ## What It Checks
@@ -41,3 +43,29 @@ python -m repomori scan D:\Dev\RepoMori --public-release --fail-on medium --json
 The JSON report uses schema `repomori.scan.v1` and includes the repository path,
 settings, summary counts, public-release checklist details, and every finding
 with severity, code, path, optional line number, and redacted match text.
+
+## Baselines And Ignores
+
+Use a baseline for intentional findings that should stay visible but not fail a
+strict scan:
+
+```powershell
+python -m repomori scan D:\Dev\RepoMori --public-release --write-baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
+python -m repomori scan D:\Dev\RepoMori --public-release --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --fail-on low --json
+```
+
+The baseline file uses schema `repomori.scan.baseline.v1`. It matches findings
+by code, path, and line number when present. Use `--ignore-code` for broader
+policy decisions, for example when a repository intentionally keeps large
+binary fixtures:
+
+```powershell
+python -m repomori scan D:\Dev\RepoMori --ignore-code binary_file --json
+```
+
+RepoMori's GitHub Actions workflow runs the strict form on every push and pull
+request:
+
+```powershell
+python -m repomori scan . --public-release --baseline .repomori-scan-baseline.json --fail-on low --json
+```

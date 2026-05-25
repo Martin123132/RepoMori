@@ -1,0 +1,78 @@
+{
+  "schema_version": "repomori.scan.baseline.v1",
+  "source_schema_version": "repomori.scan.v1",
+  "repo_path": "D:\\Dev\\RepoMori",
+  "created_at": 1779675699,
+  "ignore": [
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "README.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 40
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "README.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 50
+    },
+    {
+      "severity": "low",
+      "code": "windows_user_path",
+      "path": "docs/public-safety-scan.md",
+      "message": "Local Windows user path appears in source.",
+      "line": 25
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "docs/public-safety-scan.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 25
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "docs/quickstart.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 8
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "docs/quickstart.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 16
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "docs/quickstart.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 17
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "examples/quickstart-demo/README.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 8
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "examples/quickstart-demo/README.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 14
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "examples/quickstart-demo/README.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 15
+    }
+  ]
+}

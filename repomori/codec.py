@@ -154,6 +154,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "repo_path", "settings", "summary", "findings"],
     },
     {
+        "schema_version": "repomori.scan.baseline.v1",
+        "kind": "config",
+        "title": "Public safety scan baseline",
+        "producer": "scan_baseline_from_report",
+        "required_fields": ["schema_version", "source_schema_version", "repo_path", "created_at", "ignore"],
+    },
+    {
         "schema_version": "repomori.config.v1",
         "kind": "config",
         "title": "RepoMori TOML config",
@@ -457,6 +464,8 @@ def scan_repository(
     max_file_bytes: int = SCAN_DEFAULT_MAX_FILE_BYTES,
     include_hidden: bool = False,
     public_release: bool = False,
+    ignore_codes: Iterable[str] = (),
+    baseline: Path | str | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Scan a repository for public-release and packing risks without network calls."""
 
@@ -465,6 +474,8 @@ def scan_repository(
         raise ValueError(f"Repository folder not found: {repo_path}")
     if max_file_bytes <= 0:
         raise ValueError("max_file_bytes must be greater than zero")
+    ignored_codes = sorted({str(code).strip() for code in ignore_codes if str(code).strip()})
+    baseline_entries, baseline_path = _scan_baseline_entries(baseline)
 
     started = time.time()
     findings: list[dict[str, Any]] = []
@@ -578,15 +589,22 @@ def scan_repository(
 
     _scan_binary_heavy_dirs(binary_by_dir, total_by_dir, findings)
     public_report = _scan_public_release_report(repo_path, findings, enabled=public_release)
-    summary = _scan_summary(findings)
+    active_findings, ignored_findings = _scan_filter_findings(
+        findings,
+        ignore_codes=ignored_codes,
+        baseline_entries=baseline_entries,
+    )
+    summary = _scan_summary(active_findings)
     summary.update(
         {
             "files_scanned": files_scanned,
             "dirs_checked": dirs_checked,
             "bytes_scanned": bytes_scanned,
-            "generated_artifacts": sum(1 for item in findings if item["code"] in {"generated_artifact_dir", "repomori_pack_artifact"}),
-            "secret_findings": sum(1 for item in findings if item["code"] in {"private_key", "openai_api_key", "github_token", "aws_access_key", "generic_secret_assignment", "risky_secret_filename"}),
-            "license_findings": sum(1 for item in findings if item["code"] in {"missing_license", "private_license_metadata", "missing_public_release_file"}),
+            "raw_findings": len(findings),
+            "ignored_findings": len(ignored_findings),
+            "generated_artifacts": sum(1 for item in active_findings if item["code"] in {"generated_artifact_dir", "repomori_pack_artifact"}),
+            "secret_findings": sum(1 for item in active_findings if item["code"] in {"private_key", "openai_api_key", "github_token", "aws_access_key", "generic_secret_assignment", "risky_secret_filename"}),
+            "license_findings": sum(1 for item in active_findings if item["code"] in {"missing_license", "private_license_metadata", "missing_public_release_file"}),
             "elapsed_seconds": round(time.time() - started, 4),
         }
     )
@@ -599,9 +617,12 @@ def scan_repository(
             "max_file_bytes": max_file_bytes,
             "include_hidden": include_hidden,
             "public_release": public_release,
+            "ignore_codes": ignored_codes,
+            "baseline_path": baseline_path,
         },
         "summary": summary,
-        "findings": findings,
+        "findings": active_findings,
+        "ignored_findings": ignored_findings,
     }
     if public_report is not None:
         report["public_release"] = public_report
@@ -5235,6 +5256,121 @@ def _scan_text_for_secrets(rel: str, text: str, findings: list[dict[str, Any]]) 
             seen += 1
             if seen >= 5:
                 break
+
+
+def _scan_baseline_entries(baseline: Path | str | dict[str, Any] | None) -> tuple[list[dict[str, Any]], str | None]:
+    if baseline is None:
+        return [], None
+    baseline_path = None
+    if isinstance(baseline, (str, Path)):
+        path = Path(baseline)
+        baseline_path = str(path.resolve())
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid scan baseline JSON: {path}: {exc}") from exc
+    elif isinstance(baseline, dict):
+        payload = baseline
+    else:
+        raise ValueError("scan baseline must be a path, JSON object, or None")
+
+    entries = payload.get("ignore", payload.get("ignored_findings", payload.get("findings", [])))
+    if not isinstance(entries, list):
+        raise ValueError("scan baseline must contain an `ignore`, `ignored_findings`, or `findings` list")
+    normalized = []
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            raise ValueError(f"scan baseline entry {index} must be an object")
+        code = str(entry.get("code", "")).strip()
+        path_value = str(entry.get("path", "")).strip()
+        if not code or not path_value:
+            raise ValueError(f"scan baseline entry {index} must include code and path")
+        normalized_entry: dict[str, Any] = {"code": code, "path": path_value}
+        for optional_key in ("line", "severity"):
+            if optional_key in entry:
+                normalized_entry[optional_key] = entry[optional_key]
+        normalized.append(normalized_entry)
+    return normalized, baseline_path
+
+
+def _scan_filter_findings(
+    findings: list[dict[str, Any]],
+    *,
+    ignore_codes: list[str],
+    baseline_entries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    active = []
+    ignored = []
+    ignore_code_set = set(ignore_codes)
+    for finding in findings:
+        reason = None
+        if finding.get("code") in ignore_code_set:
+            reason = "ignore_code"
+        else:
+            match = _scan_matching_baseline_entry(finding, baseline_entries)
+            if match is not None:
+                reason = "baseline"
+        if reason:
+            ignored_item = dict(finding)
+            ignored_item["ignored_reason"] = reason
+            ignored.append(ignored_item)
+            continue
+        active.append(finding)
+    return active, ignored
+
+
+def _scan_matching_baseline_entry(finding: dict[str, Any], entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for entry in entries:
+        if entry.get("code") != finding.get("code"):
+            continue
+        if entry.get("path") != finding.get("path"):
+            continue
+        if "line" in entry and entry.get("line") != finding.get("line"):
+            continue
+        if "severity" in entry and entry.get("severity") != finding.get("severity"):
+            continue
+        return entry
+    return None
+
+
+def scan_baseline_from_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Create a compact scan baseline from a scan report."""
+
+    entries = []
+    for finding in report.get("findings", []):
+        if not isinstance(finding, dict):
+            continue
+        entry = {
+            "severity": finding.get("severity"),
+            "code": finding.get("code"),
+            "path": finding.get("path"),
+            "message": finding.get("message"),
+        }
+        if finding.get("line") is not None:
+            entry["line"] = finding.get("line")
+        entries.append(entry)
+    return {
+        "schema_version": "repomori.scan.baseline.v1",
+        "source_schema_version": report.get("schema_version"),
+        "repo_path": report.get("repo_path"),
+        "created_at": int(time.time()),
+        "ignore": entries,
+    }
+
+
+def write_scan_baseline(report: dict[str, Any], path: Path | str) -> dict[str, Any]:
+    """Write a scan baseline file from the active findings in a scan report."""
+
+    output = Path(path)
+    baseline = scan_baseline_from_report(report)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(output, baseline)
+    return {
+        "schema_version": "repomori.scan.baseline.write.v1",
+        "path": str(output.resolve()),
+        "ignored_count": len(baseline["ignore"]),
+        "baseline": baseline,
+    }
 
 
 def _scan_text_for_personal_paths(rel: str, text: str, findings: list[dict[str, Any]]) -> None:

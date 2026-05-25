@@ -42,6 +42,7 @@ from .codec import (
     snapshot_repo,
     tree_pack,
     verify_pack,
+    write_scan_baseline,
 )
 
 
@@ -71,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--max-file-bytes", type=int, default=1024 * 1024)
     scan.add_argument("--include-hidden", action="store_true", help="Scan hidden dotfiles and dot-directories.")
     scan.add_argument("--public-release", action="store_true", help="Check source-available public-release guardrails.")
+    scan.add_argument("--ignore-code", action="append", help="Ignore all findings with this code; repeat for more.")
+    scan.add_argument("--baseline", type=Path, help="Ignore findings listed in a scan baseline JSON file.")
+    scan.add_argument("--write-baseline", type=Path, help="Write current active findings to a baseline JSON file.")
     scan.add_argument("--fail-on", choices=("info", "low", "medium", "high"), default="high")
     scan.add_argument("--json", action="store_true", help="Print scan JSON.")
 
@@ -306,11 +310,17 @@ def main(argv: list[str] | None = None) -> int:
             max_file_bytes=args.max_file_bytes,
             include_hidden=args.include_hidden,
             public_release=args.public_release,
+            ignore_codes=args.ignore_code or (),
+            baseline=args.baseline,
         )
+        if args.write_baseline:
+            report["baseline_written"] = write_scan_baseline(report, args.write_baseline)
         if args.json:
             print(json.dumps(report, indent=2))
         else:
             _print_scan(report)
+        if args.write_baseline:
+            return 0
         return 1 if _scan_has_threshold(report, args.fail_on) else 0
     if args.command == "init":
         result = init_config(
@@ -647,11 +657,14 @@ def _print_scan(report: dict) -> None:
     print(
         "findings: "
         f"{summary.get('findings', 0)} "
+        f"ignored={summary.get('ignored_findings', 0)} "
         f"high={summary.get('high', 0)} "
         f"medium={summary.get('medium', 0)} "
         f"low={summary.get('low', 0)} "
         f"info={summary.get('info', 0)}"
     )
+    if report.get("baseline_written"):
+        print(f"baseline: {report['baseline_written']['path']}")
     for finding in report.get("findings", [])[:20]:
         location = finding.get("path", ".")
         if finding.get("line") is not None:

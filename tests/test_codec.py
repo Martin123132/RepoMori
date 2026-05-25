@@ -42,10 +42,12 @@ from repomori.codec import (
     run_demo,
     run_memory_cycle,
     schema_catalog,
+    scan_baseline_from_report,
     scan_repository,
     snapshot_repo,
     tree_pack,
     verify_pack,
+    write_scan_baseline,
 )
 
 
@@ -499,6 +501,36 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["status"], "warn")
             self.assertIn("missing_license", codes)
             self.assertIn("private_license_metadata", codes)
+
+    def test_scan_repository_ignore_code_and_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "paths"
+            self._public_ready_repo(repo)
+            (repo / "README.md").write_text("Use D:\\Temp\\repomori-demo for examples.\n", encoding="utf-8")
+
+            original = scan_repository(repo, public_release=True)
+            self.assertEqual(original["status"], "warn")
+            self.assertEqual(original["summary"]["findings"], 1)
+            self.assertEqual(original["findings"][0]["code"], "temp_drive_path")
+
+            ignored_by_code = scan_repository(repo, public_release=True, ignore_codes=["temp_drive_path"])
+            self.assertEqual(ignored_by_code["status"], "pass")
+            self.assertEqual(ignored_by_code["summary"]["findings"], 0)
+            self.assertEqual(ignored_by_code["summary"]["ignored_findings"], 1)
+            self.assertEqual(ignored_by_code["ignored_findings"][0]["ignored_reason"], "ignore_code")
+
+            baseline_payload = scan_baseline_from_report(original)
+            ignored_by_baseline = scan_repository(repo, public_release=True, baseline=baseline_payload)
+            self.assertEqual(ignored_by_baseline["status"], "pass")
+            self.assertEqual(ignored_by_baseline["summary"]["findings"], 0)
+            self.assertEqual(ignored_by_baseline["ignored_findings"][0]["ignored_reason"], "baseline")
+
+            baseline_path = Path(tmp) / "scan-baseline.json"
+            written = write_scan_baseline(original, baseline_path)
+            self.assertEqual(written["schema_version"], "repomori.scan.baseline.write.v1")
+            self.assertEqual(written["ignored_count"], 1)
+            ignored_by_file = scan_repository(repo, public_release=True, baseline=baseline_path)
+            self.assertEqual(ignored_by_file["status"], "pass")
 
     def test_snapshot_repo_builds_latest_and_compares_previous(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1016,6 +1048,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         schema_versions = {item["schema_version"] for item in catalog["schemas"]}
         self.assertIn("repomori.memory.v1", schema_versions)
         self.assertIn("repomori.scan.v1", schema_versions)
+        self.assertIn("repomori.scan.baseline.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("context.build", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
@@ -1918,6 +1951,86 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             self.assertEqual(strict.returncode, 1)
             self.assertEqual(json.loads(strict.stdout)["schema_version"], "repomori.scan.v1")
+
+    def test_cli_scan_baseline_and_ignore_code(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "scan-baseline-cli"
+            self._public_ready_repo(repo)
+            (repo / "README.md").write_text("Use D:\\Temp\\repomori-demo for examples.\n", encoding="utf-8")
+            baseline = Path(tmp) / "scan-baseline.json"
+
+            write_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "scan",
+                    str(repo),
+                    "--public-release",
+                    "--fail-on",
+                    "low",
+                    "--write-baseline",
+                    str(baseline),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(write_result.returncode, 0, write_result.stderr)
+            write_payload = json.loads(write_result.stdout)
+            self.assertTrue(baseline.exists())
+            self.assertEqual(write_payload["baseline_written"]["ignored_count"], 1)
+
+            baseline_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "scan",
+                    str(repo),
+                    "--public-release",
+                    "--fail-on",
+                    "low",
+                    "--baseline",
+                    str(baseline),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(baseline_result.returncode, 0, baseline_result.stderr)
+            baseline_payload = json.loads(baseline_result.stdout)
+            self.assertEqual(baseline_payload["summary"]["findings"], 0)
+            self.assertEqual(baseline_payload["summary"]["ignored_findings"], 1)
+
+            ignore_code_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "scan",
+                    str(repo),
+                    "--public-release",
+                    "--fail-on",
+                    "low",
+                    "--ignore-code",
+                    "temp_drive_path",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(ignore_code_result.returncode, 0, ignore_code_result.stderr)
+            self.assertEqual(json.loads(ignore_code_result.stdout)["summary"]["ignored_findings"], 1)
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"
