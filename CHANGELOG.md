@@ -5,6 +5,7 @@
 - Added `memory` cycle command for snapshot, handoff, doctor, prune, and timeline.
 - Added `init` config profiles through `repomori.toml`.
 - Added dependency-free JSON-lines `agent` bridge.
+- Added dependency-free MCP stdio bridge over the same local agent methods.
 - Added snapshot doctor and safe prune operations.
 - Added schema catalog command and schema/protocol documentation.
 

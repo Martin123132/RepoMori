@@ -34,6 +34,7 @@ from .codec import (
     read_snapshot_timeline,
     prune_snapshots,
     run_agent_bridge,
+    run_mcp_bridge,
     run_memory_cycle,
     schema_catalog,
     snapshot_repo,
@@ -128,6 +129,10 @@ def main(argv: list[str] | None = None) -> int:
     agent = sub.add_parser("agent", help="Run the JSON-lines agent bridge on stdio.")
     agent.add_argument("--config", type=Path, help="Config file path; defaults to nearest repomori.toml.")
     agent.add_argument("--profile", help="Config profile to use.")
+
+    mcp = sub.add_parser("mcp", help="Run the dependency-free MCP stdio bridge.")
+    mcp.add_argument("--config", type=Path, help="Config file path; defaults to nearest repomori.toml.")
+    mcp.add_argument("--profile", help="Config profile to use.")
 
     schema = sub.add_parser("schema", help="Show supported RepoMori schemas and agent methods.")
     schema.add_argument("schema_version", nargs="?", help="Specific schema version to show.")
@@ -351,6 +356,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report["status"] != "fail" else 1
     if args.command == "agent":
         return run_agent_bridge(
+            sys.stdin,
+            sys.stdout,
+            config_path=args.config,
+            profile=args.profile,
+            start_dir=Path.cwd(),
+        )
+    if args.command == "mcp":
+        return run_mcp_bridge(
             sys.stdin,
             sys.stdout,
             config_path=args.config,

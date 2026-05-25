@@ -20,6 +20,7 @@ python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
 python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --prune-apply --json
 python -m repomori agent --config D:\Dev\RepoMori\repomori.toml
+python -m repomori mcp --config D:\Dev\RepoMori\repomori.toml
 python -m repomori schema --json
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
 python -m repomori timeline D:\Dev\RepoMori\packs --format json
@@ -62,6 +63,7 @@ repomori build <repo> <pack>
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--json]
 repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
+repomori mcp [--config file] [--profile name]
 repomori schema [schema-version] [--json]
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-compare] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
@@ -128,11 +130,39 @@ query RepoMori without guessing shell commands. Send one JSON object per line:
 Responses are JSON lines with `schema_version`, `jsonrpc`, `id`, `ok`, and
 either `result` or `error`. Supported methods are `memory.run`, `timeline.read`,
 `doctor.run`, `query.run`, `context.build`, `handoff.build`, `capsule.build`,
-and `file.get`. Methods use the configured latest snapshot pack when `pack` is
-not supplied.
+`file.get`, and `schema.list`. Methods use the configured latest snapshot pack
+when `pack` is not supplied.
 
 `schema` lists RepoMori's supported JSON contracts and agent methods. See
 `docs/schemas.md` and `docs/agent-protocol.md` for the compact protocol notes.
+
+`mcp` runs a dependency-free MCP stdio bridge over the same local agent methods.
+It supports `initialize`, `notifications/initialized`, `ping`, `tools/list`,
+and `tools/call`, returning tool output as readable text plus structured JSON.
+Example local client config:
+
+```json
+{
+  "mcpServers": {
+    "repomori": {
+      "command": "python",
+      "args": [
+        "-m",
+        "repomori",
+        "mcp",
+        "--config",
+        "D:\\Dev\\RepoMori\\repomori.toml"
+      ]
+    }
+  }
+}
+```
+
+The MCP tool names are `repomori_help`, `repomori_memory_run`,
+`repomori_timeline_read`, `repomori_doctor_run`, `repomori_query_run`,
+`repomori_context_build`, `repomori_handoff_build`,
+`repomori_capsule_build`, `repomori_file_get`, and
+`repomori_schema_list`.
 
 `snapshot` builds timestamped packs into an output directory, updates
 `latest.repomori`, and automatically compares the new pack against the previous

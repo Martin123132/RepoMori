@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import subprocess
 import sys
@@ -30,12 +31,14 @@ from repomori.codec import (
     format_timeline_markdown,
     get_file_bytes,
     handle_agent_request,
+    handle_mcp_request,
     init_config,
     info_pack,
     load_memory_config,
     query_pack,
     prune_snapshots,
     read_snapshot_timeline,
+    run_mcp_bridge,
     run_memory_cycle,
     schema_catalog,
     snapshot_repo,
@@ -775,6 +778,156 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(invalid_response["ok"])
             self.assertEqual(invalid_response["error"]["code"], "invalid_request")
 
+    def test_mcp_bridge_initialize_tools_and_errors(self) -> None:
+        init_response = handle_mcp_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1"},
+                },
+            }
+        )
+        self.assertEqual(init_response["jsonrpc"], "2.0")
+        self.assertEqual(init_response["result"]["protocolVersion"], "2025-11-25")
+        self.assertIn("tools", init_response["result"]["capabilities"])
+
+        initialized = handle_mcp_request({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        self.assertIsNone(initialized)
+
+        first_list = handle_mcp_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        second_list = handle_mcp_request({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+        self.assertEqual(first_list["result"]["schema_version"], "repomori.mcp.tools.v1")
+        first_names = [tool["name"] for tool in first_list["result"]["tools"]]
+        second_names = [tool["name"] for tool in second_list["result"]["tools"]]
+        self.assertEqual(first_names, second_names)
+        self.assertIn("repomori_context_build", first_names)
+        self.assertIn("repomori_schema_list", first_names)
+
+        unknown_method = handle_mcp_request({"jsonrpc": "2.0", "id": 4, "method": "missing.method"})
+        self.assertEqual(unknown_method["error"]["code"], -32601)
+
+        unknown_tool = handle_mcp_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "repomori_missing", "arguments": {}},
+            }
+        )
+        self.assertEqual(unknown_tool["error"]["code"], -32602)
+
+        tool_failure = handle_mcp_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {"name": "repomori_context_build", "arguments": {}},
+            }
+        )
+        self.assertTrue(tool_failure["result"]["isError"])
+        self.assertEqual(tool_failure["result"]["structuredContent"]["schema_version"], "repomori.mcp.tool_error.v1")
+
+        input_stream = io.StringIO(json.dumps({"jsonrpc": "2.0", "id": 7, "method": "ping"}) + "\n")
+        output_stream = io.StringIO()
+        status = run_mcp_bridge(input_stream, output_stream)
+        self.assertEqual(status, 0)
+        ping = json.loads(output_stream.getvalue())
+        self.assertEqual(ping["result"], {})
+
+    def test_mcp_tools_wrap_agent_query_context_doctor_timeline_schema_and_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            init_config(repo, out, config_path=config, no_handoff=True)
+            run_memory_cycle(repo, out, no_handoff=True)
+
+            query_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "query",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "repomori_query_run",
+                        "arguments": {"text": "sqlite Store", "limit": 1},
+                    },
+                },
+                config_path=config,
+            )
+            self.assertFalse(query_response["result"]["isError"])
+            self.assertEqual(query_response["result"]["structuredContent"]["schema_version"], "repomori.agent.query.v1")
+            self.assertEqual(query_response["result"]["structuredContent"]["results"][0]["path"], "app.py")
+            self.assertIn("app.py", query_response["result"]["content"][0]["text"])
+
+            context_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "context",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "repomori_context_build",
+                        "arguments": {"question": "How does Store connect?", "max_files": 1, "max_bytes": 200},
+                    },
+                },
+                config_path=config,
+            )
+            self.assertFalse(context_response["result"]["isError"])
+            self.assertEqual(context_response["result"]["structuredContent"]["schema_version"], "repomori.context.v1")
+            self.assertEqual(context_response["result"]["structuredContent"]["sources"][0]["path"], "app.py")
+
+            doctor_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "doctor",
+                    "method": "tools/call",
+                    "params": {"name": "repomori_doctor_run", "arguments": {}},
+                },
+                config_path=config,
+            )
+            self.assertEqual(doctor_response["result"]["structuredContent"]["schema_version"], "repomori.doctor.v1")
+            self.assertEqual(doctor_response["result"]["structuredContent"]["status"], "pass")
+
+            timeline_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "timeline",
+                    "method": "tools/call",
+                    "params": {"name": "repomori_timeline_read", "arguments": {"limit": 1}},
+                },
+                config_path=config,
+            )
+            self.assertEqual(timeline_response["result"]["structuredContent"]["schema_version"], "repomori.timeline.v1")
+            self.assertEqual(timeline_response["result"]["structuredContent"]["returned_count"], 1)
+
+            schema_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "schema",
+                    "method": "tools/call",
+                    "params": {"name": "repomori_schema_list", "arguments": {}},
+                },
+                config_path=config,
+            )
+            self.assertEqual(schema_response["result"]["structuredContent"]["schema_version"], "repomori.schema.catalog.v1")
+            self.assertIn("repomori_context_build", schema_response["result"]["structuredContent"]["mcp_tools"])
+
+            file_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "file",
+                    "method": "tools/call",
+                    "params": {"name": "repomori_file_get", "arguments": {"path": "app.py"}},
+                },
+                config_path=config,
+            )
+            self.assertEqual(file_response["result"]["structuredContent"]["schema_version"], "repomori.agent.file.v1")
+            self.assertTrue(file_response["result"]["structuredContent"]["is_text"])
+            self.assertIn("sqlite3.connect", file_response["result"]["structuredContent"]["text"])
+
     def test_schema_catalog_lists_contracts_and_methods(self) -> None:
         catalog = schema_catalog()
         self.assertEqual(catalog["schema_version"], "repomori.schema.catalog.v1")
@@ -782,6 +935,8 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.memory.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("context.build", catalog["agent_methods"])
+        self.assertIn("schema.list", catalog["agent_methods"])
+        self.assertIn("repomori_schema_list", catalog["mcp_tools"])
 
         memory = schema_catalog("repomori.memory.v1")
         self.assertEqual(memory["selected"], "repomori.memory.v1")
@@ -1507,6 +1662,63 @@ class RepoMoriCodecTests(unittest.TestCase):
         payload = json.loads(output)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"]["code"], "invalid_json")
+
+    def test_cli_mcp_stdio_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            init_config(repo, out, config_path=config, no_handoff=True)
+            run_memory_cycle(repo, out, no_handoff=True)
+            requests = "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {
+                                "protocolVersion": "2025-11-25",
+                                "capabilities": {},
+                                "clientInfo": {"name": "test", "version": "1"},
+                            },
+                        }
+                    ),
+                    json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                    json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 3,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "repomori_query_run",
+                                "arguments": {"text": "sqlite Store", "limit": 1},
+                            },
+                        }
+                    ),
+                    "",
+                ]
+            )
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "mcp",
+                    "--config",
+                    str(config),
+                ],
+                input=requests,
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            responses = [json.loads(line) for line in output.splitlines()]
+            self.assertEqual(len(responses), 3)
+            self.assertEqual(responses[0]["result"]["protocolVersion"], "2025-11-25")
+            self.assertIn("repomori_query_run", [tool["name"] for tool in responses[1]["result"]["tools"]])
+            self.assertEqual(responses[2]["result"]["structuredContent"]["results"][0]["path"], "app.py")
 
     def test_cli_schema_json_is_parseable(self) -> None:
         output = subprocess.check_output(

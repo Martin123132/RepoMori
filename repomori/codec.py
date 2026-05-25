@@ -30,6 +30,8 @@ DEFAULT_EVAL_QUESTIONS = (
     "How are files stored, compressed, or restored?",
     "What tests cover the project behavior?",
 )
+MCP_PROTOCOL_VERSION = "2025-11-25"
+MCP_SERVER_VERSION = "0.2.0"
 
 SCHEMA_DEFINITIONS = (
     {
@@ -129,6 +131,13 @@ SCHEMA_DEFINITIONS = (
         "title": "Schema catalog payload",
         "producer": "schema_catalog",
         "required_fields": ["schema_version", "schemas", "agent_methods"],
+    },
+    {
+        "schema_version": "repomori.mcp.tools.v1",
+        "kind": "protocol",
+        "title": "MCP tool listing payload",
+        "producer": "tools/list",
+        "required_fields": ["schema_version", "tools"],
     },
     {
         "schema_version": "repomori.config.v1",
@@ -2696,12 +2705,14 @@ def schema_catalog(schema_version: str | None = None) -> dict[str, Any]:
             "schemas": matches,
             "schema": matches[0],
             "agent_methods": list(AGENT_METHODS),
+            "mcp_tools": [tool["name"] for tool in MCP_TOOLS],
         }
     return {
         "schema_version": "repomori.schema.catalog.v1",
         "schema_count": len(schemas),
         "schemas": schemas,
         "agent_methods": list(AGENT_METHODS),
+        "mcp_tools": [tool["name"] for tool in MCP_TOOLS],
     }
 
 
@@ -2760,6 +2771,86 @@ def run_agent_bridge(
                 profile=profile,
                 start_dir=start_dir,
             )
+        output_stream.write(json.dumps(response, separators=(",", ":")) + "\n")
+        output_stream.flush()
+    return 0
+
+
+def handle_mcp_request(
+    request: dict[str, Any],
+    *,
+    config_path: Path | str | None = None,
+    profile: str | None = None,
+    start_dir: Path | str | None = None,
+) -> dict[str, Any] | None:
+    """Handle one minimal MCP JSON-RPC request."""
+
+    request_id = request.get("id") if isinstance(request, dict) else None
+    try:
+        if not isinstance(request, dict):
+            return _mcp_error_response(None, -32600, "Invalid Request", "MCP request must be a JSON object.")
+        method = request.get("method")
+        if not isinstance(method, str) or not method:
+            return _mcp_error_response(request_id, -32600, "Invalid Request", "MCP request must include a string method.")
+        params = request.get("params", {})
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            return _mcp_error_response(request_id, -32602, "Invalid params", "MCP request params must be an object.")
+        if method == "notifications/initialized":
+            return None
+        if method == "initialize":
+            return _mcp_response(request_id, _mcp_initialize_result(params))
+        if method == "ping":
+            return _mcp_response(request_id, {})
+        if method == "tools/list":
+            return _mcp_response(
+                request_id,
+                {"schema_version": "repomori.mcp.tools.v1", "tools": _mcp_tool_definitions()},
+            )
+        if method == "tools/call":
+            try:
+                result = _mcp_call_tool(
+                    params,
+                    config_path=config_path,
+                    profile=profile,
+                    start_dir=start_dir,
+                )
+            except ValueError as exc:
+                return _mcp_error_response(request_id, -32602, "Invalid params", str(exc))
+            return _mcp_response(request_id, result)
+        return _mcp_error_response(request_id, -32601, "Method not found", f"Unknown MCP method: {method}")
+    except Exception as exc:
+        return _mcp_error_response(request_id, -32603, "Internal error", str(exc))
+
+
+def run_mcp_bridge(
+    input_stream,
+    output_stream,
+    *,
+    config_path: Path | str | None = None,
+    profile: str | None = None,
+    start_dir: Path | str | None = None,
+) -> int:
+    """Run the dependency-free RepoMori MCP stdio bridge."""
+
+    for raw_line in input_stream:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError as exc:
+            response = _mcp_error_response(None, -32700, "Parse error", f"Invalid JSON request: {exc}")
+        else:
+            response = handle_mcp_request(
+                request,
+                config_path=config_path,
+                profile=profile,
+                start_dir=start_dir,
+            )
+        if response is None:
+            continue
         output_stream.write(json.dumps(response, separators=(",", ":")) + "\n")
         output_stream.flush()
     return 0
@@ -3969,7 +4060,185 @@ AGENT_METHODS = (
     "handoff.build",
     "capsule.build",
     "file.get",
+    "schema.list",
 )
+
+MCP_TOOLS = (
+    {
+        "name": "repomori_help",
+        "title": "RepoMori Help",
+        "description": "List RepoMori bridge methods and protocol metadata.",
+        "agent_method": "agent.help",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_memory_run",
+        "title": "RepoMori Memory Run",
+        "description": "Run the configured offline memory cycle: snapshot, handoff, doctor, prune, and timeline.",
+        "agent_method": "memory.run",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "handoff_question": {"type": "string"},
+                "no_handoff": {"type": "boolean"},
+                "keep": {"type": "integer"},
+                "prune_apply": {"type": "boolean"},
+                "verify_packs": {"type": "boolean"},
+                "timeline_limit": {"type": "integer"},
+                "chunk_size": {"type": "integer"},
+                "compare": {"type": "boolean"},
+                "compare_limit": {"type": "integer"},
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_timeline_read",
+        "title": "RepoMori Timeline Read",
+        "description": "Read the configured snapshot timeline.",
+        "agent_method": "timeline.read",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"out_dir": {"type": "string"}, "limit": {"type": ["integer", "null"]}},
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_doctor_run",
+        "title": "RepoMori Doctor Run",
+        "description": "Check snapshot directory health.",
+        "agent_method": "doctor.run",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"out_dir": {"type": "string"}, "verify_packs": {"type": "boolean"}},
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_query_run",
+        "title": "RepoMori Query",
+        "description": "Search a RepoMori pack or the latest configured snapshot pack.",
+        "agent_method": "query.run",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pack": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "text": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_context_build",
+        "title": "RepoMori Context Build",
+        "description": "Build a compact source-backed context bundle for a question.",
+        "agent_method": "context.build",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pack": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "question": {"type": "string"},
+                "limit": {"type": "integer"},
+                "max_files": {"type": "integer"},
+                "snippet_lines": {"type": "integer"},
+                "snippets_per_file": {"type": "integer"},
+                "max_bytes": {"type": ["integer", "null"]},
+                "include_source": {"type": "boolean"},
+            },
+            "required": ["question"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_handoff_build",
+        "title": "RepoMori Handoff Build",
+        "description": "Write a handoff package directory for another local agent.",
+        "agent_method": "handoff.build",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pack": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "out": {"type": "string"},
+                "question": {"type": "string"},
+                "base_pack": {"type": "string"},
+                "force": {"type": "boolean"},
+                "copy_pack": {"type": "boolean"},
+                "allow_unverified": {"type": "boolean"},
+                "max_files": {"type": "integer"},
+                "max_bytes": {"type": ["integer", "null"]},
+                "snippet_lines": {"type": "integer"},
+                "snippets_per_file": {"type": "integer"},
+                "capsule_max_files": {"type": ["integer", "null"]},
+                "top_terms": {"type": "integer"},
+                "eval_questions": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["question"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_capsule_build",
+        "title": "RepoMori Capsule Build",
+        "description": "Export a dense machine-readable capsule for a pack.",
+        "agent_method": "capsule.build",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pack": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "max_files": {"type": ["integer", "null"]},
+                "top_terms": {"type": "integer"},
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_file_get",
+        "title": "RepoMori File Get",
+        "description": "Retrieve exact file bytes from a pack as text when possible plus base64.",
+        "agent_method": "file.get",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pack": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "path": {"type": "string"},
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_schema_list",
+        "title": "RepoMori Schema List",
+        "description": "List supported RepoMori schemas, agent methods, and MCP tool names.",
+        "agent_method": "schema.list",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"schema_version": {"type": "string"}},
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+)
+
+MCP_TOOL_METHODS = {tool["name"]: tool["agent_method"] for tool in MCP_TOOLS}
 
 
 def _agent_dispatch(
@@ -3991,6 +4260,11 @@ def _agent_dispatch(
         }
     if method == "ping":
         return {"schema_version": "repomori.agent.ping.v1", "status": "ok"}
+    if method == "schema.list":
+        schema_version = params.get("schema_version")
+        if schema_version is not None and not isinstance(schema_version, str):
+            raise ValueError("params.schema_version must be a string when supplied.")
+        return schema_catalog(schema_version)
     if method == "memory.run":
         return run_memory_cycle(**_agent_memory_kwargs(params, settings))
     if method == "timeline.read":
@@ -4161,6 +4435,122 @@ def _agent_error_response(request_id: Any, code: str, message: str) -> dict[str,
         "ok": False,
         "error": {"code": code, "message": message},
     }
+
+
+def _mcp_initialize_result(params: dict[str, Any]) -> dict[str, Any]:
+    requested_version = params.get("protocolVersion")
+    protocol_version = requested_version if isinstance(requested_version, str) and requested_version else MCP_PROTOCOL_VERSION
+    return {
+        "protocolVersion": protocol_version,
+        "capabilities": {"tools": {"listChanged": False}},
+        "serverInfo": {
+            "name": "repomori",
+            "title": "RepoMori",
+            "version": MCP_SERVER_VERSION,
+        },
+        "instructions": (
+            "RepoMori exposes local, dependency-free repository memory tools. "
+            "It never calls an AI model or network service."
+        ),
+    }
+
+
+def _mcp_tool_definitions() -> list[dict[str, Any]]:
+    definitions = []
+    for tool in MCP_TOOLS:
+        item = {
+            "name": tool["name"],
+            "title": tool["title"],
+            "description": tool["description"],
+            "inputSchema": tool["inputSchema"],
+            "annotations": tool["annotations"],
+        }
+        definitions.append(json.loads(json.dumps(item)))
+    return definitions
+
+
+def _mcp_call_tool(
+    params: dict[str, Any],
+    *,
+    config_path: Path | str | None,
+    profile: str | None,
+    start_dir: Path | str | None,
+) -> dict[str, Any]:
+    name = params.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("tools/call requires params.name.")
+    agent_method = MCP_TOOL_METHODS.get(name)
+    if agent_method is None:
+        raise ValueError(f"Unknown MCP tool: {name}")
+    arguments = params.get("arguments", {})
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        raise ValueError("tools/call params.arguments must be an object.")
+    agent_response = handle_agent_request(
+        {"id": name, "method": agent_method, "params": arguments},
+        config_path=config_path,
+        profile=profile,
+        start_dir=start_dir,
+    )
+    if agent_response.get("ok"):
+        structured = agent_response["result"]
+        return {
+            "content": [{"type": "text", "text": _mcp_tool_text(name, structured)}],
+            "structuredContent": structured,
+            "isError": False,
+        }
+    error = agent_response.get("error", {"code": "execution_error", "message": "RepoMori tool failed."})
+    structured_error = {
+        "schema_version": "repomori.mcp.tool_error.v1",
+        "tool": name,
+        "agent_method": agent_method,
+        "error": error,
+    }
+    return {
+        "content": [{"type": "text", "text": f"{name} failed: {error.get('message', 'unknown error')}"}],
+        "structuredContent": structured_error,
+        "isError": True,
+    }
+
+
+def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
+    schema = payload.get("schema_version", "unknown")
+    lines = [f"{name} returned `{schema}`."]
+    if name == "repomori_query_run":
+        results = payload.get("results", [])
+        lines.append(f"results: {len(results)}")
+        for item in results[:5]:
+            lines.append(f"- {item.get('path')} score={item.get('score')}")
+    elif name == "repomori_context_build":
+        selection = payload.get("selection", {})
+        sources = payload.get("sources", [])
+        lines.append(f"sources: {len(sources)}")
+        lines.append(f"source_bytes: {selection.get('source_bytes')}")
+        for item in sources[:5]:
+            lines.append(f"- {item.get('path')} score={item.get('score')}")
+    elif name == "repomori_file_get":
+        lines.append(f"path: {payload.get('path')}")
+        lines.append(f"size: {payload.get('size')}")
+        lines.append(f"sha256: {payload.get('sha256')}")
+    elif name == "repomori_schema_list":
+        lines.append(f"schemas: {payload.get('schema_count')}")
+        lines.append(f"agent_methods: {len(payload.get('agent_methods', []))}")
+        lines.append(f"mcp_tools: {len(payload.get('mcp_tools', []))}")
+    elif "status" in payload:
+        lines.append(f"status: {payload.get('status')}")
+    return "\n".join(lines)
+
+
+def _mcp_response(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def _mcp_error_response(request_id: Any, code: int, message: str, data: Any | None = None) -> dict[str, Any]:
+    error = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
+    return {"jsonrpc": "2.0", "id": request_id, "error": error}
 
 
 def _sum_snapshot_field(snapshots: list[dict[str, Any]], field: str) -> int:

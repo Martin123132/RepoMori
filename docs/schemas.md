@@ -31,6 +31,13 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.agent.help.v1`: bridge method listing.
 - `repomori.agent.query.v1`: wrapper around query results.
 - `repomori.agent.file.v1`: exact file payload with text and base64 bytes.
+- `repomori.mcp.tools.v1`: documented MCP tool listing contract.
+
+## MCP Bridge
+
+`python -m repomori mcp --config D:\Dev\RepoMori\repomori.toml` exposes the
+agent methods as MCP stdio tools. MCP responses use the MCP JSON-RPC envelope;
+RepoMori payloads appear inside `structuredContent` when a tool is called.
 
 ## Compatibility Defaults
 
