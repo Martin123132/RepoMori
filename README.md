@@ -106,6 +106,7 @@ repomori mcp [--config file] [--profile name]
 repomori schema [schema-version] [--json]
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-incremental] [--no-compare] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
+repomori stats <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
 repomori prune <snapshot-dir> [--keep n] [--apply] [--json]
 repomori info <pack>
@@ -196,9 +197,9 @@ query RepoMori without guessing shell commands. Send one JSON object per line:
 
 Responses are JSON lines with `schema_version`, `jsonrpc`, `id`, `ok`, and
 either `result` or `error`. Supported methods are `memory.run`, `timeline.read`,
-`doctor.run`, `query.run`, `context.build`, `handoff.build`, `capsule.build`,
-`file.get`, and `schema.list`. Methods use the configured latest snapshot pack
-when `pack` is not supplied.
+`stats.read`, `doctor.run`, `query.run`, `context.build`, `handoff.build`,
+`capsule.build`, `file.get`, and `schema.list`. Methods use the configured
+latest snapshot pack when `pack` is not supplied.
 
 `schema` lists RepoMori's supported JSON contracts and agent methods. See
 `docs/schemas.md` and `docs/agent-protocol.md` for the compact protocol notes.
@@ -226,8 +227,8 @@ Example local client config:
 ```
 
 The MCP tool names are `repomori_help`, `repomori_memory_run`,
-`repomori_timeline_read`, `repomori_doctor_run`, `repomori_query_run`,
-`repomori_context_build`, `repomori_handoff_build`,
+`repomori_timeline_read`, `repomori_stats_read`, `repomori_doctor_run`,
+`repomori_query_run`, `repomori_context_build`, `repomori_handoff_build`,
 `repomori_capsule_build`, `repomori_file_get`, and
 `repomori_schema_list`.
 
@@ -243,7 +244,12 @@ previous snapshot as `--base-pack` when available.
 
 `timeline` reads `snapshots.json` and reports recent snapshots, pack hashes,
 verification status, handoff locations, and aggregate added/removed/changed
-counts.
+counts, plus incremental reuse totals.
+
+`stats` reads `snapshots.json` and reports incremental savings over time:
+incremental versus full snapshot counts, reused and rebuilt file totals, reused
+chunks, reuse percentage, storage totals, latest snapshot stats, and top reuse
+snapshots.
 
 `doctor` checks snapshot-directory health: `snapshots.json` parseability,
 indexed pack existence and SHA-256 hashes, recorded snapshot/compare artifacts,

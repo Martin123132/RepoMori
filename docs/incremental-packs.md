@@ -38,3 +38,9 @@ python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --json
 
 Use `--no-incremental` on `snapshot`, `memory`, or `init` when you want future
 runs to rebuild every file instead.
+
+Use `stats` to inspect cumulative reuse:
+
+```powershell
+python -m repomori stats D:\Dev\RepoMori\packs --format json
+```

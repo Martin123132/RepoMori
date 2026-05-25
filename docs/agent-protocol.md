@@ -33,6 +33,7 @@ Errors use the same envelope with `ok:false` and an `error` object.
 - `ping`: returns a simple status payload.
 - `memory.run`: runs the configured memory cycle, using incremental snapshot reuse by default.
 - `timeline.read`: reads the configured snapshot timeline.
+- `stats.read`: reads incremental reuse and storage statistics for the snapshot timeline.
 - `doctor.run`: checks snapshot directory health.
 - `query.run`: runs pack query; uses latest configured pack if `pack` is omitted.
 - `context.build`: builds a source-backed context bundle.
@@ -85,6 +86,7 @@ machine-readable `structuredContent`.
 - `repomori_help`: returns protocol and method metadata.
 - `repomori_memory_run`: runs the configured memory cycle.
 - `repomori_timeline_read`: reads the configured snapshot timeline.
+- `repomori_stats_read`: reads incremental reuse and storage statistics.
 - `repomori_doctor_run`: checks snapshot directory health.
 - `repomori_query_run`: searches a pack or latest configured snapshot pack.
 - `repomori_context_build`: builds a source-backed context bundle.

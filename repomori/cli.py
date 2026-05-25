@@ -24,6 +24,7 @@ from .codec import (
     format_compare_markdown,
     format_context_markdown,
     format_eval_markdown,
+    format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
     get_file_bytes,
@@ -31,6 +32,7 @@ from .codec import (
     info_pack,
     load_memory_config,
     query_pack,
+    read_snapshot_stats,
     read_snapshot_timeline,
     prune_snapshots,
     run_agent_bridge,
@@ -131,6 +133,12 @@ def main(argv: list[str] | None = None) -> int:
     timeline.add_argument("--limit", type=int, help="Maximum recent snapshots to return.")
     timeline.add_argument("--format", choices=("markdown", "json"), default="markdown")
     timeline.add_argument("--out", type=Path, help="Write the timeline report to this file.")
+
+    stats = sub.add_parser("stats", help="Read snapshot reuse and storage statistics.")
+    stats.add_argument("out_dir", type=Path)
+    stats.add_argument("--limit", type=int, default=10, help="Maximum recent and top-reuse snapshots to return.")
+    stats.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    stats.add_argument("--out", type=Path, help="Write the stats report to this file.")
 
     doctor = sub.add_parser("doctor", help="Check snapshot directory health.")
     doctor.add_argument("out_dir", type=Path)
@@ -411,6 +419,19 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(report, indent=2)
             if args.format == "json"
             else format_timeline_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0
+    if args.command == "stats":
+        report = read_snapshot_stats(args.out_dir, limit=args.limit)
+        output = (
+            json.dumps(report, indent=2)
+            if args.format == "json"
+            else format_stats_markdown(report)
         )
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)

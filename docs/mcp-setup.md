@@ -43,6 +43,7 @@ the next snapshot unless the tool call sets `incremental` to `false`.
 - `repomori_help`
 - `repomori_memory_run`
 - `repomori_timeline_read`
+- `repomori_stats_read`
 - `repomori_doctor_run`
 - `repomori_query_run`
 - `repomori_context_build`

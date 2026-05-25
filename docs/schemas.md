@@ -21,6 +21,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.doctor.v1`: snapshot directory health report.
 - `repomori.prune.v1`: safe prune dry-run or applied result.
 - `repomori.timeline.v1`: snapshot timeline report.
+- `repomori.stats.v1`: snapshot incremental reuse and storage statistics.
 - `repomori.snapshot.v1`: single snapshot build report.
 - `repomori.config.v1`: `repomori.toml` profile config.
 - `repomori.schema.catalog.v1`: schema registry output.

@@ -27,6 +27,7 @@ from repomori.codec import (
     format_compare_markdown,
     format_eval_markdown,
     format_context_markdown,
+    format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
     get_file_bytes,
@@ -37,6 +38,7 @@ from repomori.codec import (
     load_memory_config,
     query_pack,
     prune_snapshots,
+    read_snapshot_stats,
     read_snapshot_timeline,
     run_mcp_bridge,
     run_demo,
@@ -640,6 +642,49 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("## Comparison", markdown)
             self.assertIn("Added", markdown)
 
+    def test_read_snapshot_stats_reports_incremental_savings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            first = snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            second = snapshot_repo(repo, out)
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            third = snapshot_repo(repo, out)
+
+            stats = read_snapshot_stats(out, limit=2)
+
+            self.assertEqual(stats["schema_version"], "repomori.stats.v1")
+            self.assertEqual(stats["snapshot_count"], 3)
+            self.assertEqual(stats["returned_count"], 2)
+            self.assertEqual(stats["summary"]["incremental_snapshot_count"], 2)
+            self.assertEqual(stats["summary"]["full_snapshot_count"], 1)
+            self.assertEqual(stats["summary"]["total_reused_files"], 6)
+            self.assertEqual(stats["summary"]["total_rebuilt_files"], 5)
+            self.assertGreater(stats["summary"]["reuse_percent"], 50)
+            self.assertEqual(stats["latest"]["pack_path"], third["summary"]["pack_path"])
+            self.assertEqual(stats["latest"]["incremental_base_pack"], second["summary"]["pack_path"])
+            self.assertEqual(stats["snapshots"][0]["pack_path"], third["summary"]["pack_path"])
+            self.assertEqual(stats["top_reuse"][0]["reused_file_count"], 3)
+
+            timeline = read_snapshot_timeline(out)
+            self.assertEqual(timeline["summary"]["total_reused_files"], 6)
+            self.assertEqual(timeline["summary"]["incremental_snapshot_count"], 2)
+
+            markdown = format_stats_markdown(stats)
+            self.assertIn("# RepoMori Snapshot Stats", markdown)
+            self.assertIn("Reuse percent", markdown)
+            self.assertIn(Path(third["summary"]["pack_path"]).name, markdown)
+
     def test_snapshot_repo_can_disable_incremental_reuse(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -976,6 +1021,13 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(timeline_response["ok"])
             self.assertEqual(timeline_response["result"]["schema_version"], "repomori.timeline.v1")
 
+            stats_response = handle_agent_request(
+                {"id": "stats", "method": "stats.read", "params": {"limit": 1}},
+                config_path=config,
+            )
+            self.assertTrue(stats_response["ok"])
+            self.assertEqual(stats_response["result"]["schema_version"], "repomori.stats.v1")
+
             capsule_response = handle_agent_request(
                 {"id": "capsule", "method": "capsule.build", "params": {"max_files": 1}},
                 config_path=config,
@@ -1018,6 +1070,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         second_names = [tool["name"] for tool in second_list["result"]["tools"]]
         self.assertEqual(first_names, second_names)
         self.assertIn("repomori_context_build", first_names)
+        self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
         memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
         self.assertIn("incremental", memory_tool["inputSchema"]["properties"])
@@ -1118,6 +1171,18 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(timeline_response["result"]["structuredContent"]["schema_version"], "repomori.timeline.v1")
             self.assertEqual(timeline_response["result"]["structuredContent"]["returned_count"], 1)
 
+            stats_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "stats",
+                    "method": "tools/call",
+                    "params": {"name": "repomori_stats_read", "arguments": {"limit": 1}},
+                },
+                config_path=config,
+            )
+            self.assertEqual(stats_response["result"]["structuredContent"]["schema_version"], "repomori.stats.v1")
+            self.assertEqual(stats_response["result"]["structuredContent"]["returned_count"], 1)
+
             schema_response = handle_mcp_request(
                 {
                     "jsonrpc": "2.0",
@@ -1152,14 +1217,21 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.scan.baseline.v1", schema_versions)
         self.assertIn("repomori.release_check.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
+        self.assertIn("repomori.stats.v1", schema_versions)
         self.assertIn("context.build", catalog["agent_methods"])
+        self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
+        self.assertIn("repomori_stats_read", catalog["mcp_tools"])
         self.assertIn("repomori_schema_list", catalog["mcp_tools"])
 
         memory = schema_catalog("repomori.memory.v1")
         self.assertEqual(memory["selected"], "repomori.memory.v1")
         self.assertEqual(memory["schema"]["producer"], "run_memory_cycle")
         self.assertIn("timeline", memory["schema"]["required_fields"])
+
+        stats = schema_catalog("repomori.stats.v1")
+        self.assertEqual(stats["selected"], "repomori.stats.v1")
+        self.assertEqual(stats["schema"]["producer"], "read_snapshot_stats")
 
     def test_golden_fixture_core_output_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1172,6 +1244,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             capsule = build_capsule(pack, max_files=2)
             handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
+            stats = read_snapshot_stats(memory_dir)
             scan = scan_repository(repo)
             agent_help = handle_agent_request({"id": 1, "method": "agent.help"})
 
@@ -1196,6 +1269,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     "repomori.memory.v1",
                     {"schema_version", "status", "repo_path", "out_dir", "settings", "summary", "snapshot", "doctor", "prune", "timeline"},
                 ),
+                "stats": (
+                    stats,
+                    "repomori.stats.v1",
+                    {"schema_version", "out_dir", "snapshot_count", "returned_count", "summary", "latest", "snapshots", "top_reuse"},
+                ),
                 "scan": (
                     scan,
                     "repomori.scan.v1",
@@ -1215,6 +1293,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(capsule["files"])
             self.assertEqual(handoff["status"], "complete")
             self.assertEqual(memory["status"], "pass")
+            self.assertEqual(stats["snapshot_count"], 1)
             self.assertEqual(scan["status"], "warn")
             self.assertIn("memory.run", agent_help["result"]["methods"])
 
@@ -1695,6 +1774,36 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.timeline.v1")
             self.assertEqual(payload["snapshot_count"], 2)
             self.assertEqual(payload["returned_count"], 1)
+
+    def test_cli_stats_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "stats-cli"
+            snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "stats",
+                    str(out),
+                    "--format",
+                    "json",
+                    "--limit",
+                    "1",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.stats.v1")
+            self.assertEqual(payload["snapshot_count"], 2)
+            self.assertEqual(payload["returned_count"], 1)
+            self.assertEqual(payload["summary"]["incremental_snapshot_count"], 1)
+            self.assertEqual(payload["summary"]["total_reused_files"], 3)
 
     def test_cli_doctor_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

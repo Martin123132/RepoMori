@@ -25,6 +25,7 @@ python -m repomori scan D:\Dev\YourRepo --public-release --json
 python -m repomori scan D:\Dev\YourRepo --public-release --write-baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori init D:\Dev\YourRepo --out-dir D:\Dev\YourRepo\packs
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --json
+python -m repomori stats D:\Dev\YourRepo\packs --format json
 python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\packs\next.repomori --base D:\Dev\YourRepo\packs\latest.repomori --force --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori context D:\Dev\YourRepo\packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
@@ -47,7 +48,7 @@ Use `memory` at the end of a work session:
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --prune-apply --json
 ```
 
-This builds a fresh incremental snapshot, creates a handoff package unless disabled, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline.
+This builds a fresh incremental snapshot, creates a handoff package unless disabled, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Use `stats` on the same pack directory to see how many files and chunks RepoMori avoided rebuilding.
 
 ## What To Read Next
 

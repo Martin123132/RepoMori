@@ -93,6 +93,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "out_dir", "snapshot_count", "returned_count", "latest", "summary", "snapshots"],
     },
     {
+        "schema_version": "repomori.stats.v1",
+        "kind": "report",
+        "title": "Snapshot incremental savings report",
+        "producer": "read_snapshot_stats",
+        "required_fields": ["schema_version", "out_dir", "snapshot_count", "returned_count", "summary", "latest", "snapshots", "top_reuse"],
+    },
+    {
         "schema_version": "repomori.snapshot.v1",
         "kind": "report",
         "title": "Single snapshot build report",
@@ -2847,8 +2854,72 @@ def read_snapshot_timeline(out_dir: Path | str, *, limit: int | None = None) -> 
             "total_changed": _sum_snapshot_field(snapshots, "changed_count"),
             "verified_count": sum(1 for item in snapshots if item.get("verify_passed")),
             "handoff_count": sum(1 for item in snapshots if item.get("handoff_dir")),
+            "incremental_snapshot_count": sum(1 for item in snapshots if item.get("incremental")),
+            "total_reused_files": _sum_snapshot_field(snapshots, "reused_file_count"),
+            "total_rebuilt_files": _sum_snapshot_field(snapshots, "rebuilt_file_count"),
+            "total_reused_chunks": _sum_snapshot_field(snapshots, "reused_chunk_count"),
         },
         "snapshots": recent,
+    }
+
+
+def read_snapshot_stats(out_dir: Path | str, *, limit: int | None = 10) -> dict[str, Any]:
+    """Summarize snapshot reuse, rebuild, and storage trends."""
+
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    out_path = Path(out_dir).resolve()
+    index = _read_snapshot_index(out_path / "snapshots.json", out_path)
+    snapshots = sorted(
+        list(index.get("snapshots", [])),
+        key=lambda item: _snapshot_entry_sort_key(out_path, item),
+    )
+    latest = index.get("latest")
+    recent = list(reversed(snapshots))
+    if limit is not None:
+        recent = recent[:limit]
+
+    total_reused_files = _sum_snapshot_field(snapshots, "reused_file_count")
+    total_rebuilt_files = _sum_snapshot_field(snapshots, "rebuilt_file_count")
+    total_reused_chunks = _sum_snapshot_field(snapshots, "reused_chunk_count")
+    total_file_decisions = total_reused_files + total_rebuilt_files
+    total_pack_bytes = _sum_snapshot_field(snapshots, "pack_bytes")
+    total_logical_bytes = _sum_snapshot_field(snapshots, "logical_bytes")
+    incremental_snapshots = [item for item in snapshots if item.get("incremental")]
+    top_reuse = sorted(
+        (_snapshot_stats_entry(item) for item in snapshots),
+        key=lambda item: (item.get("reused_file_count") or 0, item.get("reused_chunk_count") or 0),
+        reverse=True,
+    )
+    if limit is not None:
+        top_reuse = top_reuse[:limit]
+
+    latest_stats = _snapshot_stats_entry(latest) if isinstance(latest, dict) else None
+    return {
+        "schema_version": "repomori.stats.v1",
+        "out_dir": str(out_path),
+        "snapshot_count": len(snapshots),
+        "returned_count": len(recent),
+        "summary": {
+            "incremental_snapshot_count": len(incremental_snapshots),
+            "full_snapshot_count": len(snapshots) - len(incremental_snapshots),
+            "total_reused_files": total_reused_files,
+            "total_rebuilt_files": total_rebuilt_files,
+            "total_reused_chunks": total_reused_chunks,
+            "reuse_percent": _percent(total_reused_files, total_file_decisions),
+            "total_file_decisions": total_file_decisions,
+            "total_pack_bytes": total_pack_bytes,
+            "total_logical_bytes": total_logical_bytes,
+            "logical_to_pack_ratio": _ratio(total_logical_bytes, total_pack_bytes),
+            "total_added": _sum_snapshot_field(snapshots, "added_count"),
+            "total_removed": _sum_snapshot_field(snapshots, "removed_count"),
+            "total_changed": _sum_snapshot_field(snapshots, "changed_count"),
+            "verified_count": sum(1 for item in snapshots if item.get("verify_passed")),
+            "handoff_count": sum(1 for item in snapshots if item.get("handoff_dir")),
+        },
+        "latest": latest_stats,
+        "snapshots": [_snapshot_stats_entry(item) for item in recent],
+        "top_reuse": top_reuse,
     }
 
 
@@ -3463,6 +3534,10 @@ def format_timeline_markdown(timeline: dict[str, Any]) -> str:
         f"- Total added: `{summary.get('total_added')}`",
         f"- Total removed: `{summary.get('total_removed')}`",
         f"- Total changed: `{summary.get('total_changed')}`",
+        f"- Incremental snapshots: `{summary.get('incremental_snapshot_count')}`",
+        f"- Reused files: `{summary.get('total_reused_files')}`",
+        f"- Rebuilt files: `{summary.get('total_rebuilt_files')}`",
+        f"- Reused chunks: `{summary.get('total_reused_chunks')}`",
         "",
         "## Recent Snapshots",
         "",
@@ -3475,11 +3550,77 @@ def format_timeline_markdown(timeline: dict[str, Any]) -> str:
             lines.append(
                 f"- `{item.get('pack_name')}` status=`{item.get('status')}` "
                 f"files=`{item.get('file_count')}` "
+                f"reused=`{item.get('reused_file_count')}` rebuilt=`{item.get('rebuilt_file_count')}` "
                 f"added=`{item.get('added_count')}` removed=`{item.get('removed_count')}` "
                 f"changed=`{item.get('changed_count')}`"
             )
             if item.get("handoff_dir"):
                 lines.append(f"  - handoff: `{item.get('handoff_dir')}`")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def format_stats_markdown(report: dict[str, Any]) -> str:
+    """Render snapshot incremental savings as Markdown."""
+
+    summary = report.get("summary", {})
+    latest = report.get("latest") or {}
+    lines = [
+        "# RepoMori Snapshot Stats",
+        "",
+        f"- Output: `{report.get('out_dir')}`",
+        f"- Snapshots: `{report.get('snapshot_count')}`",
+        f"- Incremental snapshots: `{summary.get('incremental_snapshot_count')}`",
+        f"- Full snapshots: `{summary.get('full_snapshot_count')}`",
+        f"- Reused files: `{summary.get('total_reused_files')}`",
+        f"- Rebuilt files: `{summary.get('total_rebuilt_files')}`",
+        f"- Reuse percent: `{summary.get('reuse_percent')}`",
+        f"- Reused chunks: `{summary.get('total_reused_chunks')}`",
+        f"- Total pack bytes: `{summary.get('total_pack_bytes')}`",
+        f"- Total logical bytes: `{summary.get('total_logical_bytes')}`",
+        f"- Logical/pack ratio: `{summary.get('logical_to_pack_ratio')}`",
+        "",
+        "## Latest",
+        "",
+    ]
+    if latest:
+        lines.extend(
+            [
+                f"- Pack: `{latest.get('pack_name')}`",
+                f"- Incremental: `{latest.get('incremental')}`",
+                f"- Incremental base: `{latest.get('incremental_base_pack')}`",
+                f"- Reused files: `{latest.get('reused_file_count')}`",
+                f"- Rebuilt files: `{latest.get('rebuilt_file_count')}`",
+                f"- Reuse percent: `{latest.get('reuse_percent')}`",
+                "",
+            ]
+        )
+    else:
+        lines.extend(["No latest snapshot recorded.", ""])
+
+    lines.extend(["## Top Reuse", ""])
+    top_reuse = report.get("top_reuse", [])
+    if not top_reuse:
+        lines.extend(["No snapshots recorded.", ""])
+    else:
+        for item in top_reuse:
+            lines.append(
+                f"- `{item.get('pack_name')}` reused=`{item.get('reused_file_count')}` "
+                f"rebuilt=`{item.get('rebuilt_file_count')}` reuse=`{item.get('reuse_percent')}`"
+            )
+        lines.append("")
+
+    lines.extend(["## Recent Snapshots", ""])
+    snapshots = report.get("snapshots", [])
+    if not snapshots:
+        lines.extend(["No snapshots recorded.", ""])
+    else:
+        for item in snapshots:
+            lines.append(
+                f"- `{item.get('pack_name')}` incremental=`{item.get('incremental')}` "
+                f"reused=`{item.get('reused_file_count')}` rebuilt=`{item.get('rebuilt_file_count')}` "
+                f"changed=`{item.get('changed_count')}`"
+            )
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -4358,6 +4499,42 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _snapshot_stats_entry(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    item = snapshot if isinstance(snapshot, dict) else {}
+    reused_files = _snapshot_int(item, "reused_file_count")
+    rebuilt_files = _snapshot_int(item, "rebuilt_file_count")
+    file_decisions = reused_files + rebuilt_files
+    pack_bytes = _snapshot_int(item, "pack_bytes")
+    logical_bytes = _snapshot_int(item, "logical_bytes")
+    return {
+        "created_at": item.get("created_at"),
+        "status": item.get("status"),
+        "pack_name": item.get("pack_name"),
+        "pack_path": item.get("pack_path"),
+        "pack_sha256": item.get("pack_sha256"),
+        "incremental": bool(item.get("incremental")),
+        "incremental_base_pack": item.get("incremental_base_pack"),
+        "file_count": _snapshot_int(item, "file_count"),
+        "logical_bytes": logical_bytes,
+        "pack_bytes": pack_bytes,
+        "logical_to_pack_ratio": _ratio(logical_bytes, pack_bytes),
+        "reused_file_count": reused_files,
+        "rebuilt_file_count": rebuilt_files,
+        "reused_chunk_count": _snapshot_int(item, "reused_chunk_count"),
+        "reuse_percent": _percent(reused_files, file_decisions),
+        "added_count": _snapshot_int(item, "added_count"),
+        "removed_count": _snapshot_int(item, "removed_count"),
+        "changed_count": _snapshot_int(item, "changed_count"),
+        "verify_passed": bool(item.get("verify_passed")),
+        "handoff_dir": item.get("handoff_dir"),
+    }
+
+
+def _snapshot_int(snapshot: dict[str, Any], field: str) -> int:
+    value = snapshot.get(field)
+    return value if isinstance(value, int) else 0
+
+
 def _doctor_check_snapshot(
     out_path: Path,
     snapshot: dict[str, Any],
@@ -4739,6 +4916,7 @@ AGENT_METHODS = (
     "ping",
     "memory.run",
     "timeline.read",
+    "stats.read",
     "doctor.run",
     "query.run",
     "context.build",
@@ -4787,6 +4965,18 @@ MCP_TOOLS = (
         "title": "RepoMori Timeline Read",
         "description": "Read the configured snapshot timeline.",
         "agent_method": "timeline.read",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"out_dir": {"type": "string"}, "limit": {"type": ["integer", "null"]}},
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_stats_read",
+        "title": "RepoMori Stats Read",
+        "description": "Read snapshot incremental reuse and storage statistics.",
+        "agent_method": "stats.read",
         "inputSchema": {
             "type": "object",
             "properties": {"out_dir": {"type": "string"}, "limit": {"type": ["integer", "null"]}},
@@ -4957,6 +5147,11 @@ def _agent_dispatch(
         return read_snapshot_timeline(
             _agent_out_dir(params, settings),
             limit=_agent_optional_int(params, "limit", None),
+        )
+    if method == "stats.read":
+        return read_snapshot_stats(
+            _agent_out_dir(params, settings),
+            limit=_agent_optional_int(params, "limit", 10),
         )
     if method == "doctor.run":
         return doctor_snapshot_dir(
@@ -5220,6 +5415,13 @@ def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
         lines.append(f"path: {payload.get('path')}")
         lines.append(f"size: {payload.get('size')}")
         lines.append(f"sha256: {payload.get('sha256')}")
+    elif name == "repomori_stats_read":
+        summary = payload.get("summary", {})
+        lines.append(f"snapshots: {payload.get('snapshot_count')}")
+        lines.append(f"incremental_snapshots: {summary.get('incremental_snapshot_count')}")
+        lines.append(f"reused_files: {summary.get('total_reused_files')}")
+        lines.append(f"rebuilt_files: {summary.get('total_rebuilt_files')}")
+        lines.append(f"reuse_percent: {summary.get('reuse_percent')}")
     elif name == "repomori_schema_list":
         lines.append(f"schemas: {payload.get('schema_count')}")
         lines.append(f"agent_methods: {len(payload.get('agent_methods', []))}")
