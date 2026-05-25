@@ -9,7 +9,7 @@ description = "Machine-readable repository packs for AI agents and local tools."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Martin Ollett" }]
-license = { text = "Private" }
+license = { file = "LICENSE.md" }
 
 [project.scripts]
 repomori = "repomori.cli:main"

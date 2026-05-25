@@ -12,6 +12,20 @@ The first version is deliberately local and dependency-light:
 - Language, import, symbol, heading, and top-term indexes.
 - Exact source recovery when the machine summary is not enough.
 
+## License
+
+RepoMori is source-available software, not open-source software. It is free for
+personal and non-commercial use under the PolyForm Noncommercial License 1.0.0.
+
+Commercial use requires a separate written license. That includes bundling
+RepoMori into paid products, hosted services, managed services, enterprise
+developer tools, commercial AI coding or agent products, and commercial AI
+training/evaluation pipelines.
+
+See [LICENSE.md](LICENSE.md), [NOTICE.md](NOTICE.md),
+[COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md), and
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Quick Start
 
 ```powershell
