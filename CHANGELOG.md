@@ -11,6 +11,7 @@
 - Added snapshot `stats` reports for incremental reuse and storage savings.
 - Added `diff-context` for source-backed changed-files agent context.
 - Added optional memory-cycle diff context artifacts with `memory --diff-context`.
+- Added snapshot-directory agent start briefs with `brief <snapshot-dir>`.
 - Added public launch docs, issue templates, badges, and project `.gitignore`.
 - Added `memory` cycle command for snapshot, handoff, doctor, prune, and timeline.
 - Added `init` config profiles through `repomori.toml`.

@@ -10,6 +10,7 @@ from pathlib import Path
 from .codec import (
     BuildOptions,
     benchmark_repo,
+    build_agent_brief,
     build_repo_brief,
     build_capsule,
     build_context_bundle,
@@ -21,6 +22,7 @@ from .codec import (
     diagnose_query,
     doctor_snapshot_dir,
     evaluate_pack,
+    format_agent_brief_markdown,
     format_brief_markdown,
     format_compare_markdown,
     format_context_markdown,
@@ -243,11 +245,14 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("--format", choices=("markdown", "json"), default="markdown")
     compare.add_argument("--out", type=Path, help="Write the comparison report to this file.")
 
-    brief = sub.add_parser("brief", help="Build a question-free repository orientation brief.")
-    brief.add_argument("pack", type=Path)
+    brief = sub.add_parser("brief", help="Build a pack orientation brief or snapshot-directory agent brief.")
+    brief.add_argument("target", type=Path)
     brief.add_argument("--max-files", type=int, default=12)
     brief.add_argument("--top-terms", type=int, default=40)
     brief.add_argument("--top-symbols", type=int, default=40)
+    brief.add_argument("--timeline-limit", type=int, default=5, help="Snapshot-directory mode: recent snapshots to include.")
+    brief.add_argument("--stats-limit", type=int, default=10, help="Snapshot-directory mode: reuse stats rows to include.")
+    brief.add_argument("--verify-packs", action="store_true", help="Snapshot-directory mode: run full pack verification during doctor.")
     brief.add_argument("--format", choices=("markdown", "json"), default="markdown")
     brief.add_argument("--out", type=Path, help="Write the brief to this file.")
 
@@ -596,16 +601,29 @@ def main(argv: list[str] | None = None) -> int:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0
     if args.command == "brief":
-        brief_report = build_repo_brief(
-            args.pack,
-            max_files=args.max_files,
-            top_terms=args.top_terms,
-            top_symbols=args.top_symbols,
-        )
+        if args.target.is_dir():
+            brief_report = build_agent_brief(
+                args.target,
+                timeline_limit=args.timeline_limit,
+                stats_limit=args.stats_limit,
+                verify_packs=args.verify_packs,
+                max_files=args.max_files,
+                top_terms=args.top_terms,
+                top_symbols=args.top_symbols,
+            )
+            markdown = format_agent_brief_markdown(brief_report)
+        else:
+            brief_report = build_repo_brief(
+                args.target,
+                max_files=args.max_files,
+                top_terms=args.top_terms,
+                top_symbols=args.top_symbols,
+            )
+            markdown = format_brief_markdown(brief_report)
         output = (
             json.dumps(brief_report, indent=2)
             if args.format == "json"
-            else format_brief_markdown(brief_report)
+            else markdown
         )
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)

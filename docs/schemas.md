@@ -16,6 +16,8 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.pack.v1`: pack metadata stored in `.repomori` SQLite metadata.
 - `repomori.context.v1`: source-backed context bundle from `context.build`.
 - `repomori.diff_context.v1`: source-backed changed-files context from `diff_context.build`.
+- `repomori.brief.v1`: question-free orientation brief from one pack.
+- `repomori.agent_brief.v1`: snapshot-directory start brief for another agent.
 - `repomori.capsule.v1`: dense machine-readable capsule without raw source.
 - `repomori.handoff.v1`: handoff directory manifest.
 - `repomori.memory.v1`: full memory-cycle report.

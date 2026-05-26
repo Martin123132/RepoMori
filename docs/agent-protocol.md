@@ -14,9 +14,10 @@ Send one JSON object per line:
 ```json
 {"id":1,"method":"agent.help"}
 {"id":2,"method":"memory.run","params":{"keep":20}}
-{"id":3,"method":"query.run","params":{"text":"sqlite Store","limit":3}}
-{"id":4,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
-{"id":5,"method":"file.get","params":{"path":"repomori/codec.py"}}
+{"id":3,"method":"brief.build","params":{"timeline_limit":5}}
+{"id":4,"method":"query.run","params":{"text":"sqlite Store","limit":3}}
+{"id":5,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
+{"id":6,"method":"file.get","params":{"path":"repomori/codec.py"}}
 ```
 
 Each response is one JSON line:
@@ -32,6 +33,7 @@ Errors use the same envelope with `ok:false` and an `error` object.
 - `agent.help`: returns protocol and method metadata.
 - `ping`: returns a simple status payload.
 - `memory.run`: runs the configured memory cycle, using incremental snapshot reuse by default; pass `diff_context:true` to write changed-files context for the new snapshot.
+- `brief.build`: builds a concise agent start brief from the configured snapshot timeline.
 - `timeline.read`: reads the configured snapshot timeline.
 - `stats.read`: reads incremental reuse and storage statistics for the snapshot timeline.
 - `doctor.run`: checks snapshot directory health.
@@ -89,6 +91,7 @@ machine-readable `structuredContent`.
 
 - `repomori_help`: returns protocol and method metadata.
 - `repomori_memory_run`: runs the configured memory cycle.
+- `repomori_brief_build`: builds an agent start brief from the snapshot timeline.
 - `repomori_timeline_read`: reads the configured snapshot timeline.
 - `repomori_stats_read`: reads incremental reuse and storage statistics.
 - `repomori_doctor_run`: checks snapshot directory health.

@@ -59,6 +59,20 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "question", "base_pack", "target_pack", "summary", "selection", "sources", "source_manifest"],
     },
     {
+        "schema_version": "repomori.brief.v1",
+        "kind": "report",
+        "title": "Question-free repository orientation brief",
+        "producer": "build_repo_brief",
+        "required_fields": ["schema_version", "pack", "settings", "summary", "orientation", "vocabulary", "source_manifest"],
+    },
+    {
+        "schema_version": "repomori.agent_brief.v1",
+        "kind": "report",
+        "title": "Snapshot directory agent start brief",
+        "producer": "build_agent_brief",
+        "required_fields": ["schema_version", "status", "out_dir", "summary", "latest_snapshot", "artifacts", "recommended_commands"],
+    },
+    {
         "schema_version": "repomori.capsule.v1",
         "kind": "report",
         "title": "Dense machine-readable pack capsule",
@@ -2227,6 +2241,214 @@ def format_brief_markdown(brief: dict[str, Any]) -> str:
         for suggestion in suggestions:
             lines.append(f"- {suggestion}")
         lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_agent_brief(
+    out_dir: Path | str,
+    *,
+    timeline_limit: int = 5,
+    stats_limit: int = 10,
+    verify_packs: bool = False,
+    max_files: int = 8,
+    top_terms: int = 40,
+    top_symbols: int = 40,
+) -> dict[str, Any]:
+    """Build a one-file start brief from the latest snapshot memory state."""
+
+    if timeline_limit <= 0:
+        raise ValueError("timeline_limit must be greater than zero")
+    if stats_limit <= 0:
+        raise ValueError("stats_limit must be greater than zero")
+    if max_files <= 0:
+        raise ValueError("max_files must be greater than zero")
+    if top_terms < 0:
+        raise ValueError("top_terms must be zero or greater")
+    if top_symbols < 0:
+        raise ValueError("top_symbols must be zero or greater")
+
+    started = time.time()
+    out_path = Path(out_dir).resolve()
+    timeline = read_snapshot_timeline(out_path, limit=timeline_limit)
+    stats = read_snapshot_stats(out_path, limit=stats_limit)
+    doctor = doctor_snapshot_dir(out_path, verify_packs=verify_packs)
+    latest = timeline.get("latest") if isinstance(timeline.get("latest"), dict) else None
+    latest_pack_path = _recorded_snapshot_path(out_path, latest.get("pack_path")) if latest else None
+    repo_brief = None
+    repo_brief_error = None
+    if latest_pack_path is not None and latest_pack_path.exists() and latest_pack_path.is_file():
+        repo_brief = build_repo_brief(
+            latest_pack_path,
+            max_files=max_files,
+            top_terms=top_terms,
+            top_symbols=top_symbols,
+        )
+    elif latest is not None:
+        repo_brief_error = "latest snapshot pack is missing"
+
+    latest_diff_context = _agent_brief_latest_diff_context(out_path, latest, max_files) if latest else None
+    artifacts = _agent_brief_artifacts(out_path, latest)
+    latest_handoff = next((item for item in artifacts if item["kind"] == "handoff_dir"), None)
+    stats_summary = stats.get("summary", {})
+    timeline_summary = timeline.get("summary", {})
+    status = "pass"
+    if doctor.get("status") == "fail" or latest is None or latest_pack_path is None or not latest_pack_path.exists():
+        status = "fail"
+    elif doctor.get("status") != "pass" or repo_brief_error:
+        status = "warn"
+
+    summary = {
+        "elapsed_seconds": round(time.time() - started, 4),
+        "snapshot_count": timeline.get("snapshot_count"),
+        "timeline_returned_count": timeline.get("returned_count"),
+        "latest_pack_path": str(latest_pack_path) if latest_pack_path is not None else None,
+        "latest_pack_sha256": latest.get("pack_sha256") if latest else None,
+        "latest_created_at": latest.get("created_at") if latest else None,
+        "doctor_status": doctor.get("status"),
+        "doctor_errors": doctor.get("error_count"),
+        "doctor_warnings": doctor.get("warning_count"),
+        "total_added": timeline_summary.get("total_added"),
+        "total_removed": timeline_summary.get("total_removed"),
+        "total_changed": timeline_summary.get("total_changed"),
+        "incremental_snapshot_count": stats_summary.get("incremental_snapshot_count"),
+        "total_reused_files": stats_summary.get("total_reused_files"),
+        "total_rebuilt_files": stats_summary.get("total_rebuilt_files"),
+        "reuse_percent": stats_summary.get("reuse_percent"),
+        "handoff_dir": latest_handoff.get("path") if latest_handoff else None,
+        "handoff_exists": latest_handoff.get("exists") if latest_handoff else None,
+        "diff_context_status": latest.get("diff_context_status") if latest else None,
+        "diff_context_selected_count": latest.get("diff_context_selected_count") if latest else None,
+        "diff_context_added_count": latest.get("diff_context_added_count") if latest else None,
+        "diff_context_changed_count": latest.get("diff_context_changed_count") if latest else None,
+        "diff_context_removed_count": latest.get("diff_context_removed_count") if latest else None,
+        "repo_brief_error": repo_brief_error,
+    }
+
+    return {
+        "schema_version": "repomori.agent_brief.v1",
+        "status": status,
+        "out_dir": str(out_path),
+        "created_at": int(time.time()),
+        "settings": {
+            "timeline_limit": timeline_limit,
+            "stats_limit": stats_limit,
+            "verify_packs": verify_packs,
+            "max_files": max_files,
+            "top_terms": top_terms,
+            "top_symbols": top_symbols,
+        },
+        "summary": summary,
+        "latest_snapshot": latest,
+        "artifacts": artifacts,
+        "latest_diff_context": latest_diff_context,
+        "repo_brief": repo_brief,
+        "timeline": timeline,
+        "stats": stats,
+        "doctor": doctor,
+        "recommended_commands": _agent_brief_commands(out_path, latest_pack_path, latest),
+    }
+
+
+def format_agent_brief_markdown(brief: dict[str, Any]) -> str:
+    """Render an agent start brief as Markdown."""
+
+    summary = brief.get("summary", {})
+    latest = brief.get("latest_snapshot") or {}
+    lines = [
+        "# RepoMori Agent Brief",
+        "",
+        f"- Status: `{brief.get('status')}`",
+        f"- Snapshot directory: `{brief.get('out_dir')}`",
+        f"- Latest pack: `{summary.get('latest_pack_path')}`",
+        f"- Latest SHA-256: `{summary.get('latest_pack_sha256')}`",
+        "",
+        "## Health",
+        "",
+        f"- Doctor status: `{summary.get('doctor_status')}`",
+        f"- Doctor errors: `{summary.get('doctor_errors')}`",
+        f"- Doctor warnings: `{summary.get('doctor_warnings')}`",
+        "",
+        "## Timeline",
+        "",
+        f"- Snapshots: `{summary.get('snapshot_count')}`",
+        f"- Returned: `{summary.get('timeline_returned_count')}`",
+        f"- Added: `{summary.get('total_added')}`",
+        f"- Changed: `{summary.get('total_changed')}`",
+        f"- Removed: `{summary.get('total_removed')}`",
+        "",
+        "## Reuse",
+        "",
+        f"- Incremental snapshots: `{summary.get('incremental_snapshot_count')}`",
+        f"- Reused files: `{summary.get('total_reused_files')}`",
+        f"- Rebuilt files: `{summary.get('total_rebuilt_files')}`",
+        f"- Reuse percent: `{summary.get('reuse_percent')}`",
+        "",
+        "## Latest Snapshot",
+        "",
+        f"- Pack name: `{latest.get('pack_name')}`",
+        f"- Repo: `{latest.get('repo_path')}`",
+        f"- Files: `{latest.get('file_count')}`",
+        f"- Pack bytes: `{latest.get('pack_bytes')}`",
+        f"- Verify passed: `{latest.get('verify_passed')}`",
+        f"- Handoff: `{summary.get('handoff_dir')}` exists=`{summary.get('handoff_exists')}`",
+        "",
+    ]
+
+    diff_context = brief.get("latest_diff_context")
+    lines.extend(["## Latest Diff Context", ""])
+    if diff_context:
+        diff_summary = diff_context.get("summary", {})
+        lines.extend(
+            [
+                f"- Status: `{diff_context.get('status')}`",
+                f"- JSON: `{diff_context.get('json_path')}`",
+                f"- Markdown: `{diff_context.get('markdown_path')}`",
+                f"- Added: `{diff_summary.get('added_count')}`",
+                f"- Changed: `{diff_summary.get('changed_count')}`",
+                f"- Removed: `{diff_summary.get('removed_count')}`",
+                f"- Selected: `{diff_summary.get('selected_count')}`",
+                "",
+            ]
+        )
+        sources = diff_context.get("sources", [])
+        if sources:
+            lines.extend(["### Changed Files", ""])
+            for item in sources:
+                reasons = ", ".join(str(reason) for reason in item.get("match_reasons", [])[:6])
+                lines.append(
+                    f"- `{item.get('change_type')}` `{item.get('path')}` "
+                    f"score=`{item.get('score')}` reasons=`{reasons}`"
+                )
+            lines.append("")
+    else:
+        lines.extend([f"Diff context status: `{summary.get('diff_context_status') or 'missing'}`", ""])
+
+    repo_brief = brief.get("repo_brief") or {}
+    orientation = repo_brief.get("orientation", {})
+    if repo_brief:
+        lines.extend(["## Repo Orientation", ""])
+        _append_brief_file_section(lines, "Entrypoints", orientation.get("entrypoints", []))
+        _append_brief_file_section(lines, "Key Files", orientation.get("key_files", []))
+    elif summary.get("repo_brief_error"):
+        lines.extend(["## Repo Orientation", "", f"Repo brief unavailable: `{summary.get('repo_brief_error')}`", ""])
+
+    artifacts = brief.get("artifacts", [])
+    if artifacts:
+        lines.extend(["## Artifacts", ""])
+        for item in artifacts:
+            lines.append(
+                f"- `{item.get('kind')}`: `{item.get('path')}` "
+                f"exists=`{item.get('exists')}` size=`{item.get('size')}`"
+            )
+        lines.append("")
+
+    commands = brief.get("recommended_commands", [])
+    if commands:
+        lines.extend(["## Recommended Commands", "", "```powershell"])
+        for item in commands:
+            lines.append(str(item.get("command", "")))
+        lines.extend(["```", ""])
+
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -4921,6 +5143,131 @@ def _append_brief_file_section(lines: list[str], title: str, files: list[dict[st
     lines.append("")
 
 
+def _agent_brief_artifacts(out_path: Path, latest: dict[str, Any] | None) -> list[dict[str, Any]]:
+    artifacts = [_agent_brief_artifact("snapshot_index", out_path / "snapshots.json")]
+    artifacts.append(_agent_brief_artifact("latest_alias", out_path / "latest.repomori"))
+    if latest is None:
+        return artifacts
+    for kind, field in (
+        ("latest_pack", "pack_path"),
+        ("snapshot_json", "snapshot_json"),
+        ("snapshot_markdown", "snapshot_markdown"),
+        ("compare_json", "compare_json"),
+        ("compare_markdown", "compare_markdown"),
+        ("diff_context_json", "diff_context_json"),
+        ("diff_context_markdown", "diff_context_markdown"),
+        ("handoff_dir", "handoff_dir"),
+    ):
+        path = _recorded_snapshot_path(out_path, latest.get(field))
+        if path is not None:
+            artifacts.append(_agent_brief_artifact(kind, path))
+    return artifacts
+
+
+def _agent_brief_artifact(kind: str, path: Path) -> dict[str, Any]:
+    exists = path.exists()
+    data = {
+        "kind": kind,
+        "path": str(path),
+        "exists": exists,
+        "size": None,
+        "sha256": None,
+    }
+    if exists and path.is_file():
+        data["size"] = path.stat().st_size
+        data["sha256"] = _path_sha256(path)
+    return data
+
+
+def _agent_brief_latest_diff_context(
+    out_path: Path,
+    latest: dict[str, Any],
+    max_files: int,
+) -> dict[str, Any] | None:
+    json_path = _recorded_snapshot_path(out_path, latest.get("diff_context_json"))
+    markdown_path = _recorded_snapshot_path(out_path, latest.get("diff_context_markdown"))
+    if json_path is None or not json_path.exists() or not json_path.is_file():
+        return None
+    try:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {
+            "status": "invalid_json",
+            "json_path": str(json_path),
+            "markdown_path": str(markdown_path) if markdown_path is not None else None,
+            "summary": {},
+            "sources": [],
+        }
+    sources = []
+    for source in payload.get("sources", [])[:max_files]:
+        sources.append(
+            {
+                "path": source.get("path"),
+                "change_type": source.get("change_type"),
+                "score": source.get("score"),
+                "match_reasons": source.get("match_reasons", []),
+                "source_pack": source.get("source_pack"),
+                "sha256": source.get("sha256"),
+                "size": source.get("size"),
+                "snippet_count": len(source.get("snippets", [])),
+                "snippet_status": source.get("snippet_status"),
+            }
+        )
+    return {
+        "status": "available",
+        "json_path": str(json_path),
+        "markdown_path": str(markdown_path) if markdown_path is not None else None,
+        "question": payload.get("question"),
+        "summary": payload.get("summary", {}),
+        "sources": sources,
+        "source_manifest": payload.get("source_manifest", [])[:max_files],
+    }
+
+
+def _agent_brief_commands(
+    out_path: Path,
+    latest_pack_path: Path | None,
+    latest: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    commands = [
+        {
+            "purpose": "Check snapshot health",
+            "command": f"python -m repomori doctor {out_path} --json",
+        },
+        {
+            "purpose": "Read recent timeline",
+            "command": f"python -m repomori timeline {out_path} --format json",
+        },
+        {
+            "purpose": "Read reuse stats",
+            "command": f"python -m repomori stats {out_path} --format json",
+        },
+    ]
+    repo_path = latest.get("repo_path") if isinstance(latest, dict) else None
+    if repo_path:
+        commands.insert(
+            0,
+            {
+                "purpose": "Run the next memory cycle",
+                "command": f"python -m repomori memory {repo_path} --out-dir {out_path} --diff-context --json",
+            },
+        )
+    if latest_pack_path is not None:
+        commands.extend(
+            [
+                {
+                    "purpose": "Search the latest pack",
+                    "command": f"python -m repomori query {latest_pack_path} \"<question>\" --json",
+                },
+                {
+                    "purpose": "Build source-backed context",
+                    "command": f"python -m repomori context {latest_pack_path} \"<question>\" --format markdown --out {out_path}\\context.md",
+                },
+            ]
+        )
+    return commands
+
+
 def _snapshot_stamp(timestamp: float) -> str:
     return time.strftime("%Y%m%d-%H%M%S", time.localtime(timestamp))
 
@@ -5490,6 +5837,7 @@ AGENT_METHODS = (
     "agent.help",
     "ping",
     "memory.run",
+    "brief.build",
     "timeline.read",
     "stats.read",
     "doctor.run",
@@ -5542,6 +5890,26 @@ MCP_TOOLS = (
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_brief_build",
+        "title": "RepoMori Brief Build",
+        "description": "Build a concise agent start brief from the configured snapshot timeline.",
+        "agent_method": "brief.build",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "out_dir": {"type": "string"},
+                "timeline_limit": {"type": "integer"},
+                "stats_limit": {"type": "integer"},
+                "verify_packs": {"type": "boolean"},
+                "max_files": {"type": "integer"},
+                "top_terms": {"type": "integer"},
+                "top_symbols": {"type": "integer"},
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     },
     {
         "name": "repomori_timeline_read",
@@ -5749,6 +6117,16 @@ def _agent_dispatch(
         return schema_catalog(schema_version)
     if method == "memory.run":
         return run_memory_cycle(**_agent_memory_kwargs(params, settings))
+    if method == "brief.build":
+        return build_agent_brief(
+            _agent_out_dir(params, settings),
+            timeline_limit=_agent_int(params, "timeline_limit", 5),
+            stats_limit=_agent_int(params, "stats_limit", 10),
+            verify_packs=bool(params.get("verify_packs", settings.get("verify_packs", False))),
+            max_files=_agent_int(params, "max_files", 8),
+            top_terms=_agent_int(params, "top_terms", 40),
+            top_symbols=_agent_int(params, "top_symbols", 40),
+        )
     if method == "timeline.read":
         return read_snapshot_timeline(
             _agent_out_dir(params, settings),
@@ -6070,6 +6448,13 @@ def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
         lines.append(f"sources: {len(sources)}")
         for item in sources[:5]:
             lines.append(f"- {item.get('change_type')} {item.get('path')} score={item.get('score')}")
+    elif name == "repomori_brief_build":
+        summary = payload.get("summary", {})
+        lines.append(f"status: {payload.get('status')}")
+        lines.append(f"snapshots: {summary.get('snapshot_count')}")
+        lines.append(f"doctor: {summary.get('doctor_status')}")
+        lines.append(f"latest_pack: {summary.get('latest_pack_path')}")
+        lines.append(f"diff_context: {summary.get('diff_context_status')}")
     elif name == "repomori_file_get":
         lines.append(f"path: {payload.get('path')}")
         lines.append(f"size: {payload.get('size')}")

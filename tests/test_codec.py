@@ -12,6 +12,7 @@ from pathlib import Path
 from repomori.codec import (
     BuildOptions,
     benchmark_repo,
+    build_agent_brief,
     build_repo_brief,
     build_capsule,
     build_context_bundle,
@@ -23,6 +24,7 @@ from repomori.codec import (
     diagnose_query,
     doctor_snapshot_dir,
     evaluate_pack,
+    format_agent_brief_markdown,
     format_benchmark_markdown,
     format_brief_markdown,
     format_compare_markdown,
@@ -205,6 +207,50 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("# RepoMori Repo Brief", markdown)
             self.assertIn("## Entrypoints", markdown)
             self.assertIn("app.py", markdown)
+
+    def test_agent_brief_summarizes_latest_memory_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+
+            run_memory_cycle(repo, out, no_handoff=True, diff_context=True)
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            second = run_memory_cycle(
+                repo,
+                out,
+                handoff_question="continue this repo",
+                diff_context=True,
+                diff_context_question="close Store",
+            )
+
+            brief = build_agent_brief(out, timeline_limit=3, stats_limit=3, max_files=4)
+            self.assertEqual(brief["schema_version"], "repomori.agent_brief.v1")
+            self.assertEqual(brief["status"], "pass")
+            self.assertEqual(brief["summary"]["latest_pack_path"], second["summary"]["pack_path"])
+            self.assertEqual(brief["summary"]["doctor_status"], "pass")
+            self.assertEqual(brief["summary"]["diff_context_status"], "written")
+            self.assertEqual(brief["latest_diff_context"]["summary"]["changed_count"], 1)
+            self.assertEqual(brief["repo_brief"]["schema_version"], "repomori.brief.v1")
+
+            artifact_kinds = {item["kind"] for item in brief["artifacts"]}
+            self.assertIn("latest_pack", artifact_kinds)
+            self.assertIn("handoff_dir", artifact_kinds)
+            self.assertIn("diff_context_json", artifact_kinds)
+            self.assertTrue(any("context" in item["command"] for item in brief["recommended_commands"]))
+
+            markdown = format_agent_brief_markdown(brief)
+            self.assertIn("# RepoMori Agent Brief", markdown)
+            self.assertIn("## Latest Diff Context", markdown)
+            self.assertIn("app.py", markdown)
+            self.assertIn("python -m repomori context", markdown)
 
     def test_context_bundle_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1184,6 +1230,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         second_names = [tool["name"] for tool in second_list["result"]["tools"]]
         self.assertEqual(first_names, second_names)
         self.assertIn("repomori_context_build", first_names)
+        self.assertIn("repomori_brief_build", first_names)
         self.assertIn("repomori_diff_context_build", first_names)
         self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
@@ -1318,6 +1365,19 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(stats_response["result"]["structuredContent"]["schema_version"], "repomori.stats.v1")
             self.assertEqual(stats_response["result"]["structuredContent"]["returned_count"], 1)
 
+            brief_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "brief",
+                    "method": "tools/call",
+                    "params": {"name": "repomori_brief_build", "arguments": {"timeline_limit": 2}},
+                },
+                config_path=config,
+            )
+            self.assertEqual(brief_response["result"]["structuredContent"]["schema_version"], "repomori.agent_brief.v1")
+            self.assertEqual(brief_response["result"]["structuredContent"]["summary"]["snapshot_count"], 2)
+            self.assertIn("latest_pack", brief_response["result"]["content"][0]["text"])
+
             schema_response = handle_mcp_request(
                 {
                     "jsonrpc": "2.0",
@@ -1352,12 +1412,16 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.scan.baseline.v1", schema_versions)
         self.assertIn("repomori.release_check.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
+        self.assertIn("repomori.agent_brief.v1", schema_versions)
+        self.assertIn("repomori.brief.v1", schema_versions)
         self.assertIn("repomori.stats.v1", schema_versions)
         self.assertIn("repomori.diff_context.v1", schema_versions)
+        self.assertIn("brief.build", catalog["agent_methods"])
         self.assertIn("context.build", catalog["agent_methods"])
         self.assertIn("diff_context.build", catalog["agent_methods"])
         self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
+        self.assertIn("repomori_brief_build", catalog["mcp_tools"])
         self.assertIn("repomori_diff_context_build", catalog["mcp_tools"])
         self.assertIn("repomori_stats_read", catalog["mcp_tools"])
         self.assertIn("repomori_schema_list", catalog["mcp_tools"])
@@ -1375,6 +1439,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(diff_context["selected"], "repomori.diff_context.v1")
         self.assertEqual(diff_context["schema"]["producer"], "build_diff_context_bundle")
 
+        agent_brief = schema_catalog("repomori.agent_brief.v1")
+        self.assertEqual(agent_brief["selected"], "repomori.agent_brief.v1")
+        self.assertEqual(agent_brief["schema"]["producer"], "build_agent_brief")
+
     def test_golden_fixture_core_output_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1387,6 +1455,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
             diff_context = build_diff_context_bundle(pack, memory["summary"]["pack_path"])
+            agent_brief = build_agent_brief(memory_dir)
             stats = read_snapshot_stats(memory_dir)
             scan = scan_repository(repo)
             agent_help = handle_agent_request({"id": 1, "method": "agent.help"})
@@ -1416,6 +1485,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     memory,
                     "repomori.memory.v1",
                     {"schema_version", "status", "repo_path", "out_dir", "settings", "summary", "snapshot", "doctor", "prune", "timeline"},
+                ),
+                "agent_brief": (
+                    agent_brief,
+                    "repomori.agent_brief.v1",
+                    {"schema_version", "status", "out_dir", "summary", "latest_snapshot", "artifacts", "recommended_commands"},
                 ),
                 "stats": (
                     stats,
@@ -1622,6 +1696,33 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.brief.v1")
             self.assertEqual(payload["summary"]["file_count"], 3)
             self.assertLessEqual(len(payload["orientation"]["key_files"]), 2)
+
+    def test_cli_brief_snapshot_dir_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            run_memory_cycle(repo, out, no_handoff=True)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "brief",
+                    str(out),
+                    "--format",
+                    "json",
+                    "--timeline-limit",
+                    "1",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.agent_brief.v1")
+            self.assertEqual(payload["summary"]["snapshot_count"], 1)
+            self.assertEqual(payload["doctor"]["status"], "pass")
+            self.assertIn("latest_pack", {item["kind"] for item in payload["artifacts"]})
 
     def test_cli_verify_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

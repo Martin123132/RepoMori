@@ -3,6 +3,7 @@
 from .codec import (
     SCHEMA_VERSION,
     benchmark_repo,
+    build_agent_brief,
     build_capsule,
     build_context_bundle,
     build_diff_context_bundle,
@@ -14,6 +15,7 @@ from .codec import (
     diagnose_query,
     doctor_snapshot_dir,
     evaluate_pack,
+    format_agent_brief_markdown,
     format_benchmark_markdown,
     format_brief_markdown,
     format_compare_markdown,
@@ -49,6 +51,7 @@ from .codec import (
 __all__ = [
     "SCHEMA_VERSION",
     "benchmark_repo",
+    "build_agent_brief",
     "build_capsule",
     "build_context_bundle",
     "build_diff_context_bundle",
@@ -60,6 +63,7 @@ __all__ = [
     "diagnose_query",
     "doctor_snapshot_dir",
     "evaluate_pack",
+    "format_agent_brief_markdown",
     "format_benchmark_markdown",
     "format_brief_markdown",
     "format_compare_markdown",

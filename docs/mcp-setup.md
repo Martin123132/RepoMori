@@ -39,11 +39,14 @@ The MCP tools use the latest snapshot pack from the configured timeline when a t
 the next snapshot unless the tool call sets `incremental` to `false`.
 Set `diff_context` to `true` on `repomori_memory_run` to write changed-files
 context artifacts beside the new snapshot reports.
+Call `repomori_brief_build` when an agent needs one concise start point for the
+latest timeline state.
 
 ## Tools
 
 - `repomori_help`
 - `repomori_memory_run`
+- `repomori_brief_build`
 - `repomori_timeline_read`
 - `repomori_stats_read`
 - `repomori_doctor_run`

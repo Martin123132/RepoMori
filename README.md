@@ -58,6 +58,7 @@ python -m repomori build D:\Dev\RepoMori D:\Dev\RepoMori\packs\next.repomori --b
 python -m repomori agent --config D:\Dev\RepoMori\repomori.toml
 python -m repomori mcp --config D:\Dev\RepoMori\repomori.toml
 python -m repomori schema --json
+python -m repomori brief D:\Dev\RepoMori\packs --out D:\Dev\RepoMori\agent-brief.md
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
 python -m repomori timeline D:\Dev\RepoMori\packs --format json
 python -m repomori doctor D:\Dev\RepoMori\packs --json
@@ -67,6 +68,7 @@ python -m repomori info C:\path\to\repo.repomori
 python -m repomori query C:\path\to\repo.repomori storage
 python -m repomori diagnose C:\path\to\repo.repomori "where is storage handled?" --json
 python -m repomori brief C:\path\to\repo.repomori --out repo-brief.md
+python -m repomori brief D:\Dev\RepoMori\packs --format json
 python -m repomori compare C:\path\to\old.repomori C:\path\to\new.repomori --out compare.md
 python -m repomori context C:\path\to\repo.repomori "where is storage handled?" --out context.md
 python -m repomori verify C:\path\to\repo.repomori
@@ -113,7 +115,7 @@ repomori info <pack>
 repomori tree <pack>
 repomori query <pack> <text>
 repomori diagnose <pack> <question> [--json] [--max-files n] [--max-bytes n]
-repomori brief <pack> [--format markdown|json] [--out file]
+repomori brief <pack-or-snapshot-dir> [--format markdown|json] [--out file]
 repomori compare <base-pack> <target-pack> [--format markdown|json] [--out file]
 repomori context <pack> <question> [--format markdown|json] [--max-files n] [--max-bytes n] [--no-source] [--out file]
 repomori diff-context <base-pack> <target-pack> [question] [--format markdown|json] [--max-files n] [--max-bytes n] [--no-source] [--out file]
@@ -164,7 +166,10 @@ context.
 
 `brief` creates a question-free repository orientation report from one pack:
 languages, likely entrypoints, key files, top terms, symbols, imports, headings,
-and a source manifest for the files an agent should inspect first.
+and a source manifest for the files an agent should inspect first. When given a
+snapshot directory, it writes an agent start brief from latest memory: doctor
+status, timeline and reuse summaries, latest handoff, latest diff-context, key
+artifacts, repo orientation, and recommended next commands.
 
 `compare` diffs two packs and reports added, removed, changed, and unchanged
 file counts, language deltas, changed hashes and sizes, and symbol/import/heading
@@ -207,7 +212,7 @@ query RepoMori without guessing shell commands. Send one JSON object per line:
 Responses are JSON lines with `schema_version`, `jsonrpc`, `id`, `ok`, and
 either `result` or `error`. Supported methods are `memory.run`, `timeline.read`,
 `stats.read`, `doctor.run`, `query.run`, `context.build`,
-`diff_context.build`, `handoff.build`, `capsule.build`, `file.get`, and
+`brief.build`, `diff_context.build`, `handoff.build`, `capsule.build`, `file.get`, and
 `schema.list`. Methods use the configured latest snapshot pack when `pack` is
 not supplied. `diff_context.build` can also infer previous-to-latest from the
 configured snapshot directory.
@@ -238,8 +243,8 @@ Example local client config:
 ```
 
 The MCP tool names are `repomori_help`, `repomori_memory_run`,
-`repomori_timeline_read`, `repomori_stats_read`, `repomori_doctor_run`,
-`repomori_query_run`, `repomori_context_build`,
+`repomori_brief_build`, `repomori_timeline_read`, `repomori_stats_read`,
+`repomori_doctor_run`, `repomori_query_run`, `repomori_context_build`,
 `repomori_diff_context_build`, `repomori_handoff_build`,
 `repomori_capsule_build`, `repomori_file_get`, and
 `repomori_schema_list`.
