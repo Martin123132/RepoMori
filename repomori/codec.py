@@ -35,6 +35,15 @@ DEFAULT_EVAL_QUESTIONS = (
 )
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_SERVER_VERSION = "0.2.0"
+SNAPSHOT_CHAIN_VERSION = "repomori.snapshot_chain.v1"
+SNAPSHOT_CHAIN_ALGORITHM = "sha256-canonical-json"
+SNAPSHOT_CHAIN_FIELDS = {
+    "chain_version",
+    "chain_index",
+    "previous_chain_hash",
+    "entry_hash",
+    "chain_hash",
+}
 
 SCHEMA_DEFINITIONS = (
     {
@@ -120,6 +129,13 @@ SCHEMA_DEFINITIONS = (
         "title": "Snapshot incremental savings report",
         "producer": "read_snapshot_stats",
         "required_fields": ["schema_version", "out_dir", "snapshot_count", "returned_count", "summary", "latest", "snapshots", "top_reuse"],
+    },
+    {
+        "schema_version": SNAPSHOT_CHAIN_VERSION,
+        "kind": "report",
+        "title": "Snapshot timeline chain verification report",
+        "producer": "verify_snapshot_chain",
+        "required_fields": ["schema_version", "status", "out_dir", "summary", "errors", "warnings"],
     },
     {
         "schema_version": "repomori.snapshot.v1",
@@ -2272,6 +2288,7 @@ def build_agent_brief(
     timeline = read_snapshot_timeline(out_path, limit=timeline_limit)
     stats = read_snapshot_stats(out_path, limit=stats_limit)
     doctor = doctor_snapshot_dir(out_path, verify_packs=verify_packs)
+    chain = verify_snapshot_chain(out_path)
     latest = timeline.get("latest") if isinstance(timeline.get("latest"), dict) else None
     latest_pack_path = _recorded_snapshot_path(out_path, latest.get("pack_path")) if latest else None
     repo_brief = None
@@ -2291,10 +2308,17 @@ def build_agent_brief(
     latest_handoff = next((item for item in artifacts if item["kind"] == "handoff_dir"), None)
     stats_summary = stats.get("summary", {})
     timeline_summary = timeline.get("summary", {})
+    chain_summary = chain.get("summary", {})
     status = "pass"
-    if doctor.get("status") == "fail" or latest is None or latest_pack_path is None or not latest_pack_path.exists():
+    if (
+        doctor.get("status") == "fail"
+        or chain.get("status") == "fail"
+        or latest is None
+        or latest_pack_path is None
+        or not latest_pack_path.exists()
+    ):
         status = "fail"
-    elif doctor.get("status") != "pass" or repo_brief_error:
+    elif doctor.get("status") != "pass" or chain.get("status") != "pass" or repo_brief_error:
         status = "warn"
 
     summary = {
@@ -2307,6 +2331,10 @@ def build_agent_brief(
         "doctor_status": doctor.get("status"),
         "doctor_errors": doctor.get("error_count"),
         "doctor_warnings": doctor.get("warning_count"),
+        "chain_status": chain.get("status"),
+        "chain_head_hash": chain_summary.get("head_chain_hash"),
+        "chain_checked_count": chain_summary.get("checked_count"),
+        "chain_anchored_to_pruned_history": chain_summary.get("anchored_to_pruned_history"),
         "total_added": timeline_summary.get("total_added"),
         "total_removed": timeline_summary.get("total_removed"),
         "total_changed": timeline_summary.get("total_changed"),
@@ -2345,6 +2373,7 @@ def build_agent_brief(
         "timeline": timeline,
         "stats": stats,
         "doctor": doctor,
+        "chain": chain,
         "recommended_commands": _agent_brief_commands(out_path, latest_pack_path, latest),
     }
 
@@ -2367,6 +2396,10 @@ def format_agent_brief_markdown(brief: dict[str, Any]) -> str:
         f"- Doctor status: `{summary.get('doctor_status')}`",
         f"- Doctor errors: `{summary.get('doctor_errors')}`",
         f"- Doctor warnings: `{summary.get('doctor_warnings')}`",
+        f"- Chain status: `{summary.get('chain_status')}`",
+        f"- Chain head: `{summary.get('chain_head_hash')}`",
+        f"- Chain checked: `{summary.get('chain_checked_count')}`",
+        f"- Chain anchored to pruned history: `{summary.get('chain_anchored_to_pruned_history')}`",
         "",
         "## Timeline",
         "",
@@ -3383,6 +3416,7 @@ def read_snapshot_timeline(out_dir: Path | str, *, limit: int | None = None) -> 
         raise ValueError("limit must be greater than zero")
     out_path = Path(out_dir).resolve()
     index = _read_snapshot_index(out_path / "snapshots.json", out_path)
+    chain = verify_snapshot_chain(out_path)
     snapshots = list(index.get("snapshots", []))
     latest = index.get("latest")
     recent = []
@@ -3411,9 +3445,119 @@ def read_snapshot_timeline(out_dir: Path | str, *, limit: int | None = None) -> 
             "total_reused_files": _sum_snapshot_field(snapshots, "reused_file_count"),
             "total_rebuilt_files": _sum_snapshot_field(snapshots, "rebuilt_file_count"),
             "total_reused_chunks": _sum_snapshot_field(snapshots, "reused_chunk_count"),
+            "chain_status": chain.get("status"),
+            "chain_head_hash": chain.get("summary", {}).get("head_chain_hash"),
+            "chain_checked_count": chain.get("summary", {}).get("checked_count"),
+            "chain_anchored_to_pruned_history": chain.get("summary", {}).get("anchored_to_pruned_history"),
         },
+        "chain": chain,
         "snapshots": recent,
     }
+
+
+def verify_snapshot_chain(out_dir: Path | str) -> dict[str, Any]:
+    """Verify the tamper-evident hash chain recorded in snapshots.json."""
+
+    out_path = Path(out_dir).resolve()
+    index_path = out_path / "snapshots.json"
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    summary: dict[str, Any] = {
+        "chain_version": SNAPSHOT_CHAIN_VERSION,
+        "algorithm": SNAPSHOT_CHAIN_ALGORITHM,
+        "snapshot_count": 0,
+        "checked_count": 0,
+        "head_chain_hash": None,
+        "anchored_to_pruned_history": False,
+        "legacy_unchained": False,
+    }
+
+    index: dict[str, Any] | None = None
+    snapshots: list[dict[str, Any]] = []
+    if not out_path.exists():
+        _add_chain_issue(errors, str(out_path), "Snapshot directory does not exist.")
+    elif not out_path.is_dir():
+        _add_chain_issue(errors, str(out_path), "Snapshot path is not a directory.")
+    elif not index_path.exists():
+        _add_chain_issue(errors, str(index_path), "snapshots.json was not found.")
+    else:
+        try:
+            index = _read_snapshot_index(index_path, out_path)
+        except json.JSONDecodeError as exc:
+            _add_chain_issue(errors, str(index_path), f"snapshots.json is invalid JSON: {exc}")
+        except ValueError as exc:
+            _add_chain_issue(errors, str(index_path), str(exc))
+
+    if index is not None:
+        raw_snapshots = index.get("snapshots", [])
+        if isinstance(raw_snapshots, list):
+            for offset, item in enumerate(raw_snapshots):
+                if isinstance(item, dict):
+                    snapshots.append(item)
+                else:
+                    _add_chain_issue(errors, str(index_path), "Snapshot index entry is not an object.", index=offset)
+        else:
+            _add_chain_issue(errors, str(index_path), "Snapshot index snapshots must be a list.")
+
+        chain_meta = index.get("chain")
+        summary["snapshot_count"] = len(snapshots)
+        has_entry_chain = any(any(field in snapshot for field in SNAPSHOT_CHAIN_FIELDS) for snapshot in snapshots)
+        if not snapshots and chain_meta is None:
+            pass
+        elif not has_entry_chain and chain_meta is None:
+            summary["legacy_unchained"] = bool(snapshots)
+            if snapshots:
+                _add_chain_issue(
+                    warnings,
+                    str(index_path),
+                    "Snapshot timeline has no hash chain; run a new snapshot or memory cycle to add one.",
+                )
+        else:
+            _verify_snapshot_chain_entries(out_path, snapshots, errors, warnings, summary)
+            _verify_snapshot_chain_meta(index_path, chain_meta, snapshots, errors, warnings, summary)
+
+    status = "fail" if errors else "warn" if warnings else "pass"
+    return {
+        "schema_version": SNAPSHOT_CHAIN_VERSION,
+        "status": status,
+        "out_dir": str(out_path),
+        "summary": summary,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def format_snapshot_chain_markdown(report: dict[str, Any]) -> str:
+    """Render snapshot chain verification as Markdown."""
+
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Snapshot Chain",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Output: `{report.get('out_dir')}`",
+        f"- Chain version: `{summary.get('chain_version')}`",
+        f"- Algorithm: `{summary.get('algorithm')}`",
+        f"- Snapshots: `{summary.get('snapshot_count')}`",
+        f"- Checked: `{summary.get('checked_count')}`",
+        f"- Head hash: `{summary.get('head_chain_hash')}`",
+        f"- Anchored to pruned history: `{summary.get('anchored_to_pruned_history')}`",
+        f"- Legacy unchained: `{summary.get('legacy_unchained')}`",
+        "",
+    ]
+    errors = report.get("errors", [])
+    warnings = report.get("warnings", [])
+    if errors:
+        lines.extend(["## Errors", ""])
+        for error in errors:
+            lines.append(f"- `{error.get('path')}` {error.get('message')}")
+        lines.append("")
+    if warnings:
+        lines.extend(["## Warnings", ""])
+        for warning in warnings:
+            lines.append(f"- `{warning.get('path')}` {warning.get('message')}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def read_snapshot_stats(out_dir: Path | str, *, limit: int | None = 10) -> dict[str, Any]:
@@ -3574,6 +3718,33 @@ def doctor_snapshot_dir(out_dir: Path | str, *, verify_packs: bool = False) -> d
         for offset, snapshot in enumerate(snapshots):
             _doctor_check_snapshot(out_path, snapshot, offset, verify_packs, summary, errors, warnings)
 
+    chain_report = verify_snapshot_chain(out_path)
+    chain_summary = chain_report.get("summary", {})
+    summary["chain_status"] = chain_report.get("status")
+    summary["chain_head_hash"] = chain_summary.get("head_chain_hash")
+    summary["chain_checked_count"] = chain_summary.get("checked_count")
+    summary["chain_anchored_to_pruned_history"] = chain_summary.get("anchored_to_pruned_history")
+    for issue in chain_report.get("errors", []):
+        _add_doctor_issue(
+            errors,
+            "chain",
+            str(issue.get("path", "")),
+            str(issue.get("message", "Snapshot chain verification failed.")),
+            index=issue.get("index"),
+            expected=issue.get("expected"),
+            actual=issue.get("actual"),
+        )
+    for issue in chain_report.get("warnings", []):
+        _add_doctor_issue(
+            warnings,
+            "chain",
+            str(issue.get("path", "")),
+            str(issue.get("message", "Snapshot chain verification warning.")),
+            index=issue.get("index"),
+            expected=issue.get("expected"),
+            actual=issue.get("actual"),
+        )
+
     status = "fail" if errors else "warn" if warnings else "pass"
     return {
         "schema_version": "repomori.doctor.v1",
@@ -3682,14 +3853,17 @@ def prune_snapshots(out_dir: Path | str, *, keep: int = 20, apply: bool = False)
         latest = index.get("latest")
         if isinstance(latest, dict) and _snapshot_pack_key(out_path, latest) not in retained_keys:
             retained_snapshots.append(latest)
-        updated = {
-            "schema_version": "repomori.snapshots.v1",
-            "out_dir": str(out_path),
-            "updated_at": int(time.time()),
-            "snapshot_count": len(retained_snapshots),
-            "latest": index.get("latest"),
-            "snapshots": retained_snapshots,
-        }
+        updated = _chain_snapshot_index(
+            out_path,
+            {
+                "schema_version": "repomori.snapshots.v1",
+                "out_dir": str(out_path),
+                "updated_at": int(time.time()),
+                "snapshot_count": len(retained_snapshots),
+                "latest": index.get("latest"),
+                "snapshots": retained_snapshots,
+            },
+        )
         _write_json(index_path, updated)
 
     return {
@@ -4148,6 +4322,10 @@ def format_timeline_markdown(timeline: dict[str, Any]) -> str:
         f"- Reused files: `{summary.get('total_reused_files')}`",
         f"- Rebuilt files: `{summary.get('total_rebuilt_files')}`",
         f"- Reused chunks: `{summary.get('total_reused_chunks')}`",
+        f"- Chain status: `{summary.get('chain_status')}`",
+        f"- Chain head: `{summary.get('chain_head_hash')}`",
+        f"- Chain checked: `{summary.get('chain_checked_count')}`",
+        f"- Chain anchored to pruned history: `{summary.get('chain_anchored_to_pruned_history')}`",
         "",
         "## Recent Snapshots",
         "",
@@ -5323,16 +5501,229 @@ def _update_snapshot_index(out_path: Path, report: dict[str, Any]) -> dict[str, 
     ]
     snapshots.append(entry)
     snapshots.sort(key=lambda item: _snapshot_entry_sort_key(out_path, item))
-    updated = {
-        "schema_version": "repomori.snapshots.v1",
-        "out_dir": str(out_path),
-        "updated_at": int(time.time()),
-        "snapshot_count": len(snapshots),
-        "latest": entry,
-        "snapshots": snapshots,
-    }
+    updated = _chain_snapshot_index(
+        out_path,
+        {
+            "schema_version": "repomori.snapshots.v1",
+            "out_dir": str(out_path),
+            "updated_at": int(time.time()),
+            "snapshot_count": len(snapshots),
+            "latest": entry,
+            "snapshots": snapshots,
+        },
+    )
     _write_json(index_path, updated)
     return updated
+
+
+def _chain_snapshot_index(out_path: Path, index: dict[str, Any]) -> dict[str, Any]:
+    snapshots = [dict(snapshot) for snapshot in index.get("snapshots", []) if isinstance(snapshot, dict)]
+    chained_snapshots = _chain_snapshot_entries(snapshots)
+    latest = index.get("latest")
+    latest_chained = latest
+    if isinstance(latest, dict):
+        latest_key = _snapshot_pack_key(out_path, latest)
+        latest_chained = next(
+            (
+                snapshot
+                for snapshot in chained_snapshots
+                if _snapshot_pack_key(out_path, snapshot) == latest_key
+            ),
+            dict(latest),
+        )
+        if latest_chained is not latest and isinstance(latest_chained, dict):
+            latest_chained = dict(latest_chained)
+    head_hash = chained_snapshots[-1].get("chain_hash") if chained_snapshots else None
+    chained = {
+        "schema_version": "repomori.snapshots.v1",
+        "out_dir": index.get("out_dir", str(out_path)),
+        "updated_at": index.get("updated_at", int(time.time())),
+        "snapshot_count": len(chained_snapshots),
+        "latest": latest_chained,
+        "snapshots": chained_snapshots,
+        "chain": {
+            "chain_version": SNAPSHOT_CHAIN_VERSION,
+            "algorithm": SNAPSHOT_CHAIN_ALGORITHM,
+            "head_chain_hash": head_hash,
+            "snapshot_count": len(chained_snapshots),
+            "anchored_to_pruned_history": bool(
+                chained_snapshots and chained_snapshots[0].get("previous_chain_hash")
+            ),
+        },
+    }
+    return chained
+
+
+def _chain_snapshot_entries(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    previous_hash = None
+    if snapshots:
+        first_previous = snapshots[0].get("previous_chain_hash")
+        if isinstance(first_previous, str) and first_previous:
+            previous_hash = first_previous
+    chained = []
+    for index, snapshot in enumerate(snapshots):
+        entry = _snapshot_entry_without_chain(snapshot)
+        entry_hash = _snapshot_entry_hash(entry)
+        chain_hash = _snapshot_chain_hash(previous_hash, entry_hash)
+        entry.update(
+            {
+                "chain_version": SNAPSHOT_CHAIN_VERSION,
+                "chain_index": index,
+                "previous_chain_hash": previous_hash,
+                "entry_hash": entry_hash,
+                "chain_hash": chain_hash,
+            }
+        )
+        chained.append(entry)
+        previous_hash = chain_hash
+    return chained
+
+
+def _snapshot_entry_without_chain(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in snapshot.items() if key not in SNAPSHOT_CHAIN_FIELDS}
+
+
+def _snapshot_entry_hash(snapshot: dict[str, Any]) -> str:
+    return _canonical_json_hash(_snapshot_entry_without_chain(snapshot))
+
+
+def _snapshot_chain_hash(previous_chain_hash: str | None, entry_hash: str) -> str:
+    return _canonical_json_hash(
+        {
+            "chain_version": SNAPSHOT_CHAIN_VERSION,
+            "previous_chain_hash": previous_chain_hash,
+            "entry_hash": entry_hash,
+        }
+    )
+
+
+def _canonical_json_hash(payload: Any) -> str:
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def _verify_snapshot_chain_entries(
+    out_path: Path,
+    snapshots: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> None:
+    previous_hash = None
+    for index, snapshot in enumerate(snapshots):
+        missing = [field for field in SNAPSHOT_CHAIN_FIELDS if field not in snapshot]
+        if missing:
+            _add_chain_issue(
+                errors,
+                str(_recorded_snapshot_path(out_path, snapshot.get("pack_path")) or snapshot.get("pack_path") or ""),
+                "Snapshot chain fields are missing.",
+                index=index,
+                expected=sorted(missing),
+            )
+            continue
+        if snapshot.get("chain_version") != SNAPSHOT_CHAIN_VERSION:
+            _add_chain_issue(
+                errors,
+                str(_recorded_snapshot_path(out_path, snapshot.get("pack_path")) or snapshot.get("pack_path") or ""),
+                "Snapshot chain version does not match.",
+                index=index,
+                expected=SNAPSHOT_CHAIN_VERSION,
+                actual=snapshot.get("chain_version"),
+            )
+        if snapshot.get("chain_index") != index:
+            _add_chain_issue(
+                errors,
+                str(_recorded_snapshot_path(out_path, snapshot.get("pack_path")) or snapshot.get("pack_path") or ""),
+                "Snapshot chain index does not match its timeline position.",
+                index=index,
+                expected=index,
+                actual=snapshot.get("chain_index"),
+            )
+        if index == 0:
+            previous_hash = snapshot.get("previous_chain_hash")
+            summary["anchored_to_pruned_history"] = bool(previous_hash)
+        elif snapshot.get("previous_chain_hash") != previous_hash:
+            _add_chain_issue(
+                errors,
+                str(_recorded_snapshot_path(out_path, snapshot.get("pack_path")) or snapshot.get("pack_path") or ""),
+                "Snapshot previous chain hash does not match the prior snapshot.",
+                index=index,
+                expected=previous_hash,
+                actual=snapshot.get("previous_chain_hash"),
+            )
+        expected_entry_hash = _snapshot_entry_hash(snapshot)
+        if snapshot.get("entry_hash") != expected_entry_hash:
+            _add_chain_issue(
+                errors,
+                str(_recorded_snapshot_path(out_path, snapshot.get("pack_path")) or snapshot.get("pack_path") or ""),
+                "Snapshot entry hash does not match canonical snapshot metadata.",
+                index=index,
+                expected=expected_entry_hash,
+                actual=snapshot.get("entry_hash"),
+            )
+        expected_chain_hash = _snapshot_chain_hash(snapshot.get("previous_chain_hash"), expected_entry_hash)
+        if snapshot.get("chain_hash") != expected_chain_hash:
+            _add_chain_issue(
+                errors,
+                str(_recorded_snapshot_path(out_path, snapshot.get("pack_path")) or snapshot.get("pack_path") or ""),
+                "Snapshot chain hash does not match previous hash and entry hash.",
+                index=index,
+                expected=expected_chain_hash,
+                actual=snapshot.get("chain_hash"),
+            )
+        previous_hash = expected_chain_hash
+        summary["checked_count"] += 1
+        summary["head_chain_hash"] = expected_chain_hash
+
+
+def _verify_snapshot_chain_meta(
+    index_path: Path,
+    chain_meta: Any,
+    snapshots: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> None:
+    if not isinstance(chain_meta, dict):
+        _add_chain_issue(errors, str(index_path), "Snapshot index chain metadata is missing or invalid.")
+        return
+    expected_head = summary.get("head_chain_hash")
+    expected_anchored = bool(snapshots and snapshots[0].get("previous_chain_hash"))
+    checks = (
+        ("chain_version", SNAPSHOT_CHAIN_VERSION),
+        ("algorithm", SNAPSHOT_CHAIN_ALGORITHM),
+        ("head_chain_hash", expected_head),
+        ("snapshot_count", len(snapshots)),
+        ("anchored_to_pruned_history", expected_anchored),
+    )
+    for field, expected in checks:
+        if chain_meta.get(field) != expected:
+            _add_chain_issue(
+                errors,
+                str(index_path),
+                f"Snapshot index chain `{field}` does not match the indexed snapshots.",
+                expected=expected,
+                actual=chain_meta.get(field),
+            )
+
+
+def _add_chain_issue(
+    issues: list[dict[str, Any]],
+    path: str,
+    message: str,
+    *,
+    index: int | None = None,
+    expected: Any = None,
+    actual: Any = None,
+) -> None:
+    issue = {"path": path, "message": message}
+    if index is not None:
+        issue["index"] = index
+    if expected is not None:
+        issue["expected"] = expected
+    if actual is not None:
+        issue["actual"] = actual
+    issues.append(issue)
 
 
 def _read_snapshot_index(index_path: Path, out_path: Path) -> dict[str, Any]:
@@ -5838,6 +6229,7 @@ AGENT_METHODS = (
     "ping",
     "memory.run",
     "brief.build",
+    "chain.verify",
     "timeline.read",
     "stats.read",
     "doctor.run",
@@ -5907,6 +6299,18 @@ MCP_TOOLS = (
                 "top_terms": {"type": "integer"},
                 "top_symbols": {"type": "integer"},
             },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_chain_verify",
+        "title": "RepoMori Chain Verify",
+        "description": "Verify the configured snapshot timeline hash chain.",
+        "agent_method": "chain.verify",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"out_dir": {"type": "string"}},
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -6127,6 +6531,8 @@ def _agent_dispatch(
             top_terms=_agent_int(params, "top_terms", 40),
             top_symbols=_agent_int(params, "top_symbols", 40),
         )
+    if method == "chain.verify":
+        return verify_snapshot_chain(_agent_out_dir(params, settings))
     if method == "timeline.read":
         return read_snapshot_timeline(
             _agent_out_dir(params, settings),
@@ -6455,6 +6861,12 @@ def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
         lines.append(f"doctor: {summary.get('doctor_status')}")
         lines.append(f"latest_pack: {summary.get('latest_pack_path')}")
         lines.append(f"diff_context: {summary.get('diff_context_status')}")
+    elif name == "repomori_chain_verify":
+        summary = payload.get("summary", {})
+        lines.append(f"status: {payload.get('status')}")
+        lines.append(f"checked: {summary.get('checked_count')}")
+        lines.append(f"head: {summary.get('head_chain_hash')}")
+        lines.append(f"anchored: {summary.get('anchored_to_pruned_history')}")
     elif name == "repomori_file_get":
         lines.append(f"path: {payload.get('path')}")
         lines.append(f"size: {payload.get('size')}")

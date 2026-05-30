@@ -28,6 +28,7 @@ from .codec import (
     format_context_markdown,
     format_diff_context_markdown,
     format_eval_markdown,
+    format_snapshot_chain_markdown,
     format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
@@ -48,6 +49,7 @@ from .codec import (
     scan_repository,
     snapshot_repo,
     tree_pack,
+    verify_snapshot_chain,
     verify_pack,
     write_scan_baseline,
 )
@@ -150,6 +152,12 @@ def main(argv: list[str] | None = None) -> int:
     stats.add_argument("--limit", type=int, default=10, help="Maximum recent and top-reuse snapshots to return.")
     stats.add_argument("--format", choices=("markdown", "json"), default="markdown")
     stats.add_argument("--out", type=Path, help="Write the stats report to this file.")
+
+    chain = sub.add_parser("chain", help="Verify snapshot timeline hash chain.")
+    chain.add_argument("out_dir", type=Path)
+    chain.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    chain.add_argument("--out", type=Path, help="Write the chain report to this file.")
+    chain.add_argument("--json", action="store_true", help="Print chain JSON.")
 
     doctor = sub.add_parser("doctor", help="Check snapshot directory health.")
     doctor.add_argument("out_dir", type=Path)
@@ -484,6 +492,20 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0
+    if args.command == "chain":
+        report = verify_snapshot_chain(args.out_dir)
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_snapshot_chain_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
     if args.command == "doctor":
         result = doctor_snapshot_dir(args.out_dir, verify_packs=args.verify_packs)
         _print(result, args.json)

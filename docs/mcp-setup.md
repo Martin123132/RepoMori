@@ -41,12 +41,15 @@ Set `diff_context` to `true` on `repomori_memory_run` to write changed-files
 context artifacts beside the new snapshot reports.
 Call `repomori_brief_build` when an agent needs one concise start point for the
 latest timeline state.
+Call `repomori_chain_verify` to check that the snapshot timeline hash chain has
+not been edited, reordered, or corrupted.
 
 ## Tools
 
 - `repomori_help`
 - `repomori_memory_run`
 - `repomori_brief_build`
+- `repomori_chain_verify`
 - `repomori_timeline_read`
 - `repomori_stats_read`
 - `repomori_doctor_run`

@@ -31,6 +31,7 @@ from repomori.codec import (
     format_eval_markdown,
     format_context_markdown,
     format_diff_context_markdown,
+    format_snapshot_chain_markdown,
     format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
@@ -53,6 +54,7 @@ from repomori.codec import (
     scan_repository,
     snapshot_repo,
     tree_pack,
+    verify_snapshot_chain,
     verify_pack,
     write_scan_baseline,
 )
@@ -738,6 +740,110 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("## Comparison", markdown)
             self.assertIn("Added", markdown)
 
+    def test_snapshot_chain_passes_and_exposes_timeline_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            first = snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            second = snapshot_repo(repo, out)
+
+            index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["chain"]["chain_version"], "repomori.snapshot_chain.v1")
+            self.assertEqual(index["chain"]["snapshot_count"], 2)
+            self.assertEqual(index["latest"]["chain_hash"], index["chain"]["head_chain_hash"])
+            self.assertEqual(index["snapshots"][0]["chain_index"], 0)
+            self.assertIsNone(index["snapshots"][0]["previous_chain_hash"])
+            self.assertEqual(index["snapshots"][1]["previous_chain_hash"], index["snapshots"][0]["chain_hash"])
+            self.assertEqual(index["snapshots"][1]["pack_path"], second["summary"]["pack_path"])
+
+            report = verify_snapshot_chain(out)
+            self.assertEqual(report["schema_version"], "repomori.snapshot_chain.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["checked_count"], 2)
+            self.assertEqual(report["summary"]["head_chain_hash"], index["chain"]["head_chain_hash"])
+
+            timeline = read_snapshot_timeline(out)
+            self.assertEqual(timeline["summary"]["chain_status"], "pass")
+            self.assertEqual(timeline["summary"]["chain_head_hash"], index["chain"]["head_chain_hash"])
+            self.assertEqual(timeline["chain"]["status"], "pass")
+            timeline_markdown = format_timeline_markdown(timeline)
+            self.assertIn("Chain status", timeline_markdown)
+
+            doctor = doctor_snapshot_dir(out)
+            self.assertEqual(doctor["status"], "pass")
+            self.assertEqual(doctor["summary"]["chain_status"], "pass")
+
+            brief = build_agent_brief(out)
+            self.assertEqual(brief["summary"]["chain_status"], "pass")
+            self.assertEqual(brief["chain"]["summary"]["head_chain_hash"], index["chain"]["head_chain_hash"])
+
+            markdown = format_snapshot_chain_markdown(report)
+            self.assertIn("# RepoMori Snapshot Chain", markdown)
+            self.assertIn("Head hash", markdown)
+            self.assertIn("Checked", markdown)
+
+    def test_snapshot_chain_detects_metadata_tamper_reorder_and_middle_delete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+            (repo / "next.py").write_text("def next_step():\n    return 'next'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+
+            index_path = out / "snapshots.json"
+            clean = json.loads(index_path.read_text(encoding="utf-8"))
+
+            tampered = json.loads(json.dumps(clean))
+            tampered["snapshots"][0]["repo_path"] = "tampered"
+            index_path.write_text(json.dumps(tampered, indent=2) + "\n", encoding="utf-8")
+            report = verify_snapshot_chain(out)
+            self.assertEqual(report["status"], "fail")
+            self.assertTrue(any("entry hash" in error["message"] for error in report["errors"]))
+
+            reordered = json.loads(json.dumps(clean))
+            reordered["snapshots"][1], reordered["snapshots"][2] = reordered["snapshots"][2], reordered["snapshots"][1]
+            index_path.write_text(json.dumps(reordered, indent=2) + "\n", encoding="utf-8")
+            report = verify_snapshot_chain(out)
+            self.assertEqual(report["status"], "fail")
+            self.assertTrue(any("previous chain hash" in error["message"] or "chain index" in error["message"] for error in report["errors"]))
+
+            deleted = json.loads(json.dumps(clean))
+            deleted["snapshots"] = [deleted["snapshots"][0], deleted["snapshots"][2]]
+            deleted["snapshot_count"] = 2
+            deleted["chain"]["snapshot_count"] = 2
+            index_path.write_text(json.dumps(deleted, indent=2) + "\n", encoding="utf-8")
+            report = verify_snapshot_chain(out)
+            self.assertEqual(report["status"], "fail")
+            self.assertTrue(any("previous chain hash" in error["message"] for error in report["errors"]))
+
+    def test_snapshot_chain_warns_for_legacy_unchained_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            snapshot_repo(repo, out)
+            index_path = out / "snapshots.json"
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            index.pop("chain", None)
+            for snapshot in index["snapshots"]:
+                for field in ("chain_version", "chain_index", "previous_chain_hash", "entry_hash", "chain_hash"):
+                    snapshot.pop(field, None)
+            for field in ("chain_version", "chain_index", "previous_chain_hash", "entry_hash", "chain_hash"):
+                index["latest"].pop(field, None)
+            index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+
+            report = verify_snapshot_chain(out)
+            self.assertEqual(report["status"], "warn")
+            self.assertTrue(report["summary"]["legacy_unchained"])
+            doctor = doctor_snapshot_dir(out)
+            self.assertEqual(doctor["status"], "warn")
+            self.assertEqual(doctor["summary"]["chain_status"], "warn")
+
     def test_read_snapshot_stats_reports_incremental_savings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -904,6 +1010,10 @@ class RepoMoriCodecTests(unittest.TestCase):
             updated = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
             self.assertEqual(updated["snapshot_count"], 1)
             self.assertEqual(updated["latest"]["pack_path"], third["summary"]["pack_path"])
+            self.assertTrue(updated["chain"]["anchored_to_pruned_history"])
+            chain = verify_snapshot_chain(out)
+            self.assertEqual(chain["status"], "pass")
+            self.assertTrue(chain["summary"]["anchored_to_pruned_history"])
 
     def test_prune_skips_external_handoff_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1172,6 +1282,12 @@ class RepoMoriCodecTests(unittest.TestCase):
             )
             self.assertTrue(timeline_response["ok"])
             self.assertEqual(timeline_response["result"]["schema_version"], "repomori.timeline.v1")
+            self.assertEqual(timeline_response["result"]["summary"]["chain_status"], "pass")
+
+            chain_response = handle_agent_request({"id": "chain", "method": "chain.verify"}, config_path=config)
+            self.assertTrue(chain_response["ok"])
+            self.assertEqual(chain_response["result"]["schema_version"], "repomori.snapshot_chain.v1")
+            self.assertEqual(chain_response["result"]["status"], "pass")
 
             stats_response = handle_agent_request(
                 {"id": "stats", "method": "stats.read", "params": {"limit": 1}},
@@ -1231,6 +1347,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(first_names, second_names)
         self.assertIn("repomori_context_build", first_names)
         self.assertIn("repomori_brief_build", first_names)
+        self.assertIn("repomori_chain_verify", first_names)
         self.assertIn("repomori_diff_context_build", first_names)
         self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
@@ -1378,6 +1495,19 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(brief_response["result"]["structuredContent"]["summary"]["snapshot_count"], 2)
             self.assertIn("latest_pack", brief_response["result"]["content"][0]["text"])
 
+            chain_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "chain",
+                    "method": "tools/call",
+                    "params": {"name": "repomori_chain_verify", "arguments": {}},
+                },
+                config_path=config,
+            )
+            self.assertEqual(chain_response["result"]["structuredContent"]["schema_version"], "repomori.snapshot_chain.v1")
+            self.assertEqual(chain_response["result"]["structuredContent"]["status"], "pass")
+            self.assertIn("checked", chain_response["result"]["content"][0]["text"])
+
             schema_response = handle_mcp_request(
                 {
                     "jsonrpc": "2.0",
@@ -1414,14 +1544,17 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
         self.assertIn("repomori.brief.v1", schema_versions)
+        self.assertIn("repomori.snapshot_chain.v1", schema_versions)
         self.assertIn("repomori.stats.v1", schema_versions)
         self.assertIn("repomori.diff_context.v1", schema_versions)
         self.assertIn("brief.build", catalog["agent_methods"])
+        self.assertIn("chain.verify", catalog["agent_methods"])
         self.assertIn("context.build", catalog["agent_methods"])
         self.assertIn("diff_context.build", catalog["agent_methods"])
         self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
         self.assertIn("repomori_brief_build", catalog["mcp_tools"])
+        self.assertIn("repomori_chain_verify", catalog["mcp_tools"])
         self.assertIn("repomori_diff_context_build", catalog["mcp_tools"])
         self.assertIn("repomori_stats_read", catalog["mcp_tools"])
         self.assertIn("repomori_schema_list", catalog["mcp_tools"])
@@ -1443,6 +1576,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(agent_brief["selected"], "repomori.agent_brief.v1")
         self.assertEqual(agent_brief["schema"]["producer"], "build_agent_brief")
 
+        chain = schema_catalog("repomori.snapshot_chain.v1")
+        self.assertEqual(chain["selected"], "repomori.snapshot_chain.v1")
+        self.assertEqual(chain["schema"]["producer"], "verify_snapshot_chain")
+
     def test_golden_fixture_core_output_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1456,6 +1593,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
             diff_context = build_diff_context_bundle(pack, memory["summary"]["pack_path"])
             agent_brief = build_agent_brief(memory_dir)
+            chain = verify_snapshot_chain(memory_dir)
             stats = read_snapshot_stats(memory_dir)
             scan = scan_repository(repo)
             agent_help = handle_agent_request({"id": 1, "method": "agent.help"})
@@ -1490,6 +1628,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     agent_brief,
                     "repomori.agent_brief.v1",
                     {"schema_version", "status", "out_dir", "summary", "latest_snapshot", "artifacts", "recommended_commands"},
+                ),
+                "chain": (
+                    chain,
+                    "repomori.snapshot_chain.v1",
+                    {"schema_version", "status", "out_dir", "summary", "errors", "warnings"},
                 ),
                 "stats": (
                     stats,
@@ -2065,6 +2208,34 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.timeline.v1")
             self.assertEqual(payload["snapshot_count"], 2)
             self.assertEqual(payload["returned_count"], 1)
+            self.assertEqual(payload["summary"]["chain_status"], "pass")
+
+    def test_cli_chain_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "chain-cli"
+            snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "chain",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.snapshot_chain.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["summary"]["checked_count"], 2)
+            markdown = format_snapshot_chain_markdown(payload)
+            self.assertIn("Head hash", markdown)
 
     def test_cli_stats_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
