@@ -138,6 +138,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "out_dir", "summary", "errors", "warnings"],
     },
     {
+        "schema_version": "repomori.snapshot_anchor.v1",
+        "kind": "report",
+        "title": "Snapshot timeline anchor proof",
+        "producer": "build_snapshot_anchor",
+        "required_fields": ["schema_version", "status", "out_dir", "created_at", "chain", "latest_snapshot", "verification", "anchor_hash"],
+    },
+    {
         "schema_version": "repomori.snapshot.v1",
         "kind": "report",
         "title": "Single snapshot build report",
@@ -3560,6 +3567,107 @@ def format_snapshot_chain_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def build_snapshot_anchor(out_dir: Path | str) -> dict[str, Any]:
+    """Build a small external proof record for the current snapshot chain head."""
+
+    out_path = Path(out_dir).resolve()
+    chain = verify_snapshot_chain(out_path)
+    latest = None
+    if (out_path / "snapshots.json").exists():
+        try:
+            index = _read_snapshot_index(out_path / "snapshots.json", out_path)
+        except (json.JSONDecodeError, ValueError):
+            index = {}
+        latest = index.get("latest") if isinstance(index.get("latest"), dict) else None
+    chain_summary = chain.get("summary", {})
+    latest_summary = _snapshot_anchor_latest(out_path, latest)
+    anchor = {
+        "schema_version": "repomori.snapshot_anchor.v1",
+        "status": chain.get("status"),
+        "out_dir": str(out_path),
+        "created_at": int(time.time()),
+        "producer": {
+            "name": "RepoMori",
+            "pack_schema_version": SCHEMA_VERSION,
+            "anchor_schema_version": "repomori.snapshot_anchor.v1",
+        },
+        "chain": {
+            "chain_version": chain_summary.get("chain_version"),
+            "algorithm": chain_summary.get("algorithm"),
+            "head_chain_hash": chain_summary.get("head_chain_hash"),
+            "snapshot_count": chain_summary.get("snapshot_count"),
+            "checked_count": chain_summary.get("checked_count"),
+            "anchored_to_pruned_history": chain_summary.get("anchored_to_pruned_history"),
+            "legacy_unchained": chain_summary.get("legacy_unchained"),
+        },
+        "latest_snapshot": latest_summary,
+        "verification": {
+            "schema_version": chain.get("schema_version"),
+            "status": chain.get("status"),
+            "error_count": len(chain.get("errors", [])),
+            "warning_count": len(chain.get("warnings", [])),
+            "errors": chain.get("errors", []),
+            "warnings": chain.get("warnings", []),
+        },
+    }
+    anchor["anchor_hash"] = _canonical_json_hash(anchor)
+    return anchor
+
+
+def format_snapshot_anchor_markdown(anchor: dict[str, Any]) -> str:
+    """Render a snapshot anchor proof as Markdown."""
+
+    chain = anchor.get("chain", {})
+    latest = anchor.get("latest_snapshot") or {}
+    verification = anchor.get("verification", {})
+    lines = [
+        "# RepoMori Snapshot Anchor",
+        "",
+        f"- Status: `{anchor.get('status')}`",
+        f"- Output: `{anchor.get('out_dir')}`",
+        f"- Created at: `{anchor.get('created_at')}`",
+        f"- Anchor hash: `{anchor.get('anchor_hash')}`",
+        "",
+        "## Chain",
+        "",
+        f"- Version: `{chain.get('chain_version')}`",
+        f"- Algorithm: `{chain.get('algorithm')}`",
+        f"- Head hash: `{chain.get('head_chain_hash')}`",
+        f"- Snapshot count: `{chain.get('snapshot_count')}`",
+        f"- Checked count: `{chain.get('checked_count')}`",
+        f"- Anchored to pruned history: `{chain.get('anchored_to_pruned_history')}`",
+        f"- Legacy unchained: `{chain.get('legacy_unchained')}`",
+        "",
+        "## Latest Snapshot",
+        "",
+    ]
+    if latest:
+        lines.extend(
+            [
+                f"- Pack name: `{latest.get('pack_name')}`",
+                f"- Pack path: `{latest.get('pack_path')}`",
+                f"- Pack SHA-256: `{latest.get('pack_sha256')}`",
+                f"- Created at: `{latest.get('created_at')}`",
+                f"- Chain index: `{latest.get('chain_index')}`",
+                f"- Chain hash: `{latest.get('chain_hash')}`",
+                "",
+            ]
+        )
+    else:
+        lines.extend(["No latest snapshot is recorded.", ""])
+    lines.extend(
+        [
+            "## Verification",
+            "",
+            f"- Status: `{verification.get('status')}`",
+            f"- Errors: `{verification.get('error_count')}`",
+            f"- Warnings: `{verification.get('warning_count')}`",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def read_snapshot_stats(out_dir: Path | str, *, limit: int | None = 10) -> dict[str, Any]:
     """Summarize snapshot reuse, rebuild, and storage trends."""
 
@@ -5446,6 +5554,26 @@ def _agent_brief_commands(
     return commands
 
 
+def _snapshot_anchor_latest(out_path: Path, latest: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(latest, dict):
+        return None
+    pack_path = _recorded_snapshot_path(out_path, latest.get("pack_path"))
+    return {
+        "created_at": latest.get("created_at"),
+        "status": latest.get("status"),
+        "repo_path": latest.get("repo_path"),
+        "pack_name": latest.get("pack_name"),
+        "pack_path": str(pack_path) if pack_path is not None else latest.get("pack_path"),
+        "pack_sha256": latest.get("pack_sha256"),
+        "file_count": latest.get("file_count"),
+        "logical_bytes": latest.get("logical_bytes"),
+        "pack_bytes": latest.get("pack_bytes"),
+        "chain_index": latest.get("chain_index"),
+        "entry_hash": latest.get("entry_hash"),
+        "chain_hash": latest.get("chain_hash"),
+    }
+
+
 def _snapshot_stamp(timestamp: float) -> str:
     return time.strftime("%Y%m%d-%H%M%S", time.localtime(timestamp))
 
@@ -6229,6 +6357,7 @@ AGENT_METHODS = (
     "ping",
     "memory.run",
     "brief.build",
+    "anchor.build",
     "chain.verify",
     "timeline.read",
     "stats.read",
@@ -6308,6 +6437,18 @@ MCP_TOOLS = (
         "title": "RepoMori Chain Verify",
         "description": "Verify the configured snapshot timeline hash chain.",
         "agent_method": "chain.verify",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"out_dir": {"type": "string"}},
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_anchor_build",
+        "title": "RepoMori Anchor Build",
+        "description": "Build a small external proof record for the current snapshot timeline head.",
+        "agent_method": "anchor.build",
         "inputSchema": {
             "type": "object",
             "properties": {"out_dir": {"type": "string"}},
@@ -6531,6 +6672,8 @@ def _agent_dispatch(
             top_terms=_agent_int(params, "top_terms", 40),
             top_symbols=_agent_int(params, "top_symbols", 40),
         )
+    if method == "anchor.build":
+        return build_snapshot_anchor(_agent_out_dir(params, settings))
     if method == "chain.verify":
         return verify_snapshot_chain(_agent_out_dir(params, settings))
     if method == "timeline.read":
@@ -6867,6 +7010,13 @@ def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
         lines.append(f"checked: {summary.get('checked_count')}")
         lines.append(f"head: {summary.get('head_chain_hash')}")
         lines.append(f"anchored: {summary.get('anchored_to_pruned_history')}")
+    elif name == "repomori_anchor_build":
+        chain = payload.get("chain", {})
+        latest = payload.get("latest_snapshot") or {}
+        lines.append(f"status: {payload.get('status')}")
+        lines.append(f"head: {chain.get('head_chain_hash')}")
+        lines.append(f"anchor_hash: {payload.get('anchor_hash')}")
+        lines.append(f"latest_pack: {latest.get('pack_path')}")
     elif name == "repomori_file_get":
         lines.append(f"path: {payload.get('path')}")
         lines.append(f"size: {payload.get('size')}")

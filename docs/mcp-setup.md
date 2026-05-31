@@ -43,6 +43,8 @@ Call `repomori_brief_build` when an agent needs one concise start point for the
 latest timeline state.
 Call `repomori_chain_verify` to check that the snapshot timeline hash chain has
 not been edited, reordered, or corrupted.
+Call `repomori_anchor_build` when you want a compact proof record for the
+current chain head that can be copied outside the snapshot directory.
 
 ## Tools
 
@@ -50,6 +52,7 @@ not been edited, reordered, or corrupted.
 - `repomori_memory_run`
 - `repomori_brief_build`
 - `repomori_chain_verify`
+- `repomori_anchor_build`
 - `repomori_timeline_read`
 - `repomori_stats_read`
 - `repomori_doctor_run`

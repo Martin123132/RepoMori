@@ -13,6 +13,7 @@
 - Added optional memory-cycle diff context artifacts with `memory --diff-context`.
 - Added snapshot-directory agent start briefs with `brief <snapshot-dir>`.
 - Added tamper-evident snapshot timeline chain verification.
+- Added snapshot timeline anchor proof exports.
 - Added public launch docs, issue templates, badges, and project `.gitignore`.
 - Added `memory` cycle command for snapshot, handoff, doctor, prune, and timeline.
 - Added `init` config profiles through `repomori.toml`.

@@ -61,6 +61,7 @@ python -m repomori schema --json
 python -m repomori brief D:\Dev\RepoMori\packs --out D:\Dev\RepoMori\agent-brief.md
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
 python -m repomori chain D:\Dev\RepoMori\packs --json
+python -m repomori anchor D:\Dev\RepoMori\packs --out D:\Dev\RepoMori\timeline-anchor.json
 python -m repomori timeline D:\Dev\RepoMori\packs --format json
 python -m repomori doctor D:\Dev\RepoMori\packs --json
 python -m repomori prune D:\Dev\RepoMori\packs --keep 20 --json
@@ -109,6 +110,7 @@ repomori mcp [--config file] [--profile name]
 repomori schema [schema-version] [--json]
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-incremental] [--no-compare] [--json]
 repomori chain <snapshot-dir> [--format markdown|json] [--out file] [--json]
+repomori anchor <snapshot-dir> [--format json|markdown] [--out file] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori stats <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
@@ -208,13 +210,14 @@ query RepoMori without guessing shell commands. Send one JSON object per line:
 {"id":1,"method":"agent.help"}
 {"id":2,"method":"query.run","params":{"text":"sqlite Store","limit":3}}
 {"id":3,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
-{"id":4,"method":"file.get","params":{"path":"repomori/codec.py"}}
+{"id":4,"method":"anchor.build"}
+{"id":5,"method":"file.get","params":{"path":"repomori/codec.py"}}
 ```
 
 Responses are JSON lines with `schema_version`, `jsonrpc`, `id`, `ok`, and
 either `result` or `error`. Supported methods are `memory.run`, `timeline.read`,
 `stats.read`, `doctor.run`, `query.run`, `context.build`,
-`brief.build`, `chain.verify`, `diff_context.build`, `handoff.build`,
+`brief.build`, `chain.verify`, `anchor.build`, `diff_context.build`, `handoff.build`,
 `capsule.build`, `file.get`, and `schema.list`. Methods use the configured latest snapshot pack when `pack` is
 not supplied. `diff_context.build` can also infer previous-to-latest from the
 configured snapshot directory.
@@ -245,7 +248,7 @@ Example local client config:
 ```
 
 The MCP tool names are `repomori_help`, `repomori_memory_run`,
-`repomori_brief_build`, `repomori_chain_verify`, `repomori_timeline_read`,
+`repomori_brief_build`, `repomori_chain_verify`, `repomori_anchor_build`, `repomori_timeline_read`,
 `repomori_stats_read`, `repomori_doctor_run`, `repomori_query_run`,
 `repomori_context_build`, `repomori_diff_context_build`, `repomori_handoff_build`,
 `repomori_capsule_build`, `repomori_file_get`, and
@@ -269,6 +272,11 @@ counts, plus incremental reuse totals and snapshot-chain status.
 indexed snapshot entry hash, previous-chain pointer, and index head hash. Legacy
 unchained timelines warn instead of failing; new snapshot and memory runs write
 chain metadata automatically.
+
+`anchor` exports a small JSON or Markdown proof record for the current snapshot
+timeline head. It includes the chain head hash, latest snapshot pack hash,
+verification status, and an `anchor_hash` over the proof payload so you can copy
+the record outside the snapshot directory.
 
 `stats` reads `snapshots.json` and reports incremental savings over time:
 incremental versus full snapshot counts, reused and rebuilt file totals, reused

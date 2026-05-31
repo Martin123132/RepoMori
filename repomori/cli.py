@@ -12,6 +12,7 @@ from .codec import (
     benchmark_repo,
     build_agent_brief,
     build_repo_brief,
+    build_snapshot_anchor,
     build_capsule,
     build_context_bundle,
     build_diff_context_bundle,
@@ -29,6 +30,7 @@ from .codec import (
     format_diff_context_markdown,
     format_eval_markdown,
     format_snapshot_chain_markdown,
+    format_snapshot_anchor_markdown,
     format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
@@ -158,6 +160,12 @@ def main(argv: list[str] | None = None) -> int:
     chain.add_argument("--format", choices=("markdown", "json"), default="markdown")
     chain.add_argument("--out", type=Path, help="Write the chain report to this file.")
     chain.add_argument("--json", action="store_true", help="Print chain JSON.")
+
+    anchor = sub.add_parser("anchor", help="Export a snapshot timeline anchor proof.")
+    anchor.add_argument("out_dir", type=Path)
+    anchor.add_argument("--format", choices=("json", "markdown"), default="json")
+    anchor.add_argument("--out", type=Path, help="Write the anchor proof to this file.")
+    anchor.add_argument("--json", action="store_true", help="Print anchor JSON.")
 
     doctor = sub.add_parser("doctor", help="Check snapshot directory health.")
     doctor.add_argument("out_dir", type=Path)
@@ -499,6 +507,20 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(report, indent=2)
             if output_format == "json"
             else format_snapshot_chain_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
+    if args.command == "anchor":
+        report = build_snapshot_anchor(args.out_dir)
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_snapshot_anchor_markdown(report)
         )
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)
