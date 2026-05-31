@@ -145,6 +145,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "out_dir", "created_at", "chain", "latest_snapshot", "verification", "anchor_hash"],
     },
     {
+        "schema_version": "repomori.snapshot_anchor.verify.v1",
+        "kind": "report",
+        "title": "Snapshot timeline anchor verification report",
+        "producer": "verify_snapshot_anchor",
+        "required_fields": ["schema_version", "status", "anchor_path", "out_dir", "summary", "errors", "warnings"],
+    },
+    {
         "schema_version": "repomori.snapshot.v1",
         "kind": "report",
         "title": "Single snapshot build report",
@@ -3668,6 +3675,240 @@ def format_snapshot_anchor_markdown(anchor: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def verify_snapshot_anchor(
+    anchor: Path | str | dict[str, Any],
+    out_dir: Path | str | None = None,
+    *,
+    check_current: bool = True,
+) -> dict[str, Any]:
+    """Verify an exported snapshot anchor proof and optionally the current chain."""
+
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    anchor_path: Path | None = None
+    anchor_payload: dict[str, Any] | None = None
+    source = "<memory>"
+
+    if isinstance(anchor, dict):
+        anchor_payload = anchor
+    else:
+        anchor_path = Path(anchor).resolve()
+        source = str(anchor_path)
+        try:
+            loaded = json.loads(anchor_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                anchor_payload = loaded
+            else:
+                _add_anchor_issue(errors, source, "Anchor file must contain a JSON object.")
+        except FileNotFoundError:
+            _add_anchor_issue(errors, source, "Anchor file was not found.")
+        except json.JSONDecodeError as exc:
+            _add_anchor_issue(errors, source, f"Anchor file is invalid JSON: {exc}")
+
+    actual_anchor_hash = None
+    expected_anchor_hash = None
+    anchor_hash_valid: bool | None = None
+    anchor_status = None
+    anchor_head_hash = None
+    anchor_latest: dict[str, Any] | None = None
+    current_chain: dict[str, Any] | None = None
+    current_latest: dict[str, Any] | None = None
+    current_head_hash = None
+    chain_head_matches: bool | None = None
+    latest_snapshot_matches: bool | None = None
+    latest_pack_hash_matches: bool | None = None
+    current_pack_hash_matches: bool | None = None
+
+    if anchor_payload is not None:
+        if anchor_payload.get("schema_version") != "repomori.snapshot_anchor.v1":
+            _add_anchor_issue(
+                errors,
+                source,
+                "Unexpected anchor schema version.",
+                expected="repomori.snapshot_anchor.v1",
+                actual=anchor_payload.get("schema_version"),
+            )
+        actual_anchor_hash = anchor_payload.get("anchor_hash")
+        if isinstance(actual_anchor_hash, str) and actual_anchor_hash:
+            expected_anchor_hash = _snapshot_anchor_expected_hash(anchor_payload)
+            anchor_hash_valid = actual_anchor_hash == expected_anchor_hash
+            if not anchor_hash_valid:
+                _add_anchor_issue(
+                    errors,
+                    source,
+                    "Anchor hash does not match the proof payload.",
+                    expected=expected_anchor_hash,
+                    actual=actual_anchor_hash,
+                )
+        else:
+            anchor_hash_valid = False
+            _add_anchor_issue(errors, source, "Anchor proof is missing anchor_hash.")
+
+        anchor_status = anchor_payload.get("status")
+        if anchor_status == "fail":
+            _add_anchor_issue(warnings, source, "Anchor proof records a failing chain status.")
+        elif anchor_status == "warn":
+            _add_anchor_issue(warnings, source, "Anchor proof records a warning chain status.")
+
+        chain = anchor_payload.get("chain") if isinstance(anchor_payload.get("chain"), dict) else {}
+        anchor_head_hash = chain.get("head_chain_hash")
+        anchor_latest = anchor_payload.get("latest_snapshot") if isinstance(anchor_payload.get("latest_snapshot"), dict) else None
+        verification = anchor_payload.get("verification") if isinstance(anchor_payload.get("verification"), dict) else {}
+        if verification and verification.get("status") != anchor_status:
+            _add_anchor_issue(
+                errors,
+                source,
+                "Anchor status does not match embedded verification status.",
+                expected=anchor_status,
+                actual=verification.get("status"),
+            )
+        if anchor_latest and anchor_latest.get("chain_hash") and anchor_head_hash and anchor_latest.get("chain_hash") != anchor_head_hash:
+            _add_anchor_issue(
+                errors,
+                source,
+                "Anchor latest snapshot chain hash does not match anchor head hash.",
+                expected=anchor_head_hash,
+                actual=anchor_latest.get("chain_hash"),
+            )
+
+    resolved_out_dir = Path(out_dir).resolve() if out_dir is not None else None
+    if resolved_out_dir is None and anchor_payload is not None and anchor_payload.get("out_dir"):
+        resolved_out_dir = Path(str(anchor_payload.get("out_dir"))).resolve()
+
+    if check_current:
+        if resolved_out_dir is None:
+            _add_anchor_issue(errors, source, "No snapshot directory was supplied or recorded in the anchor.")
+        else:
+            current_chain = verify_snapshot_chain(resolved_out_dir)
+            current_head_hash = current_chain.get("summary", {}).get("head_chain_hash")
+            if current_chain.get("status") == "fail":
+                _add_anchor_issue(errors, str(resolved_out_dir), "Current snapshot chain verification failed.")
+            elif current_chain.get("status") == "warn":
+                _add_anchor_issue(warnings, str(resolved_out_dir), "Current snapshot chain verification has warnings.")
+
+            if anchor_payload is not None:
+                chain_head_matches = anchor_head_hash == current_head_hash
+                if not chain_head_matches:
+                    _add_anchor_issue(
+                        errors,
+                        str(resolved_out_dir),
+                        "Anchor chain head does not match current snapshot timeline head.",
+                        expected=anchor_head_hash,
+                        actual=current_head_hash,
+                    )
+
+            try:
+                index = _read_snapshot_index(resolved_out_dir / "snapshots.json", resolved_out_dir)
+                current_latest = _snapshot_anchor_latest(
+                    resolved_out_dir,
+                    index.get("latest") if isinstance(index.get("latest"), dict) else None,
+                )
+            except (json.JSONDecodeError, ValueError) as exc:
+                _add_anchor_issue(errors, str(resolved_out_dir / "snapshots.json"), str(exc))
+
+            if anchor_payload is not None and anchor_latest is not None and current_latest is not None:
+                latest_snapshot_matches = (
+                    anchor_latest.get("chain_hash") == current_latest.get("chain_hash")
+                    and anchor_latest.get("pack_sha256") == current_latest.get("pack_sha256")
+                )
+                if not latest_snapshot_matches:
+                    _add_anchor_issue(
+                        errors,
+                        str(resolved_out_dir),
+                        "Anchor latest snapshot does not match current latest snapshot.",
+                        expected={
+                            "chain_hash": anchor_latest.get("chain_hash"),
+                            "pack_sha256": anchor_latest.get("pack_sha256"),
+                        },
+                        actual={
+                            "chain_hash": current_latest.get("chain_hash"),
+                            "pack_sha256": current_latest.get("pack_sha256"),
+                        },
+                    )
+                if anchor_latest.get("pack_sha256") and current_latest.get("pack_sha256"):
+                    latest_pack_hash_matches = anchor_latest.get("pack_sha256") == current_latest.get("pack_sha256")
+                pack_path = _recorded_snapshot_path(resolved_out_dir, current_latest.get("pack_path"))
+                if pack_path is not None and pack_path.exists():
+                    actual_pack_hash = _path_sha256(pack_path)
+                    current_pack_hash_matches = actual_pack_hash == current_latest.get("pack_sha256")
+                    if not current_pack_hash_matches:
+                        _add_anchor_issue(
+                            errors,
+                            str(pack_path),
+                            "Current latest pack SHA-256 does not match snapshots.json.",
+                            expected=current_latest.get("pack_sha256"),
+                            actual=actual_pack_hash,
+                        )
+                elif pack_path is not None:
+                    current_pack_hash_matches = False
+                    _add_anchor_issue(errors, str(pack_path), "Current latest pack file was not found.")
+            elif anchor_payload is not None and (anchor_latest is not None or current_latest is not None):
+                latest_snapshot_matches = False
+                _add_anchor_issue(errors, str(resolved_out_dir), "Anchor/latest snapshot comparison could not be completed.")
+
+    status = "fail" if errors else "warn" if warnings else "pass"
+    return {
+        "schema_version": "repomori.snapshot_anchor.verify.v1",
+        "status": status,
+        "anchor_path": str(anchor_path) if anchor_path is not None else None,
+        "out_dir": str(resolved_out_dir) if resolved_out_dir is not None else None,
+        "checked_at": int(time.time()),
+        "settings": {"check_current": check_current},
+        "summary": {
+            "anchor_schema_version": anchor_payload.get("schema_version") if anchor_payload else None,
+            "anchor_status": anchor_status,
+            "anchor_hash": actual_anchor_hash,
+            "expected_anchor_hash": expected_anchor_hash,
+            "anchor_hash_valid": anchor_hash_valid,
+            "anchor_head_hash": anchor_head_hash,
+            "current_head_hash": current_head_hash,
+            "chain_head_matches": chain_head_matches,
+            "latest_snapshot_matches": latest_snapshot_matches,
+            "latest_pack_hash_matches": latest_pack_hash_matches,
+            "current_pack_hash_matches": current_pack_hash_matches,
+            "current_chain_status": current_chain.get("status") if current_chain else None,
+        },
+        "current_chain": current_chain,
+        "current_latest_snapshot": current_latest,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def format_snapshot_anchor_verification_markdown(report: dict[str, Any]) -> str:
+    """Render snapshot anchor verification as Markdown."""
+
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Snapshot Anchor Verification",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Anchor: `{report.get('anchor_path')}`",
+        f"- Output: `{report.get('out_dir')}`",
+        f"- Anchor hash valid: `{summary.get('anchor_hash_valid')}`",
+        f"- Anchor hash: `{summary.get('anchor_hash')}`",
+        f"- Anchor head: `{summary.get('anchor_head_hash')}`",
+        f"- Current head: `{summary.get('current_head_hash')}`",
+        f"- Chain head matches: `{summary.get('chain_head_matches')}`",
+        f"- Latest snapshot matches: `{summary.get('latest_snapshot_matches')}`",
+        f"- Current pack hash matches: `{summary.get('current_pack_hash_matches')}`",
+        "",
+    ]
+    errors = report.get("errors", [])
+    warnings = report.get("warnings", [])
+    if errors:
+        lines.extend(["## Errors", ""])
+        for error in errors:
+            lines.append(f"- `{error.get('path')}` {error.get('message')}")
+        lines.append("")
+    if warnings:
+        lines.extend(["## Warnings", ""])
+        for warning in warnings:
+            lines.append(f"- `{warning.get('path')}` {warning.get('message')}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def read_snapshot_stats(out_dir: Path | str, *, limit: int | None = 10) -> dict[str, Any]:
     """Summarize snapshot reuse, rebuild, and storage trends."""
 
@@ -5574,6 +5815,12 @@ def _snapshot_anchor_latest(out_path: Path, latest: dict[str, Any] | None) -> di
     }
 
 
+def _snapshot_anchor_expected_hash(anchor: dict[str, Any]) -> str:
+    payload = dict(anchor)
+    payload.pop("anchor_hash", None)
+    return _canonical_json_hash(payload)
+
+
 def _snapshot_stamp(timestamp: float) -> str:
     return time.strftime("%Y%m%d-%H%M%S", time.localtime(timestamp))
 
@@ -5847,6 +6094,22 @@ def _add_chain_issue(
     issue = {"path": path, "message": message}
     if index is not None:
         issue["index"] = index
+    if expected is not None:
+        issue["expected"] = expected
+    if actual is not None:
+        issue["actual"] = actual
+    issues.append(issue)
+
+
+def _add_anchor_issue(
+    issues: list[dict[str, Any]],
+    path: str,
+    message: str,
+    *,
+    expected: Any = None,
+    actual: Any = None,
+) -> None:
+    issue = {"path": path, "message": message}
     if expected is not None:
         issue["expected"] = expected
     if actual is not None:
@@ -6358,6 +6621,7 @@ AGENT_METHODS = (
     "memory.run",
     "brief.build",
     "anchor.build",
+    "anchor.verify",
     "chain.verify",
     "timeline.read",
     "stats.read",
@@ -6452,6 +6716,23 @@ MCP_TOOLS = (
         "inputSchema": {
             "type": "object",
             "properties": {"out_dir": {"type": "string"}},
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_anchor_verify",
+        "title": "RepoMori Anchor Verify",
+        "description": "Verify an exported snapshot timeline anchor proof.",
+        "agent_method": "anchor.verify",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "anchor": {"type": "string"},
+                "path": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "check_current": {"type": "boolean"},
+            },
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -6674,6 +6955,18 @@ def _agent_dispatch(
         )
     if method == "anchor.build":
         return build_snapshot_anchor(_agent_out_dir(params, settings))
+    if method == "anchor.verify":
+        anchor_path = params.get("anchor") or params.get("path")
+        if not isinstance(anchor_path, str) or not anchor_path.strip():
+            raise ValueError("anchor.verify requires params.anchor or params.path.")
+        out_value = params.get("out_dir") or settings.get("out_dir")
+        if out_value is not None and not isinstance(out_value, str):
+            raise ValueError("params.out_dir must be a string when supplied.")
+        return verify_snapshot_anchor(
+            anchor_path,
+            out_value,
+            check_current=bool(params.get("check_current", True)),
+        )
     if method == "chain.verify":
         return verify_snapshot_chain(_agent_out_dir(params, settings))
     if method == "timeline.read":
@@ -7017,6 +7310,12 @@ def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
         lines.append(f"head: {chain.get('head_chain_hash')}")
         lines.append(f"anchor_hash: {payload.get('anchor_hash')}")
         lines.append(f"latest_pack: {latest.get('pack_path')}")
+    elif name == "repomori_anchor_verify":
+        summary = payload.get("summary", {})
+        lines.append(f"status: {payload.get('status')}")
+        lines.append(f"anchor_hash_valid: {summary.get('anchor_hash_valid')}")
+        lines.append(f"head_matches: {summary.get('chain_head_matches')}")
+        lines.append(f"latest_matches: {summary.get('latest_snapshot_matches')}")
     elif name == "repomori_file_get":
         lines.append(f"path: {payload.get('path')}")
         lines.append(f"size: {payload.get('size')}")

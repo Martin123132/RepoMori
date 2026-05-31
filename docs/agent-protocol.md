@@ -17,9 +17,10 @@ Send one JSON object per line:
 {"id":3,"method":"brief.build","params":{"timeline_limit":5}}
 {"id":4,"method":"chain.verify"}
 {"id":5,"method":"anchor.build"}
-{"id":6,"method":"query.run","params":{"text":"sqlite Store","limit":3}}
-{"id":7,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
-{"id":8,"method":"file.get","params":{"path":"repomori/codec.py"}}
+{"id":6,"method":"anchor.verify","params":{"anchor":"D:\\Dev\\RepoMori\\timeline-anchor.json"}}
+{"id":7,"method":"query.run","params":{"text":"sqlite Store","limit":3}}
+{"id":8,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
+{"id":9,"method":"file.get","params":{"path":"repomori/codec.py"}}
 ```
 
 Each response is one JSON line:
@@ -38,6 +39,7 @@ Errors use the same envelope with `ok:false` and an `error` object.
 - `brief.build`: builds a concise agent start brief from the configured snapshot timeline.
 - `chain.verify`: verifies the configured snapshot timeline hash chain.
 - `anchor.build`: exports a small proof record for the current snapshot chain head.
+- `anchor.verify`: verifies an exported anchor proof and optionally compares it with the current snapshot timeline.
 - `timeline.read`: reads the configured snapshot timeline.
 - `stats.read`: reads incremental reuse and storage statistics for the snapshot timeline.
 - `doctor.run`: checks snapshot directory health.
@@ -98,6 +100,7 @@ machine-readable `structuredContent`.
 - `repomori_brief_build`: builds an agent start brief from the snapshot timeline.
 - `repomori_chain_verify`: verifies the snapshot timeline hash chain.
 - `repomori_anchor_build`: exports a proof record for the current snapshot chain head.
+- `repomori_anchor_verify`: verifies an exported snapshot anchor proof.
 - `repomori_timeline_read`: reads the configured snapshot timeline.
 - `repomori_stats_read`: reads incremental reuse and storage statistics.
 - `repomori_doctor_run`: checks snapshot directory health.

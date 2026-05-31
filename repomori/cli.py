@@ -31,6 +31,7 @@ from .codec import (
     format_eval_markdown,
     format_snapshot_chain_markdown,
     format_snapshot_anchor_markdown,
+    format_snapshot_anchor_verification_markdown,
     format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
@@ -52,6 +53,7 @@ from .codec import (
     snapshot_repo,
     tree_pack,
     verify_snapshot_chain,
+    verify_snapshot_anchor,
     verify_pack,
     write_scan_baseline,
 )
@@ -166,6 +168,14 @@ def main(argv: list[str] | None = None) -> int:
     anchor.add_argument("--format", choices=("json", "markdown"), default="json")
     anchor.add_argument("--out", type=Path, help="Write the anchor proof to this file.")
     anchor.add_argument("--json", action="store_true", help="Print anchor JSON.")
+
+    verify_anchor = sub.add_parser("verify-anchor", help="Verify a snapshot timeline anchor proof.")
+    verify_anchor.add_argument("anchor", type=Path, help="Anchor JSON file to verify.")
+    verify_anchor.add_argument("out_dir", type=Path, nargs="?", help="Snapshot directory to compare against; defaults to anchor out_dir.")
+    verify_anchor.add_argument("--no-current", action="store_true", help="Only verify the anchor proof hash, not the current snapshot timeline.")
+    verify_anchor.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    verify_anchor.add_argument("--out", type=Path, help="Write the verification report to this file.")
+    verify_anchor.add_argument("--json", action="store_true", help="Print verification JSON.")
 
     doctor = sub.add_parser("doctor", help="Check snapshot directory health.")
     doctor.add_argument("out_dir", type=Path)
@@ -521,6 +531,20 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(report, indent=2)
             if output_format == "json"
             else format_snapshot_anchor_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
+    if args.command == "verify-anchor":
+        report = verify_snapshot_anchor(args.anchor, args.out_dir, check_current=not args.no_current)
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_snapshot_anchor_verification_markdown(report)
         )
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -62,6 +62,7 @@ python -m repomori brief D:\Dev\RepoMori\packs --out D:\Dev\RepoMori\agent-brief
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
 python -m repomori chain D:\Dev\RepoMori\packs --json
 python -m repomori anchor D:\Dev\RepoMori\packs --out D:\Dev\RepoMori\timeline-anchor.json
+python -m repomori verify-anchor D:\Dev\RepoMori\timeline-anchor.json D:\Dev\RepoMori\packs --json
 python -m repomori timeline D:\Dev\RepoMori\packs --format json
 python -m repomori doctor D:\Dev\RepoMori\packs --json
 python -m repomori prune D:\Dev\RepoMori\packs --keep 20 --json
@@ -111,6 +112,7 @@ repomori schema [schema-version] [--json]
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-incremental] [--no-compare] [--json]
 repomori chain <snapshot-dir> [--format markdown|json] [--out file] [--json]
 repomori anchor <snapshot-dir> [--format json|markdown] [--out file] [--json]
+repomori verify-anchor <anchor.json> [snapshot-dir] [--no-current] [--format markdown|json] [--out file] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori stats <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
@@ -217,7 +219,7 @@ query RepoMori without guessing shell commands. Send one JSON object per line:
 Responses are JSON lines with `schema_version`, `jsonrpc`, `id`, `ok`, and
 either `result` or `error`. Supported methods are `memory.run`, `timeline.read`,
 `stats.read`, `doctor.run`, `query.run`, `context.build`,
-`brief.build`, `chain.verify`, `anchor.build`, `diff_context.build`, `handoff.build`,
+`brief.build`, `chain.verify`, `anchor.build`, `anchor.verify`, `diff_context.build`, `handoff.build`,
 `capsule.build`, `file.get`, and `schema.list`. Methods use the configured latest snapshot pack when `pack` is
 not supplied. `diff_context.build` can also infer previous-to-latest from the
 configured snapshot directory.
@@ -248,7 +250,7 @@ Example local client config:
 ```
 
 The MCP tool names are `repomori_help`, `repomori_memory_run`,
-`repomori_brief_build`, `repomori_chain_verify`, `repomori_anchor_build`, `repomori_timeline_read`,
+`repomori_brief_build`, `repomori_chain_verify`, `repomori_anchor_build`, `repomori_anchor_verify`, `repomori_timeline_read`,
 `repomori_stats_read`, `repomori_doctor_run`, `repomori_query_run`,
 `repomori_context_build`, `repomori_diff_context_build`, `repomori_handoff_build`,
 `repomori_capsule_build`, `repomori_file_get`, and
@@ -277,6 +279,10 @@ chain metadata automatically.
 timeline head. It includes the chain head hash, latest snapshot pack hash,
 verification status, and an `anchor_hash` over the proof payload so you can copy
 the record outside the snapshot directory.
+
+`verify-anchor` checks an exported anchor proof. It recomputes the proof's
+`anchor_hash`, then compares the recorded chain head and latest pack hash against
+the current snapshot directory unless `--no-current` is supplied.
 
 `stats` reads `snapshots.json` and reports incremental savings over time:
 incremental versus full snapshot counts, reused and rebuilt file totals, reused

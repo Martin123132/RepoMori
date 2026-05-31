@@ -33,6 +33,7 @@ from repomori.codec import (
     format_context_markdown,
     format_diff_context_markdown,
     format_snapshot_anchor_markdown,
+    format_snapshot_anchor_verification_markdown,
     format_snapshot_chain_markdown,
     format_stats_markdown,
     format_snapshot_markdown,
@@ -55,6 +56,7 @@ from repomori.codec import (
     scan_baseline_from_report,
     scan_repository,
     snapshot_repo,
+    verify_snapshot_anchor,
     tree_pack,
     verify_snapshot_chain,
     verify_pack,
@@ -897,6 +899,49 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(anchor["verification"]["errors"])
             self.assertTrue(anchor["anchor_hash"])
 
+    def test_verify_snapshot_anchor_passes_and_detects_tamper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            snapshot_repo(repo, out)
+            anchor = build_snapshot_anchor(out)
+            report = verify_snapshot_anchor(anchor, out)
+
+            self.assertEqual(report["schema_version"], "repomori.snapshot_anchor.verify.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["summary"]["anchor_hash_valid"])
+            self.assertTrue(report["summary"]["chain_head_matches"])
+            self.assertTrue(report["summary"]["latest_snapshot_matches"])
+            self.assertTrue(report["summary"]["current_pack_hash_matches"])
+
+            tampered = dict(anchor)
+            tampered["created_at"] = int(tampered["created_at"]) + 1
+            tampered_report = verify_snapshot_anchor(tampered, out, check_current=False)
+            self.assertEqual(tampered_report["status"], "fail")
+            self.assertFalse(tampered_report["summary"]["anchor_hash_valid"])
+            self.assertTrue(any("Anchor hash" in error["message"] for error in tampered_report["errors"]))
+
+            markdown = format_snapshot_anchor_verification_markdown(report)
+            self.assertIn("# RepoMori Snapshot Anchor Verification", markdown)
+            self.assertIn("Anchor hash valid", markdown)
+
+    def test_verify_snapshot_anchor_detects_current_timeline_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "snapshots"
+
+            snapshot_repo(repo, out)
+            anchor = build_snapshot_anchor(out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+
+            report = verify_snapshot_anchor(anchor, out)
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["summary"]["chain_head_matches"])
+            self.assertFalse(report["summary"]["latest_snapshot_matches"])
+            self.assertTrue(any("chain head" in error["message"] for error in report["errors"]))
+
     def test_read_snapshot_stats_reports_incremental_savings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -1350,6 +1395,15 @@ class RepoMoriCodecTests(unittest.TestCase):
                 anchor_response["result"]["chain"]["head_chain_hash"],
                 chain_response["result"]["summary"]["head_chain_hash"],
             )
+            anchor_file = Path(tmp) / "agent-anchor.json"
+            anchor_file.write_text(json.dumps(anchor_response["result"], indent=2), encoding="utf-8")
+            anchor_verify_response = handle_agent_request(
+                {"id": "anchor-verify", "method": "anchor.verify", "params": {"anchor": str(anchor_file)}},
+                config_path=config,
+            )
+            self.assertTrue(anchor_verify_response["ok"])
+            self.assertEqual(anchor_verify_response["result"]["schema_version"], "repomori.snapshot_anchor.verify.v1")
+            self.assertEqual(anchor_verify_response["result"]["status"], "pass")
 
             stats_response = handle_agent_request(
                 {"id": "stats", "method": "stats.read", "params": {"limit": 1}},
@@ -1411,6 +1465,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_brief_build", first_names)
         self.assertIn("repomori_chain_verify", first_names)
         self.assertIn("repomori_anchor_build", first_names)
+        self.assertIn("repomori_anchor_verify", first_names)
         self.assertIn("repomori_diff_context_build", first_names)
         self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
@@ -1584,6 +1639,21 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(anchor_response["result"]["structuredContent"]["status"], "pass")
             self.assertIn("anchor_hash", anchor_response["result"]["content"][0]["text"])
 
+            anchor_file = Path(tmp) / "mcp-anchor.json"
+            anchor_file.write_text(json.dumps(anchor_response["result"]["structuredContent"], indent=2), encoding="utf-8")
+            anchor_verify_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "anchor-verify",
+                    "method": "tools/call",
+                    "params": {"name": "repomori_anchor_verify", "arguments": {"anchor": str(anchor_file)}},
+                },
+                config_path=config,
+            )
+            self.assertEqual(anchor_verify_response["result"]["structuredContent"]["schema_version"], "repomori.snapshot_anchor.verify.v1")
+            self.assertEqual(anchor_verify_response["result"]["structuredContent"]["status"], "pass")
+            self.assertIn("anchor_hash_valid", anchor_verify_response["result"]["content"][0]["text"])
+
             schema_response = handle_mcp_request(
                 {
                     "jsonrpc": "2.0",
@@ -1622,9 +1692,11 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.brief.v1", schema_versions)
         self.assertIn("repomori.snapshot_chain.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.v1", schema_versions)
+        self.assertIn("repomori.snapshot_anchor.verify.v1", schema_versions)
         self.assertIn("repomori.stats.v1", schema_versions)
         self.assertIn("repomori.diff_context.v1", schema_versions)
         self.assertIn("anchor.build", catalog["agent_methods"])
+        self.assertIn("anchor.verify", catalog["agent_methods"])
         self.assertIn("brief.build", catalog["agent_methods"])
         self.assertIn("chain.verify", catalog["agent_methods"])
         self.assertIn("context.build", catalog["agent_methods"])
@@ -1632,6 +1704,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
         self.assertIn("repomori_anchor_build", catalog["mcp_tools"])
+        self.assertIn("repomori_anchor_verify", catalog["mcp_tools"])
         self.assertIn("repomori_brief_build", catalog["mcp_tools"])
         self.assertIn("repomori_chain_verify", catalog["mcp_tools"])
         self.assertIn("repomori_diff_context_build", catalog["mcp_tools"])
@@ -1663,6 +1736,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(anchor["selected"], "repomori.snapshot_anchor.v1")
         self.assertEqual(anchor["schema"]["producer"], "build_snapshot_anchor")
 
+        anchor_verify = schema_catalog("repomori.snapshot_anchor.verify.v1")
+        self.assertEqual(anchor_verify["selected"], "repomori.snapshot_anchor.verify.v1")
+        self.assertEqual(anchor_verify["schema"]["producer"], "verify_snapshot_anchor")
+
     def test_golden_fixture_core_output_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1678,6 +1755,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             agent_brief = build_agent_brief(memory_dir)
             chain = verify_snapshot_chain(memory_dir)
             anchor = build_snapshot_anchor(memory_dir)
+            anchor_verify = verify_snapshot_anchor(anchor, memory_dir)
             stats = read_snapshot_stats(memory_dir)
             scan = scan_repository(repo)
             agent_help = handle_agent_request({"id": 1, "method": "agent.help"})
@@ -1722,6 +1800,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     anchor,
                     "repomori.snapshot_anchor.v1",
                     {"schema_version", "status", "out_dir", "created_at", "chain", "latest_snapshot", "verification", "anchor_hash"},
+                ),
+                "anchor_verify": (
+                    anchor_verify,
+                    "repomori.snapshot_anchor.verify.v1",
+                    {"schema_version", "status", "anchor_path", "out_dir", "summary", "errors", "warnings"},
                 ),
                 "stats": (
                     stats,
@@ -2367,6 +2450,33 @@ class RepoMoriCodecTests(unittest.TestCase):
                 text=True,
             )
             self.assertIn("# RepoMori Snapshot Anchor", anchor_md.read_text(encoding="utf-8"))
+
+    def test_cli_verify_anchor_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "verify-anchor-cli"
+            anchor_path = Path(tmp) / "anchor.json"
+            snapshot_repo(repo, out)
+            anchor_path.write_text(json.dumps(build_snapshot_anchor(out), indent=2), encoding="utf-8")
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "verify-anchor",
+                    str(anchor_path),
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.snapshot_anchor.verify.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertTrue(payload["summary"]["anchor_hash_valid"])
+            self.assertTrue(payload["summary"]["chain_head_matches"])
 
     def test_cli_stats_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

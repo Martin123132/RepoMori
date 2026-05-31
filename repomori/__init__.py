@@ -25,6 +25,7 @@ from .codec import (
     format_eval_markdown,
     format_snapshot_chain_markdown,
     format_snapshot_anchor_markdown,
+    format_snapshot_anchor_verification_markdown,
     format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
@@ -48,6 +49,7 @@ from .codec import (
     scan_repository,
     snapshot_repo,
     verify_snapshot_chain,
+    verify_snapshot_anchor,
     verify_pack,
     write_scan_baseline,
 )
@@ -77,6 +79,7 @@ __all__ = [
     "format_eval_markdown",
     "format_snapshot_chain_markdown",
     "format_snapshot_anchor_markdown",
+    "format_snapshot_anchor_verification_markdown",
     "format_stats_markdown",
     "format_snapshot_markdown",
     "format_timeline_markdown",
@@ -100,6 +103,7 @@ __all__ = [
     "scan_repository",
     "snapshot_repo",
     "verify_snapshot_chain",
+    "verify_snapshot_anchor",
     "verify_pack",
     "write_scan_baseline",
 ]

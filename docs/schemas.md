@@ -25,6 +25,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.prune.v1`: safe prune dry-run or applied result.
 - `repomori.snapshot_chain.v1`: snapshot timeline hash-chain verification report.
 - `repomori.snapshot_anchor.v1`: external proof record for the current snapshot chain head.
+- `repomori.snapshot_anchor.verify.v1`: verification report for an exported snapshot anchor proof.
 - `repomori.timeline.v1`: snapshot timeline report.
 - `repomori.stats.v1`: snapshot incremental reuse and storage statistics.
 - `repomori.snapshot.v1`: single snapshot build report.

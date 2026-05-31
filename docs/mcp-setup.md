@@ -45,6 +45,8 @@ Call `repomori_chain_verify` to check that the snapshot timeline hash chain has
 not been edited, reordered, or corrupted.
 Call `repomori_anchor_build` when you want a compact proof record for the
 current chain head that can be copied outside the snapshot directory.
+Call `repomori_anchor_verify` to check that exported proof later and compare it
+with the configured current timeline.
 
 ## Tools
 
@@ -53,6 +55,7 @@ current chain head that can be copied outside the snapshot directory.
 - `repomori_brief_build`
 - `repomori_chain_verify`
 - `repomori_anchor_build`
+- `repomori_anchor_verify`
 - `repomori_timeline_read`
 - `repomori_stats_read`
 - `repomori_doctor_run`
