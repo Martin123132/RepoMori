@@ -9,14 +9,14 @@
       "code": "temp_drive_path",
       "path": "README.md",
       "message": "D-drive temp path appears in source.",
-      "line": 40
+      "line": 41
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "README.md",
       "message": "D-drive temp path appears in source.",
-      "line": 50
+      "line": 51
     },
     {
       "severity": "low",
