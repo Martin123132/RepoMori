@@ -26,9 +26,18 @@ on:
           - both
 
 jobs:
-  run_anchor_checks:
+  run_anchor_checks_schedule:
+    if: github.event_name == 'schedule'
     uses: ./.github/workflows/memory-anchor-reusable.yml
     with:
-      repo: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.repo || '.' }}
-      out_dir: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.out_dir || '.repomori-packs' }}
-      anchor_mode: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.anchor_mode || 'strict' }}
+      repo: "."
+      out_dir: ".repomori-packs"
+      anchor_mode: "strict"
+
+  run_anchor_checks_dispatch:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/memory-anchor-reusable.yml
+    with:
+      repo: ${{ github.event.inputs.repo || '.' }}
+      out_dir: ${{ github.event.inputs.out_dir || '.repomori-packs' }}
+      anchor_mode: ${{ github.event.inputs.anchor_mode || 'strict' }}
