@@ -195,6 +195,8 @@ Use `--anchor-out` to write a timeline anchor proof beside this memory snapshot.
 Use `--anchor-verify` in CI or other automation to verify the exported anchor
 immediately against current timeline head; pair it with `--allow-unverified-anchor`
 to keep sessions running while still recording the mismatch.
+The repo includes `.github/workflows/memory-anchor.yml` as a ready-to-run anchor
+automation example for scheduled sessions.
 Snapshots reuse unchanged file state from the previous latest pack by default;
 use `--no-incremental` when you want a clean rebuild. Prune remains a dry run
 unless `--prune-apply` is supplied. Use `init` to write a local `repomori.toml`

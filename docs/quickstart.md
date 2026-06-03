@@ -60,6 +60,17 @@ This builds a fresh incremental snapshot, creates a handoff package unless disab
 
 For automation, add `--anchor-out` to export a timeline anchor every run and `--anchor-verify` to validate it right away. `--allow-unverified-anchor` keeps the run non-fatal if you need to continue while investigating a mismatch.
 
+## CI and Nightly Automation
+
+Use a scheduled job to keep a repo timeline anchored on a cadence:
+
+```powershell
+python -m repomori memory . --out-dir .repomori-packs --anchor-out .repomori-packs/timeline-anchor.json --anchor-verify --json
+```
+
+RepoMori is also in-tree documented for this workflow with a ready-to-copy
+`.github/workflows/memory-anchor.yml` in this repository.
+
 ## What To Read Next
 
 - [MCP setup](mcp-setup.md)
