@@ -207,8 +207,9 @@ workflows.
 `init` writes a dependency-free TOML config with named profiles. A profile stores
 the repo path, snapshot output directory, handoff question, retention count,
 prune mode, doctor verification mode, timeline limit, chunk size, incremental
-reuse mode, diff-context mode, and compare settings. Explicit `memory` flags
-override config values.
+reuse mode, diff-context mode, and compare settings. It also supports anchor
+automation settings (`anchor_out`, `anchor_verify`, `allow_unverified_anchor`,
+and `anchor_log`). Explicit `memory` flags override config values.
 
 `agent` runs a dependency-free JSON-lines bridge on stdio so other agents can
 query RepoMori without guessing shell commands. Send one JSON object per line:

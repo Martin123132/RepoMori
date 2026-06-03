@@ -1415,6 +1415,39 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(loaded["settings"]["incremental"])
             self.assertFalse(loaded["settings"]["diff_context"])
             self.assertFalse(loaded["settings"]["prune_apply"])
+            self.assertIsNone(loaded["settings"]["anchor_out"])
+            self.assertFalse(loaded["settings"]["anchor_verify"])
+            self.assertFalse(loaded["settings"]["allow_unverified_anchor"])
+            self.assertIsNone(loaded["settings"]["anchor_log"])
+
+    def test_load_memory_config_resolves_anchor_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config_path = Path(tmp) / "repomori.toml"
+            init_config(
+                repo,
+                out,
+                config_path=config_path,
+                keep=2,
+                no_handoff=True,
+            )
+            # Add anchor settings relative to the config file directory.
+            config_text = config_path.read_text(encoding="utf-8")
+            config_text += (
+                '\nanchor_out = "anchor-memory.json"\n'
+                "anchor_verify = true\n"
+                "allow_unverified_anchor = true\n"
+                'anchor_log = "logs/anchor-log.jsonl"\n'
+            )
+            config_path.write_text(config_text, encoding="utf-8")
+
+            loaded = load_memory_config(config_path)
+
+            self.assertEqual(loaded["settings"]["anchor_out"], str((Path(tmp) / "anchor-memory.json").resolve()))
+            self.assertEqual(loaded["settings"]["anchor_log"], str((Path(tmp) / "logs" / "anchor-log.jsonl").resolve()))
+            self.assertTrue(loaded["settings"]["anchor_verify"])
+            self.assertTrue(loaded["settings"]["allow_unverified_anchor"])
 
     def test_load_memory_config_supports_named_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3039,6 +3072,47 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(payload["settings"]["incremental"])
             self.assertEqual(payload["settings"]["keep"], 1)
             self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "manifest.json").exists())
+
+    def test_cli_memory_relative_anchor_out_from_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            init_config(
+                repo,
+                out,
+                config_path=config,
+                no_handoff=True,
+            )
+            config_path = config.resolve()
+            config_lines = config_path.read_text(encoding="utf-8").splitlines()
+            config_lines.append('anchor_out = "memory-anchor.json"')
+            config_lines.append("anchor_verify = false")
+            config_lines.append("allow_unverified_anchor = false")
+            config_lines.append('anchor_log = "memory-anchor.log"')
+            config_path.write_text("\n".join(config_lines) + "\n", encoding="utf-8")
+
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    "--config",
+                    str(config_path),
+                    "--no-handoff",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertEqual(payload["summary"]["anchor_path"], str((config_path.parent / "memory-anchor.json").resolve()))
+            self.assertEqual(payload["settings"]["anchor_out"], str((config_path.parent / "memory-anchor.json").resolve()))
+            self.assertFalse(payload["settings"]["anchor_verify"])
+            self.assertTrue(Path(payload["summary"]["anchor_path"]).exists())
 
     def test_cli_agent_json_lines_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

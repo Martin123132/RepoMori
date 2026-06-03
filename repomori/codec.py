@@ -4497,6 +4497,10 @@ def init_config(
         "diff_context_snippets_per_file": diff_context_snippets_per_file,
         "diff_context_max_bytes": diff_context_max_bytes,
         "diff_context_include_source": diff_context_include_source,
+        "anchor_out": None,
+        "anchor_verify": False,
+        "allow_unverified_anchor": False,
+        "anchor_log": None,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_format_memory_config(profile, settings), encoding="utf-8")
@@ -6653,6 +6657,10 @@ def _format_memory_config(profile: str, settings: dict[str, Any]) -> str:
         "diff_context_snippets_per_file",
         "diff_context_max_bytes",
         "diff_context_include_source",
+        "anchor_out",
+        "anchor_verify",
+        "allow_unverified_anchor",
+        "anchor_log",
     ):
         lines.append(f"{key} = {_toml_value(settings[key])}")
     return "\n".join(lines).rstrip() + "\n"
@@ -6714,6 +6722,10 @@ def _normalize_memory_config_settings(path: Path, settings: dict[str, Any]) -> d
         "diff_context_snippets_per_file": 2,
         "diff_context_max_bytes": 8192,
         "diff_context_include_source": True,
+        "anchor_out": None,
+        "anchor_verify": False,
+        "allow_unverified_anchor": False,
+        "anchor_log": None,
     }
     normalized = {**defaults, **settings}
     for key in ("repo", "out_dir"):
@@ -6724,12 +6736,24 @@ def _normalize_memory_config_settings(path: Path, settings: dict[str, Any]) -> d
         if not config_path.is_absolute():
             config_path = path.parent / config_path
         normalized[key] = str(config_path.resolve())
-    for key in ("no_handoff", "prune_apply", "verify_packs", "incremental", "compare", "diff_context", "diff_context_include_source"):
+    for key in (
+        "no_handoff",
+        "prune_apply",
+        "verify_packs",
+        "incremental",
+        "compare",
+        "diff_context",
+        "diff_context_include_source",
+        "anchor_verify",
+        "allow_unverified_anchor",
+    ):
         normalized[key] = _coerce_config_bool(path, key, normalized[key])
     for key in ("keep", "timeline_limit", "chunk_size", "compare_limit", "diff_context_limit", "diff_context_snippet_lines", "diff_context_snippets_per_file", "diff_context_max_bytes"):
         normalized[key] = _coerce_config_int(path, key, normalized[key])
     normalized["handoff_question"] = str(normalized.get("handoff_question") or "")
     normalized["diff_context_question"] = str(normalized.get("diff_context_question") or "")
+    normalized["anchor_out"] = _coerce_optional_config_path(path, "anchor_out", normalized.get("anchor_out"))
+    normalized["anchor_log"] = _coerce_optional_config_path(path, "anchor_log", normalized.get("anchor_log"))
     return normalized
 
 
@@ -6738,6 +6762,8 @@ def _toml_value(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
+    if value is None:
+        return "\"\""
     return json.dumps(str(value))
 
 
@@ -6763,6 +6789,20 @@ def _coerce_config_bool(path: Path, key: str, value: Any) -> bool:
     if isinstance(value, bool):
         return value
     raise ValueError(f"RepoMori config key `{key}` must be true or false: {path}")
+
+
+def _coerce_optional_config_path(path: Path, key: str, value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"RepoMori config key `{key}` must be a path string or omitted: {path}")
+    text = value.strip()
+    if not text:
+        return None
+    file_path = Path(text)
+    if not file_path.is_absolute():
+        file_path = path.parent / file_path
+    return str(file_path.resolve())
 
 
 def _coerce_config_int(path: Path, key: str, value: Any) -> int:
