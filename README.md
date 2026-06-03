@@ -105,7 +105,7 @@ repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
 repomori release-check [repo] [--baseline file] [--fail-on low] [--skip-tests] [--skip-demo] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
-repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--no-incremental] [--diff-context] [--keep n] [--prune-apply] [--json]
+repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--anchor-out file] [--anchor-verify] [--allow-unverified-anchor] [--anchor-log file] [--no-incremental] [--diff-context] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
 repomori mcp [--config file] [--profile name]
 repomori schema [schema-version] [--json]
@@ -191,13 +191,18 @@ manifest.
 `memory` is the recommended repeatable workflow for the end of a work session.
 It builds a snapshot, creates a default handoff package, runs snapshot doctor,
 plans or applies prune, and returns the recent timeline in one offline report.
+Use `--anchor-out` to write a timeline anchor proof beside this memory snapshot.
+Use `--anchor-verify` in CI or other automation to verify the exported anchor
+immediately against current timeline head; pair it with `--allow-unverified-anchor`
+to keep sessions running while still recording the mismatch.
 Snapshots reuse unchanged file state from the previous latest pack by default;
 use `--no-incremental` when you want a clean rebuild. Prune remains a dry run
 unless `--prune-apply` is supplied. Use `init` to write a local `repomori.toml`
 with D-drive-safe defaults, then run `memory` with `--config` or from a
 directory beneath that config. Add `--diff-context` to write JSON and Markdown
 changed-files context beside the snapshot reports when a previous snapshot
-exists.
+exists. Use `--anchor-log` to append one JSONL row per memory run for audit
+workflows.
 
 `init` writes a dependency-free TOML config with named profiles. A profile stores
 the repo path, snapshot output directory, handoff question, retention count,

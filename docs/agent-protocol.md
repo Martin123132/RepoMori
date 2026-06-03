@@ -13,7 +13,7 @@ Send one JSON object per line:
 
 ```json
 {"id":1,"method":"agent.help"}
-{"id":2,"method":"memory.run","params":{"keep":20}}
+{"id":2,"method":"memory.run","params":{"keep":20,"anchor_out":"D:\\Temp\\repomori-anchor.json","anchor_verify":true}}
 {"id":3,"method":"brief.build","params":{"timeline_limit":5}}
 {"id":4,"method":"chain.verify"}
 {"id":5,"method":"anchor.build"}
@@ -35,7 +35,10 @@ Errors use the same envelope with `ok:false` and an `error` object.
 
 - `agent.help`: returns protocol and method metadata.
 - `ping`: returns a simple status payload.
-- `memory.run`: runs the configured memory cycle, using incremental snapshot reuse by default; pass `diff_context:true` to write changed-files context for the new snapshot.
+- `memory.run`: runs the configured memory cycle, using incremental snapshot reuse by default.
+  Pass `diff_context:true` to write changed-files context for the new snapshot.
+  Pass `anchor_out` to write a timeline anchor and `anchor_verify` to validate it
+  immediately against current timeline head state.
 - `brief.build`: builds a concise agent start brief from the configured snapshot timeline.
 - `chain.verify`: verifies the configured snapshot timeline hash chain.
 - `anchor.build`: exports a small proof record for the current snapshot chain head.

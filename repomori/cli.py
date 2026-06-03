@@ -193,6 +193,14 @@ def main(argv: list[str] | None = None) -> int:
     memory.add_argument("--out-dir", type=Path, help="Directory for snapshot packs and reports.")
     memory.add_argument("--config", type=Path, help="Config file path; defaults to nearest repomori.toml.")
     memory.add_argument("--profile", help="Config profile to use.")
+    memory.add_argument("--anchor-out", type=Path, help="Write a timeline anchor to this file.")
+    memory.add_argument("--anchor-verify", action="store_true", help="Verify the exported anchor against current timeline.")
+    memory.add_argument(
+        "--allow-unverified-anchor",
+        action="store_true",
+        help="Allow memory runs to continue when anchor verification fails.",
+    )
+    memory.add_argument("--anchor-log", type=Path, help="Append one anchor audit row per memory run.")
     memory.add_argument("--handoff-question")
     handoff_group = memory.add_mutually_exclusive_group()
     handoff_group.add_argument("--no-handoff", dest="no_handoff", action="store_true", default=None, help="Skip the default snapshot handoff package.")
@@ -566,6 +574,10 @@ def main(argv: list[str] | None = None) -> int:
             settings["repo"],
             settings["out_dir"],
             handoff_question=settings["handoff_question"],
+            anchor_out=settings["anchor_out"],
+            anchor_verify=settings["anchor_verify"],
+            allow_unverified_anchor=settings["allow_unverified_anchor"],
+            anchor_log=settings["anchor_log"],
             no_handoff=settings["no_handoff"],
             keep=settings["keep"],
             prune_apply=settings["prune_apply"],
@@ -944,6 +956,10 @@ def _memory_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         "repo": repo,
         "out_dir": out_dir,
         "handoff_question": _setting(args.handoff_question, settings, "handoff_question", "continue this repo"),
+        "anchor_out": str(args.anchor_out.resolve()) if args.anchor_out is not None else settings.get("anchor_out"),
+        "anchor_log": str(args.anchor_log.resolve()) if args.anchor_log is not None else settings.get("anchor_log"),
+        "anchor_verify": _setting(args.anchor_verify, settings, "anchor_verify", False),
+        "allow_unverified_anchor": _setting(args.allow_unverified_anchor, settings, "allow_unverified_anchor", False),
         "no_handoff": _setting(args.no_handoff, settings, "no_handoff", False),
         "keep": _setting(args.keep, settings, "keep", 20),
         "prune_apply": _setting(args.prune_apply, settings, "prune_apply", False),

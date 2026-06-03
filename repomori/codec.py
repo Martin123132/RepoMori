@@ -4249,6 +4249,10 @@ def run_memory_cycle(
     diff_context_snippets_per_file: int = 2,
     diff_context_max_bytes: int | None = 8192,
     diff_context_include_source: bool = True,
+    anchor_out: str | None = None,
+    anchor_verify: bool = False,
+    allow_unverified_anchor: bool = False,
+    anchor_log: str | None = None,
 ) -> dict[str, Any]:
     """Run the full offline snapshot memory loop for a repository."""
 
@@ -4264,6 +4268,15 @@ def run_memory_cycle(
     started = time.time()
     repo_path = Path(repo).resolve()
     out_path = Path(out_dir).resolve()
+    anchor_report = None
+    anchor_verification = None
+    anchor_log_report = None
+
+    if anchor_verify and anchor_out is None:
+        raise ValueError("anchor_verify requires anchor_out.")
+    if anchor_log is not None and anchor_out is None:
+        raise ValueError("anchor_log requires anchor_out.")
+
     snapshot = snapshot_repo(
         repo_path,
         out_path,
@@ -4280,15 +4293,40 @@ def run_memory_cycle(
         diff_context_max_bytes=diff_context_max_bytes,
         diff_context_include_source=diff_context_include_source,
     )
+
+    if anchor_out is not None:
+        if not anchor_out.strip():
+            raise ValueError("anchor_out must not be empty.")
+        anchor_report = build_snapshot_anchor(out_path)
+        anchor_out_path = Path(anchor_out).resolve()
+        anchor_out_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(anchor_out_path, anchor_report)
+        if anchor_verify:
+            anchor_verification = verify_snapshot_anchor(anchor_out_path, out_path)
+        if anchor_log is not None:
+            anchor_payload_for_log = (
+                anchor_verification if anchor_verification is not None else anchor_report
+            )
+            anchor_log_report = append_anchor_log(anchor_payload_for_log, anchor_log, out_dir=out_path)
+            anchor_log_report["anchor_path"] = str(anchor_out_path)
+
     doctor = doctor_snapshot_dir(out_path, verify_packs=verify_packs)
     prune = prune_snapshots(out_path, keep=keep, apply=prune_apply)
     timeline = read_snapshot_timeline(out_path, limit=timeline_limit)
 
     status = "pass"
+    anchor_verification_status = anchor_verification["status"] if anchor_verification is not None else None
     if snapshot.get("status") != "pass" or doctor.get("status") == "fail" or prune.get("errors"):
         status = "fail"
     elif doctor.get("status") == "warn":
         status = "warn"
+    elif anchor_verification_status == "warn":
+        status = "warn"
+    elif anchor_verification_status == "fail":
+        status = "fail" if not allow_unverified_anchor else "warn"
+
+    if anchor_report is None and anchor_verify:
+        status = "fail"
 
     snapshot_summary = snapshot.get("summary", {})
     artifacts = {
@@ -4308,6 +4346,8 @@ def run_memory_cycle(
         artifacts["diff_context_json"] = snapshot["artifacts"]["diff_context_json"]
     if snapshot.get("artifacts", {}).get("diff_context_markdown"):
         artifacts["diff_context_markdown"] = snapshot["artifacts"]["diff_context_markdown"]
+    if anchor_report is not None:
+        artifacts["anchor"] = _artifact_record_any_path(out_path, Path(anchor_out).resolve(), "anchor_json")
 
     return {
         "schema_version": "repomori.memory.v1",
@@ -4333,6 +4373,10 @@ def run_memory_cycle(
             "diff_context_snippets_per_file": diff_context_snippets_per_file,
             "diff_context_max_bytes": diff_context_max_bytes,
             "diff_context_include_source": diff_context_include_source,
+            "anchor_out": anchor_out,
+            "anchor_verify": anchor_verify,
+            "allow_unverified_anchor": allow_unverified_anchor,
+            "anchor_log": anchor_log,
         },
         "summary": {
             "elapsed_seconds": round(time.time() - started, 4),
@@ -4360,6 +4404,10 @@ def run_memory_cycle(
             "diff_context_added_count": snapshot_summary.get("diff_context_added_count"),
             "diff_context_changed_count": snapshot_summary.get("diff_context_changed_count"),
             "diff_context_removed_count": snapshot_summary.get("diff_context_removed_count"),
+            "anchor_status": anchor_report.get("status") if anchor_report is not None else None,
+            "anchor_path": str(Path(anchor_out).resolve()) if anchor_out is not None else None,
+            "anchor_verification_status": anchor_verification_status,
+            "anchor_hash": anchor_report.get("anchor_hash") if anchor_report is not None else None,
         },
         "artifacts": artifacts,
         "snapshot": snapshot,
@@ -4367,6 +4415,9 @@ def run_memory_cycle(
         "prune": prune,
         "timeline": timeline,
         "diff_context": snapshot.get("diff_context"),
+        "anchor": anchor_report,
+        "anchor_verification": anchor_verification,
+        "anchor_log": anchor_log_report,
     }
 
 
@@ -5233,6 +5284,111 @@ def _artifact_record(root: Path, path: Path, kind: str) -> dict[str, Any]:
         "kind": kind,
         "size": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def _artifact_record_any_path(root: Path, path: Path, kind: str) -> dict[str, Any]:
+    data = path.read_bytes()
+    path_value = path.resolve()
+    try:
+        path_value = path_value.relative_to(root.resolve())
+    except ValueError:
+        pass
+    if isinstance(path_value, Path):
+        path_value = path_value.as_posix()
+    return {
+        "path": str(path_value),
+        "kind": kind,
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def append_anchor_log(
+    anchor_json_path_or_dict: Path | str | dict[str, Any],
+    log_path: Path | str,
+    *,
+    out_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append one timestamped anchor audit row to a JSONL log and return metadata."""
+
+    if isinstance(anchor_json_path_or_dict, (str, Path)):
+        anchor_payload_path = Path(anchor_json_path_or_dict).resolve()
+        anchor_payload = json.loads(anchor_payload_path.read_text(encoding="utf-8"))
+        if not isinstance(anchor_payload, dict):
+            raise ValueError("Anchor payload must be a JSON object.")
+        anchor_path = str(anchor_payload_path)
+    elif isinstance(anchor_json_path_or_dict, dict):
+        anchor_payload = anchor_json_path_or_dict
+        anchor_path = None
+    else:
+        raise TypeError("anchor_json_path_or_dict must be a path or object payload.")
+
+    if not isinstance(anchor_payload, dict):
+        raise ValueError("Anchor payload must be a JSON object.")
+
+    payload_chain = (
+        anchor_payload.get("chain") if isinstance(anchor_payload.get("chain"), dict) else {}
+    )
+    payload_summary = (
+        anchor_payload.get("summary") if isinstance(anchor_payload.get("summary"), dict) else {}
+    )
+    payload_verification = (
+        anchor_payload.get("verification")
+        if isinstance(anchor_payload.get("verification"), dict)
+        else {}
+    )
+
+    errors = anchor_payload.get("errors")
+    if not isinstance(errors, list):
+        errors = (
+            payload_verification.get("errors", [])
+            if isinstance(payload_verification.get("errors"), list)
+            else []
+        )
+    warnings = anchor_payload.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = (
+            payload_verification.get("warnings", [])
+            if isinstance(payload_verification.get("warnings"), list)
+            else []
+        )
+    if not errors and isinstance(payload_summary.get("error_count"), int):
+        errors = ["count:" + str(payload_summary.get("error_count"))]
+    if not warnings and isinstance(payload_summary.get("warning_count"), int):
+        warnings = ["count:" + str(payload_summary.get("warning_count"))]
+
+    resolved_out_dir = str(out_dir) if out_dir is not None else str(anchor_payload.get("out_dir") or "")
+
+    row = {
+        "timestamp": int(time.time()),
+        "out_dir": resolved_out_dir,
+        "anchor_path": anchor_path or str(anchor_payload.get("anchor_path") or ""),
+        "anchor_schema_version": anchor_payload.get("schema_version"),
+        "anchor_status": anchor_payload.get("status"),
+        "chain_head_hash": (
+            payload_chain.get("head_chain_hash")
+            or payload_chain.get("chain_head_hash")
+            or payload_summary.get("head_chain_hash")
+        ),
+        "snapshot_count": (
+            payload_chain.get("snapshot_count")
+            or payload_summary.get("snapshot_count")
+            or payload_summary.get("checked_count")
+        ),
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+    log_file = Path(log_path).resolve()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with log_file.open("a", encoding="utf-8") as out:
+        out.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    return {
+        "status": "appended",
+        "log_path": str(log_file),
+        "entry": row,
     }
 
 
@@ -6654,6 +6810,10 @@ MCP_TOOLS = (
             "properties": {
                 "repo": {"type": "string"},
                 "out_dir": {"type": "string"},
+                "anchor_out": {"type": "string"},
+                "anchor_verify": {"type": "boolean"},
+                "allow_unverified_anchor": {"type": "boolean"},
+                "anchor_log": {"type": "string"},
                 "handoff_question": {"type": "string"},
                 "no_handoff": {"type": "boolean"},
                 "keep": {"type": "integer"},
@@ -7084,6 +7244,10 @@ def _agent_memory_kwargs(params: dict[str, Any], settings: dict[str, Any]) -> di
         "repo": repo,
         "out_dir": out_dir,
         "handoff_question": str(params.get("handoff_question", settings.get("handoff_question", "continue this repo"))),
+        "anchor_out": params.get("anchor_out") if params.get("anchor_out") is not None else settings.get("anchor_out"),
+        "anchor_verify": bool(params.get("anchor_verify", settings.get("anchor_verify", False))),
+        "allow_unverified_anchor": bool(params.get("allow_unverified_anchor", settings.get("allow_unverified_anchor", False))),
+        "anchor_log": params.get("anchor_log") if params.get("anchor_log") is not None else settings.get("anchor_log"),
         "no_handoff": bool(params.get("no_handoff", settings.get("no_handoff", False))),
         "keep": _agent_int(params, "keep", int(settings.get("keep", 20))),
         "prune_apply": bool(params.get("prune_apply", settings.get("prune_apply", False))),

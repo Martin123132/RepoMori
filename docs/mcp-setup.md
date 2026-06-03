@@ -39,6 +39,9 @@ The MCP tools use the latest snapshot pack from the configured timeline when a t
 the next snapshot unless the tool call sets `incremental` to `false`.
 Set `diff_context` to `true` on `repomori_memory_run` to write changed-files
 context artifacts beside the new snapshot reports.
+`repomori_memory_run` also accepts:
+`anchor_out` (export a timeline anchor), `anchor_verify` (validate it immediately),
+and `allow_unverified_anchor` (continue with a warning instead of failing the call).
 Call `repomori_brief_build` when an agent needs one concise start point for the
 latest timeline state.
 Call `repomori_chain_verify` to check that the snapshot timeline hash chain has

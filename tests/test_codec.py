@@ -8,6 +8,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import repomori.codec as codec
 
 from repomori.codec import (
     BuildOptions,
@@ -38,6 +41,7 @@ from repomori.codec import (
     format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
+    append_anchor_log,
     get_file_bytes,
     handle_agent_request,
     handle_mcp_request,
@@ -1265,6 +1269,132 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(diff_json.exists())
             self.assertFalse(diff_md.exists())
 
+    def test_run_memory_cycle_can_write_anchor_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory"
+            anchor_path = out / "snapshot-anchor.json"
+
+            report = run_memory_cycle(
+                repo,
+                out,
+                no_handoff=True,
+                anchor_out=str(anchor_path),
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.memory.v1")
+            self.assertEqual(report["summary"]["anchor_status"], "pass")
+            self.assertIsNone(report["summary"]["anchor_verification_status"])
+            self.assertEqual(report["summary"]["anchor_path"], str(anchor_path.resolve()))
+            self.assertIn("anchor", report["artifacts"])
+            self.assertTrue(anchor_path.exists())
+            anchor_record = report["artifacts"]["anchor"]
+            anchor_file = out / anchor_record["path"] if not Path(anchor_record["path"]).is_absolute() else Path(anchor_record["path"])
+            self.assertEqual(anchor_record["kind"], "anchor_json")
+            self.assertEqual(anchor_file, anchor_path)
+            self.assertEqual(anchor_record["sha256"], hashlib.sha256(anchor_path.read_bytes()).hexdigest())
+
+    def test_run_memory_cycle_can_verify_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory"
+            anchor_path = out / "snapshot-anchor.json"
+            log_path = out / "anchor-log.jsonl"
+
+            report = run_memory_cycle(
+                repo,
+                out,
+                no_handoff=True,
+                anchor_out=str(anchor_path),
+                anchor_verify=True,
+                anchor_log=str(log_path),
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.memory.v1")
+            self.assertEqual(report["summary"]["anchor_status"], "pass")
+            self.assertEqual(report["summary"]["anchor_verification_status"], "pass")
+            self.assertEqual(report["anchor_verification"]["status"], "pass")
+            self.assertIsNotNone(report["anchor_verification"])
+            self.assertIsNotNone(report["anchor_log"])
+            self.assertTrue(anchor_path.exists())
+            self.assertTrue(log_path.exists())
+            audit_rows = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(audit_rows), 1)
+            self.assertEqual(audit_rows[0]["anchor_schema_version"], "repomori.snapshot_anchor.verify.v1")
+            self.assertEqual(audit_rows[0]["anchor_status"], "pass")
+
+    def test_run_memory_cycle_anchor_verification_failures_and_allow_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory"
+            anchor_path = out / "snapshot-anchor.json"
+
+            def force_failure(*_args: object, **_kwargs: object) -> dict[str, object]:
+                return {
+                    "schema_version": "repomori.snapshot_anchor.verify.v1",
+                    "status": "fail",
+                    "anchor_path": str(anchor_path),
+                    "out_dir": str(out),
+                    "summary": {
+                        "error_count": 1,
+                        "warning_count": 0,
+                        "anchor_hash_valid": False,
+                        "chain_head_matches": False,
+                        "latest_snapshot_matches": False,
+                        "current_pack_hash_matches": False,
+                    },
+                    "errors": [{"scope": "anchor", "message": "forced failure"}],
+                    "warnings": [],
+                }
+
+            with patch.object(codec, "verify_snapshot_anchor", side_effect=force_failure):
+                failed = run_memory_cycle(
+                    repo,
+                    out,
+                    no_handoff=True,
+                    anchor_out=str(anchor_path),
+                    anchor_verify=True,
+                    allow_unverified_anchor=False,
+                )
+                self.assertEqual(failed["summary"]["anchor_verification_status"], "fail")
+                self.assertEqual(failed["status"], "fail")
+
+                allowed = run_memory_cycle(
+                    repo,
+                    out,
+                    no_handoff=True,
+                    anchor_out=str(anchor_path),
+                    anchor_verify=True,
+                    allow_unverified_anchor=True,
+                )
+                self.assertEqual(allowed["summary"]["anchor_verification_status"], "fail")
+                self.assertEqual(allowed["status"], "warn")
+
+    def test_append_anchor_log_appends_jsonl_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "logs" / "anchor-log.jsonl"
+            anchor_payload = {
+                "schema_version": "repomori.snapshot_anchor.v1",
+                "status": "pass",
+                "chain": {
+                    "head_chain_hash": "abc",
+                    "snapshot_count": 4,
+                },
+                "summary": {"error_count": 0, "warning_count": 0},
+            }
+
+            report = append_anchor_log(anchor_payload, log_path)
+            self.assertEqual(report["status"], "appended")
+            self.assertEqual(report["log_path"], str(log_path))
+            rows = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertEqual(row["anchor_schema_version"], "repomori.snapshot_anchor.v1")
+            self.assertEqual(row["anchor_status"], "pass")
+            self.assertEqual(row["chain_head_hash"], "abc")
+            self.assertEqual(row["snapshot_count"], 4)
+            self.assertEqual(row["out_dir"], "")
+
     def test_init_and_load_memory_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -1472,6 +1602,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
         self.assertIn("incremental", memory_tool["inputSchema"]["properties"])
         self.assertIn("diff_context", memory_tool["inputSchema"]["properties"])
+        self.assertIn("anchor_out", memory_tool["inputSchema"]["properties"])
+        self.assertIn("anchor_verify", memory_tool["inputSchema"]["properties"])
+        self.assertIn("allow_unverified_anchor", memory_tool["inputSchema"]["properties"])
+        self.assertIn("anchor_log", memory_tool["inputSchema"]["properties"])
 
         unknown_method = handle_mcp_request({"jsonrpc": "2.0", "id": 4, "method": "missing.method"})
         self.assertEqual(unknown_method["error"]["code"], -32601)
@@ -2603,6 +2737,100 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "pass")
             self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "manifest.json").exists())
             self.assertEqual(payload["timeline"]["returned_count"], 1)
+
+    def test_cli_memory_anchor_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-anchor-cli"
+            anchor = Path(tmp) / "memory-anchor.json"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--no-handoff",
+                    "--anchor-out",
+                    str(anchor),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["summary"]["anchor_path"], str(anchor.resolve()))
+            self.assertTrue(Path(payload["summary"]["anchor_path"]).exists())
+            self.assertEqual(payload["anchor"]["schema_version"], "repomori.snapshot_anchor.v1")
+
+    def test_cli_memory_anchor_verify_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-anchor-verify-cli"
+            anchor = Path(tmp) / "memory-anchor.json"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--no-handoff",
+                    "--anchor-out",
+                    str(anchor),
+                    "--anchor-verify",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertIsNotNone(payload["anchor_verification"])
+            self.assertEqual(payload["anchor_verification"]["status"], "pass")
+
+    def test_cli_memory_anchor_log_jsonl_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-anchor-log-cli"
+            anchor = Path(tmp) / "memory-anchor.json"
+            log = Path(tmp) / "memory-anchor.log"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "memory",
+                    str(repo),
+                    "--out-dir",
+                    str(out),
+                    "--no-handoff",
+                    "--anchor-out",
+                    str(anchor),
+                    "--anchor-log",
+                    str(log),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertTrue(log.exists())
+            rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["anchor_schema_version"], "repomori.snapshot_anchor.v1")
 
     def test_cli_memory_no_handoff_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

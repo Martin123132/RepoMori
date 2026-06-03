@@ -25,6 +25,8 @@ python -m repomori scan D:\Dev\YourRepo --public-release --json
 python -m repomori scan D:\Dev\YourRepo --public-release --write-baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori init D:\Dev\YourRepo --out-dir D:\Dev\YourRepo\packs
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --json
+python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Temp\repomori-anchor.json --json
+python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Temp\repomori-anchor.json --anchor-verify --json
 python -m repomori brief D:\Dev\YourRepo\packs --out D:\Dev\YourRepo\agent-brief.md
 python -m repomori chain D:\Dev\YourRepo\packs --json
 python -m repomori anchor D:\Dev\YourRepo\packs --out D:\Dev\YourRepo\timeline-anchor.json
@@ -55,6 +57,8 @@ python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --diff-context 
 ```
 
 This builds a fresh incremental snapshot, creates a handoff package unless disabled, writes changed-files context when a previous snapshot exists, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Use `brief` on the pack directory to create one agent-readable start file, `chain` to verify timeline integrity, `anchor` to export a small proof of the current chain head, `verify-anchor` to check that proof later, and `stats` to see how many files and chunks RepoMori avoided rebuilding.
+
+For automation, add `--anchor-out` to export a timeline anchor every run and `--anchor-verify` to validate it right away. `--allow-unverified-anchor` keeps the run non-fatal if you need to continue while investigating a mismatch.
 
 ## What To Read Next
 
