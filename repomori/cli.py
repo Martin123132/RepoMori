@@ -95,7 +95,15 @@ def main(argv: list[str] | None = None) -> int:
     release_check = sub.add_parser("release-check", help="Run local release readiness checks.")
     release_check.add_argument("repo", type=Path, nargs="?", default=Path.cwd(), help="Repository folder to check.")
     release_check.add_argument("--baseline", type=Path, help="Scan baseline; defaults to <repo>/.repomori-scan-baseline.json when present.")
-    release_check.add_argument("--fail-on", choices=("info", "low", "medium", "high"), default="low")
+    release_check.add_argument(
+        "--fail-on",
+        choices=("info", "low", "medium", "high"),
+        default="low",
+        help=(
+            "Exit nonzero if scan findings reach this severity or worse."
+            " Baseline drift telemetry is non-blocking by default."
+        ),
+    )
     release_check.add_argument("--no-public-release", action="store_true", help="Skip public-release guardrail checks in scan.")
     release_check.add_argument("--skip-tests", action="store_true", help="Skip unittest discovery.")
     release_check.add_argument("--skip-demo", action="store_true", help="Skip quickstart demo smoke.")
@@ -931,6 +939,12 @@ def _print_release_check(report: dict) -> None:
                 f" findings={scan_summary.get('findings', 0)}"
                 f" ignored={scan_summary.get('ignored_findings', 0)}"
             )
+            drift = check.get("drift_warnings")
+            if isinstance(drift, dict):
+                detail += (
+                    f" drift_ratio={drift.get('non_strict_ratio', 0.0):.2f}"
+                    f" drift_status={drift.get('status')}"
+                )
         elif name == "tests":
             detail += f" returncode={check.get('returncode')}"
         elif name == "demo":

@@ -745,6 +745,61 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["checks"]["demo"]["demo_status"], "pass")
             self.assertFalse(demo_out.exists())
 
+    def test_run_release_check_reports_baseline_drift_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-drift"
+            repo.mkdir()
+            (repo / "README.md").write_text("D:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            (repo / "DOCS.md").write_text("D:\\Temp\\repomori-demo\\doc.txt\n", encoding="utf-8")
+            (repo / "LICENSE.md").write_text("License text.\n", encoding="utf-8")
+            initial_scan = scan_repository(repo, public_release=False)
+            baseline_path = Path(tmp) / "scan-baseline.json"
+            write_scan_baseline(initial_scan, baseline_path)
+
+            (repo / "README.md").write_text("# heading\nD:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            (repo / "DOCS.md").write_text("D:\\Temp\\repomori-demo\\doc.txt\n", encoding="utf-8")
+
+            report = run_release_check(
+                repo,
+                public_release=False,
+                baseline=baseline_path,
+                run_tests=False,
+                run_demo_smoke=False,
+                fail_on="low",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            drift = report["checks"]["scan"]["drift_warnings"]
+            self.assertEqual(drift["strict_count"], 1)
+            self.assertEqual(drift["semi_strict_count"], 1)
+            self.assertEqual(drift["fallback_count"], 0)
+            self.assertEqual(drift["ignored_total"], 2)
+            self.assertEqual(drift["non_strict_count"], 1)
+            self.assertAlmostEqual(drift["non_strict_ratio"], 0.5)
+            self.assertTrue(drift["downgraded_from_line_match"])
+            self.assertFalse(drift["downgraded_from_message_match"])
+            self.assertEqual(drift["status"], "warn")
+            self.assertIn("line-based strict baseline matches were downgraded to semi-strict by line drift", drift["warnings"])
+
+    def test_baseline_drift_warning_math(self) -> None:
+        conservative = codec._build_baseline_drift_warnings(
+            {"strict": 5, "semi_strict": 0, "fallback": 0},
+            investigate_threshold=0.1,
+        )
+        self.assertEqual(conservative["non_strict_ratio"], 0.0)
+        self.assertFalse(conservative["investigate"])
+        self.assertEqual(conservative["status"], "pass")
+
+        noisy = codec._build_baseline_drift_warnings(
+            {"strict": 1, "semi_strict": 3, "fallback": 1},
+            investigate_threshold=0.2,
+        )
+        self.assertEqual(noisy["non_strict_ratio"], 0.8)
+        self.assertEqual(noisy["non_strict_count"], 4)
+        self.assertTrue(noisy["investigate"])
+        self.assertTrue(noisy["downgraded_from_line_match"])
+        self.assertTrue(noisy["downgraded_from_message_match"])
+
     def test_snapshot_repo_builds_latest_and_compares_previous(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -3500,6 +3555,51 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "pass")
             self.assertEqual(payload["checks"]["tests"]["status"], "skipped")
             self.assertEqual(payload["checks"]["demo"]["status"], "skipped")
+
+    def test_cli_release_check_includes_drift_warning_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-drift"
+            repo.mkdir()
+            (repo / "README.md").write_text("D:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            (repo / "DOCS.md").write_text("D:\\Temp\\repomori-demo\\doc.txt\n", encoding="utf-8")
+            (repo / "LICENSE.md").write_text("License text.\n", encoding="utf-8")
+            initial_scan = scan_repository(repo, public_release=False)
+            baseline_path = Path(tmp) / "scan-baseline.json"
+            write_scan_baseline(initial_scan, baseline_path)
+
+            (repo / "README.md").write_text("# heading\nD:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            (repo / "DOCS.md").write_text("D:\\Temp\\repomori-demo\\doc.txt\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-check",
+                    str(repo),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--no-public-release",
+                    "--baseline",
+                    str(baseline_path),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "pass")
+            scan_block = payload["checks"]["scan"]
+            self.assertIn("drift_warnings", scan_block)
+            drift = scan_block["drift_warnings"]
+            self.assertEqual(drift["strict_count"], 1)
+            self.assertEqual(drift["semi_strict_count"], 1)
+            self.assertEqual(drift["ignored_total"], 2)
+            self.assertIn("non_strict_ratio", drift)
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

@@ -71,6 +71,23 @@ large binary fixtures:
 python -m repomori scan D:\Dev\RepoMori --ignore-code binary_file --json
 ```
 
+## Baseline Drift Telemetry
+
+Every scan/ release-check report includes drift telemetry for monitoring baseline
+stability:
+
+- `summary.baseline_match_counts` (`strict`, `semi_strict`, `fallback`)
+- `checks.scan.drift_warnings` from `release-check` with ratio details and downgrade flags
+
+If semi-strict or fallback matching grows over time, treat it as a signal:
+
+- confirm repository line movement is expected
+- regenerate the baseline from a clean baseline source
+- prefer tighter baseline entries where practical
+
+This observability is non-blocking by default. We keep the existing `--fail-on`
+threshold behavior unchanged.
+
 RepoMori's GitHub Actions workflow runs the stricter `release-check` command on
 every push and pull request:
 

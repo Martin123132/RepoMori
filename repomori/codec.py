@@ -815,6 +815,9 @@ def run_release_check(
             "baseline_path": str(baseline_arg) if baseline_arg else None,
             "summary": scan.get("summary", {}),
             "report": scan,
+            "drift_warnings": _build_baseline_drift_warnings(
+                scan.get("summary", {}).get("baseline_match_counts", {})
+            ),
         },
         "tests": tests_check,
         "demo": demo_check,
@@ -845,6 +848,44 @@ def run_release_check(
             "demo_status": demo_check.get("demo_status"),
         },
         "checks": checks,
+    }
+
+
+def _build_baseline_drift_warnings(
+    counts: dict[str, Any] | None, *, investigate_threshold: float = 0.20
+) -> dict[str, Any]:
+    """Return non-blocking baseline drift observability for release-check reports."""
+
+    strict_count = int((counts or {}).get("strict", 0))
+    semi_strict_count = int((counts or {}).get("semi_strict", 0))
+    fallback_count = int((counts or {}).get("fallback", 0))
+
+    ignored_total = strict_count + semi_strict_count + fallback_count
+    non_strict_count = semi_strict_count + fallback_count
+    non_strict_ratio = round(non_strict_count / ignored_total, 4) if ignored_total else 0.0
+
+    downgraded_from_line_match = semi_strict_count > 0
+    downgraded_from_message_match = fallback_count > 0
+    warnings = []
+    if downgraded_from_line_match:
+        warnings.append("line-based strict baseline matches were downgraded to semi-strict by line drift")
+    if downgraded_from_message_match:
+        warnings.append("message-based fallback baseline matches were used due to safe uniqueness checks")
+    status = "warn" if (downgraded_from_line_match or downgraded_from_message_match) else "pass"
+    investigate = bool(non_strict_ratio >= investigate_threshold and non_strict_count)
+
+    return {
+        "status": status,
+        "strict_count": strict_count,
+        "semi_strict_count": semi_strict_count,
+        "fallback_count": fallback_count,
+        "ignored_total": ignored_total,
+        "non_strict_count": non_strict_count,
+        "non_strict_ratio": non_strict_ratio,
+        "downgraded_from_line_match": downgraded_from_line_match,
+        "downgraded_from_message_match": downgraded_from_message_match,
+        "investigate": investigate,
+        "warnings": warnings,
     }
 
 

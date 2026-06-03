@@ -22,6 +22,19 @@ status, settings, summary, and nested check reports.
 then conservative message fallback only when unique. In JSON output this shows up
 as `summary.baseline_match_counts` in the scan block.
 
+`--fail-on` controls only scan severity thresholds; drift telemetry is informative
+only. We keep strict/non-strict matching behavior and fail policy unchanged.
+
+Release-check reports an explicit `checks.scan.drift_warnings` section:
+
+- `strict_count`, `semi_strict_count`, `fallback_count`, `ignored_total`
+- `non_strict_count`, `non_strict_ratio`
+- `downgraded_from_line_match`, `downgraded_from_message_match`
+- `warnings`, and `status`
+
+Use this section to monitor baseline movement. A higher `non_strict_ratio` suggests
+files have moved and may need the baseline refreshed.
+
 ## Fast Variants
 
 Skip the slower pieces when iterating on scan or schema work:
