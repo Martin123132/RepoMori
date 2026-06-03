@@ -5,6 +5,7 @@ offline, dependency-free, and model-free.
 
 ```powershell
 python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Dev\RepoMori\.repomori-baseline-drift.jsonl --json
 ```
 
 It runs:
@@ -30,10 +31,29 @@ Release-check reports an explicit `checks.scan.drift_warnings` section:
 - `strict_count`, `semi_strict_count`, `fallback_count`, `ignored_total`
 - `non_strict_count`, `non_strict_ratio`
 - `downgraded_from_line_match`, `downgraded_from_message_match`
-- `warnings`, and `status`
+- `warnings`, `status`, and `schema_version`
 
-Use this section to monitor baseline movement. A higher `non_strict_ratio` suggests
-files have moved and may need the baseline refreshed.
+Use this section, or the persisted telemetry log via `--drift-log`, to monitor
+baseline movement:
+
+- `strict_count` keeps the high-confidence baseline lock
+- `semi_strict_count` shows line-drift-tolerant ignores
+- `fallback_count` shows message-only fallback ignores
+- `non_strict_ratio` tracks total drift from strict line-based matching
+
+Persist drift telemetry to trend it over time:
+
+```powershell
+python -m repomori release-check D:\Dev\RepoMori `
+  --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json `
+  --drift-log D:\Temp\repomori-drift.jsonl `
+  --json
+
+python -m repomori drift-summary D:\Temp\repomori-drift.jsonl --limit 20 --json
+```
+
+`drift-summary` reads the JSONL telemetry, reports semi_strict/fallback deltas
+across the newest rows, and flags runs that carried drift warnings.
 
 ## Fast Variants
 

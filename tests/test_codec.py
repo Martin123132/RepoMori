@@ -16,6 +16,7 @@ from repomori.codec import (
     BuildOptions,
     benchmark_repo,
     build_agent_brief,
+    build_baseline_drift_report,
     build_repo_brief,
     build_snapshot_anchor,
     build_capsule,
@@ -56,6 +57,8 @@ from repomori.codec import (
     run_demo,
     run_memory_cycle,
     run_release_check,
+    append_baseline_drift_log,
+    summarize_baseline_drift_log,
     schema_catalog,
     scan_baseline_from_report,
     scan_repository,
@@ -782,16 +785,16 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("line-based strict baseline matches were downgraded to semi-strict by line drift", drift["warnings"])
 
     def test_baseline_drift_warning_math(self) -> None:
-        conservative = codec._build_baseline_drift_warnings(
-            {"strict": 5, "semi_strict": 0, "fallback": 0},
+        conservative = build_baseline_drift_report(
+            {"summary": {"baseline_match_counts": {"strict": 5, "semi_strict": 0, "fallback": 0}}},
             investigate_threshold=0.1,
         )
         self.assertEqual(conservative["non_strict_ratio"], 0.0)
         self.assertFalse(conservative["investigate"])
         self.assertEqual(conservative["status"], "pass")
 
-        noisy = codec._build_baseline_drift_warnings(
-            {"strict": 1, "semi_strict": 3, "fallback": 1},
+        noisy = build_baseline_drift_report(
+            {"summary": {"baseline_match_counts": {"strict": 1, "semi_strict": 3, "fallback": 1}}},
             investigate_threshold=0.2,
         )
         self.assertEqual(noisy["non_strict_ratio"], 0.8)
@@ -799,6 +802,34 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertTrue(noisy["investigate"])
         self.assertTrue(noisy["downgraded_from_line_match"])
         self.assertTrue(noisy["downgraded_from_message_match"])
+
+    def test_build_baseline_drift_report_modes(self) -> None:
+        strict = build_baseline_drift_report(
+            {"summary": {"baseline_match_counts": {"strict": 2, "semi_strict": 0, "fallback": 0}}},
+            run_meta={"run_id": "strict-run"},
+        )
+        self.assertEqual(strict["strict_count"], 2)
+        self.assertEqual(strict["semi_strict_count"], 0)
+        self.assertEqual(strict["fallback_count"], 0)
+        self.assertEqual(strict["status"], "pass")
+        self.assertFalse(strict["downgraded_from_line_match"])
+        self.assertFalse(strict["downgraded_from_message_match"])
+
+        mixed = build_baseline_drift_report(
+            {"summary": {"baseline_match_counts": {"strict": 3, "semi_strict": 1, "fallback": 0}}},
+            run_meta={"run_id": "mixed-run"},
+        )
+        self.assertEqual(mixed["non_strict_ratio"], 0.25)
+        self.assertTrue(mixed["investigate"])
+        self.assertEqual(mixed["run_id"], "mixed-run")
+
+        fallback = build_baseline_drift_report(
+            {"summary": {"baseline_match_counts": {"strict": 1, "semi_strict": 0, "fallback": 2}}},
+            run_meta={"run_id": "fallback-run"},
+        )
+        self.assertEqual(fallback["fallback_count"], 2)
+        self.assertTrue(fallback["downgraded_from_message_match"])
+        self.assertEqual(fallback["status"], "warn")
 
     def test_snapshot_repo_builds_latest_and_compares_previous(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1504,6 +1535,78 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(row["chain_head_hash"], "abc")
             self.assertEqual(row["snapshot_count"], 4)
             self.assertEqual(row["out_dir"], "")
+
+    def test_append_baseline_drift_log_appends_jsonl_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "logs" / "drift-log.jsonl"
+            first = build_baseline_drift_report(
+                {
+                    "summary": {
+                        "baseline_match_counts": {"strict": 5, "semi_strict": 0, "fallback": 0},
+                    },
+                    "repo_path": "D:/Temp/demo",
+                },
+                run_meta={"repo_path": "D:/Temp/demo", "run_ts": 1000, "run_id": "first"},
+            )
+            second = build_baseline_drift_report(
+                {
+                    "summary": {
+                        "baseline_match_counts": {"strict": 4, "semi_strict": 2, "fallback": 1},
+                    },
+                    "repo_path": "D:/Temp/demo",
+                },
+                run_meta={"repo_path": "D:/Temp/demo", "run_ts": 1001, "run_id": "second"},
+            )
+
+            first_append = append_baseline_drift_log(first, log_path)
+            second_append = append_baseline_drift_log(second, log_path)
+
+            self.assertEqual(first_append["status"], "appended")
+            self.assertEqual(second_append["status"], "appended")
+            self.assertEqual(first_append["log_path"], str(log_path))
+            self.assertEqual(second_append["log_path"], str(log_path))
+
+            rows = [
+                json.loads(line)
+                for line in log_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["schema_version"], "repomori.baseline_drift_record.v1")
+            self.assertEqual(rows[1]["schema_version"], "repomori.baseline_drift_record.v1")
+            self.assertEqual(rows[0]["non_strict_count"], 0)
+            self.assertEqual(rows[1]["non_strict_count"], 3)
+            self.assertEqual(rows[0]["run_id"], "first")
+            self.assertEqual(rows[1]["run_id"], "second")
+            self.assertLess(rows[0]["run_ts"], rows[1]["run_ts"])
+
+    def test_summarize_baseline_drift_log_computes_trend_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "logs" / "drift-summary.jsonl"
+            append_baseline_drift_log(
+                build_baseline_drift_report(
+                    {"summary": {"baseline_match_counts": {"strict": 2, "semi_strict": 0, "fallback": 0}}, "repo_path": "D:/Temp/demo"},
+                    run_meta={"repo_path": "D:/Temp/demo", "run_id": "run-1", "run_ts": 1010},
+                ),
+                log_path,
+            )
+            append_baseline_drift_log(
+                build_baseline_drift_report(
+                    {"summary": {"baseline_match_counts": {"strict": 1, "semi_strict": 3, "fallback": 1}}, "repo_path": "D:/Temp/demo"},
+                    run_meta={"repo_path": "D:/Temp/demo", "run_id": "run-2", "run_ts": 1011},
+                ),
+                log_path,
+            )
+
+            summary = summarize_baseline_drift_log(log_path, limit=2)
+            self.assertEqual(summary["schema_version"], "repomori.baseline_drift_summary.v1")
+            self.assertEqual(summary["count"], 2)
+            self.assertEqual(summary["warn_count"], 1)
+            self.assertEqual(summary["trend"]["semi_strict_delta"], 3)
+            self.assertEqual(summary["trend"]["fallback_delta"], 1)
+            self.assertEqual(summary["trend"]["non_strict_delta"], 4)
+            self.assertAlmostEqual(summary["max_non_strict_ratio"], 0.8)
+            self.assertAlmostEqual(summary["avg_non_strict_ratio"], 0.4)
 
     def test_init_and_load_memory_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3600,6 +3703,100 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(drift["semi_strict_count"], 1)
             self.assertEqual(drift["ignored_total"], 2)
             self.assertIn("non_strict_ratio", drift)
+
+    def test_cli_release_check_drift_log_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-drift-log"
+            repo.mkdir()
+            (repo / "README.md").write_text("D:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            (repo / "LICENSE.md").write_text("License text.\n", encoding="utf-8")
+            initial_scan = scan_repository(repo, public_release=False)
+            baseline_path = Path(tmp) / "scan-baseline.json"
+            write_scan_baseline(initial_scan, baseline_path)
+
+            (repo / "README.md").write_text("# heading\nD:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            drift_log = Path(tmp) / "release-drift.log"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-check",
+                    str(repo),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--no-public-release",
+                    "--baseline",
+                    str(baseline_path),
+                    "--drift-log",
+                    str(drift_log),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "pass")
+            scan_block = payload["checks"]["scan"]["drift_log"]
+            self.assertEqual(scan_block["status"], "appended")
+            self.assertEqual(scan_block["log_path"], str(drift_log.resolve()))
+            rows = [
+                json.loads(line)
+                for line in drift_log.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertEqual(row["schema_version"], "repomori.baseline_drift_record.v1")
+            self.assertEqual(row["status"], "warn")
+            self.assertGreater(row["semi_strict_count"], 0)
+
+    def test_cli_drift_summary_command_json_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "release-drift.log"
+            append_baseline_drift_log(
+                build_baseline_drift_report(
+                    {"summary": {"baseline_match_counts": {"strict": 2, "semi_strict": 0, "fallback": 0}}, "repo_path": "D:/Temp/demo"},
+                    run_meta={"repo_path": "D:/Temp/demo", "run_ts": 10, "run_id": "a"},
+                ),
+                log_path,
+            )
+            append_baseline_drift_log(
+                build_baseline_drift_report(
+                    {"summary": {"baseline_match_counts": {"strict": 1, "semi_strict": 1, "fallback": 1}}, "repo_path": "D:/Temp/demo"},
+                    run_meta={"repo_path": "D:/Temp/demo", "run_ts": 11, "run_id": "b"},
+                ),
+                log_path,
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "drift-summary",
+                    str(log_path),
+                    "--limit",
+                    "2",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.baseline_drift_summary.v1")
+            self.assertEqual(payload["count"], 2)
+            self.assertEqual(payload["warn_count"], 1)
+            self.assertEqual(payload["trend"]["non_strict_delta"], 2)
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

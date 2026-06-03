@@ -229,6 +229,27 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "repo_path", "settings", "summary", "checks"],
     },
     {
+        "schema_version": "repomori.baseline_drift_report.v1",
+        "kind": "report",
+        "title": "Baseline drift telemetry report",
+        "producer": "build_baseline_drift_report",
+        "required_fields": ["schema_version", "status", "strict_count", "semi_strict_count", "fallback_count", "ignored_total", "run_ts", "repo_path"],
+    },
+    {
+        "schema_version": "repomori.baseline_drift_record.v1",
+        "kind": "record",
+        "title": "Baseline drift telemetry log row",
+        "producer": "append_baseline_drift_log",
+        "required_fields": ["schema_version", "run_ts", "repo_path", "status", "non_strict_count", "non_strict_ratio"],
+    },
+    {
+        "schema_version": "repomori.baseline_drift_summary.v1",
+        "kind": "report",
+        "title": "Baseline drift log summary",
+        "producer": "summarize_baseline_drift_log",
+        "required_fields": ["schema_version", "status", "log_path", "count", "max_non_strict_ratio", "avg_non_strict_ratio"],
+    },
+    {
         "schema_version": "repomori.config.v1",
         "kind": "config",
         "title": "RepoMori TOML config",
@@ -778,6 +799,7 @@ def run_release_check(
     demo_out: Path | str | None = None,
     keep_demo: bool = False,
     tests_dir: Path | str = "tests",
+    drift_log: Path | str | None = None,
 ) -> dict[str, Any]:
     """Run the local pre-release readiness loop."""
 
@@ -797,6 +819,18 @@ def run_release_check(
         public_release=public_release,
         baseline=baseline_arg,
     )
+    drift_meta = {
+        "run_ts": int(started),
+        "repo_path": str(repo_path),
+        "baseline_path": str(baseline_arg) if baseline_arg else None,
+    }
+    drift = build_baseline_drift_report(
+        scan,
+        run_meta=drift_meta,
+    )
+    drift_log_report = None
+    if drift_log is not None:
+        drift_log_report = append_baseline_drift_log(drift, drift_log)
     scan_ok = not _scan_has_severity_threshold(scan, fail_on)
     tests_check = _release_tests_check(repo_path, tests_dir) if run_tests else _release_skipped_check("tests")
     demo_check = (
@@ -815,9 +849,9 @@ def run_release_check(
             "baseline_path": str(baseline_arg) if baseline_arg else None,
             "summary": scan.get("summary", {}),
             "report": scan,
-            "drift_warnings": _build_baseline_drift_warnings(
-                scan.get("summary", {}).get("baseline_match_counts", {})
-            ),
+            "drift": drift,
+            "drift_warnings": drift,
+            "drift_log": drift_log_report,
         },
         "tests": tests_check,
         "demo": demo_check,
@@ -838,6 +872,7 @@ def run_release_check(
             "demo_out": str(Path(demo_out).resolve()) if demo_out is not None else None,
             "keep_demo": keep_demo,
             "tests_dir": str(tests_dir),
+            "drift_log": str(drift_log) if drift_log is not None else None,
         },
         "summary": {
             "elapsed_seconds": elapsed,
@@ -851,14 +886,20 @@ def run_release_check(
     }
 
 
-def _build_baseline_drift_warnings(
-    counts: dict[str, Any] | None, *, investigate_threshold: float = 0.20
+def build_baseline_drift_report(
+    scan_report: dict[str, Any],
+    *,
+    run_meta: dict[str, Any] | None = None,
+    investigate_threshold: float = 0.20,
 ) -> dict[str, Any]:
-    """Return non-blocking baseline drift observability for release-check reports."""
+    """Build non-blocking baseline drift telemetry for scan or release-check reports."""
 
-    strict_count = int((counts or {}).get("strict", 0))
-    semi_strict_count = int((counts or {}).get("semi_strict", 0))
-    fallback_count = int((counts or {}).get("fallback", 0))
+    if not isinstance(scan_report, dict):
+        raise TypeError("scan_report must be a JSON report object.")
+    counts = dict(scan_report.get("summary", {}).get("baseline_match_counts", {}))
+    strict_count = int(counts.get("strict", 0))
+    semi_strict_count = int(counts.get("semi_strict", 0))
+    fallback_count = int(counts.get("fallback", 0))
 
     ignored_total = strict_count + semi_strict_count + fallback_count
     non_strict_count = semi_strict_count + fallback_count
@@ -874,7 +915,9 @@ def _build_baseline_drift_warnings(
     status = "warn" if (downgraded_from_line_match or downgraded_from_message_match) else "pass"
     investigate = bool(non_strict_ratio >= investigate_threshold and non_strict_count)
 
+    run_meta_dict = dict(run_meta or {})
     return {
+        "schema_version": "repomori.baseline_drift_report.v1",
         "status": status,
         "strict_count": strict_count,
         "semi_strict_count": semi_strict_count,
@@ -886,7 +929,134 @@ def _build_baseline_drift_warnings(
         "downgraded_from_message_match": downgraded_from_message_match,
         "investigate": investigate,
         "warnings": warnings,
+        "repo_path": run_meta_dict.get("repo_path") or scan_report.get("repo_path"),
+        "baseline_path": run_meta_dict.get("baseline_path"),
+        "run_ts": run_meta_dict.get("run_ts", int(time.time())),
+        "run_id": run_meta_dict.get("run_id"),
     }
+
+
+def append_baseline_drift_log(
+    drift_report: dict[str, Any],
+    log_path: Path | str,
+) -> dict[str, Any]:
+    """Append one timestamped baseline-drift record to a JSONL log and return metadata."""
+
+    if not isinstance(drift_report, dict):
+        raise TypeError("drift_report must be a JSON object.")
+
+    row = dict(drift_report)
+    if row.get("schema_version") != "repomori.baseline_drift_record.v1":
+        row["schema_version"] = "repomori.baseline_drift_record.v1"
+    if "run_ts" not in row:
+        row["run_ts"] = int(time.time())
+
+    log_file = Path(log_path).resolve()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with log_file.open("a", encoding="utf-8") as out:
+        out.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    return {
+        "status": "appended",
+        "log_path": str(log_file),
+        "entry": row,
+    }
+
+
+def summarize_baseline_drift_log(
+    log_path: Path | str,
+    *,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Summarize recent baseline drift rows from a JSONL telemetry log."""
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    log_file = Path(log_path).resolve()
+    if not log_file.exists():
+        raise FileNotFoundError(f"Drift log not found: {log_file}")
+
+    rows: list[dict[str, Any]] = []
+    for line in log_file.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if parsed.get("schema_version") != "repomori.baseline_drift_record.v1":
+            continue
+        rows.append(parsed)
+
+    selected = rows[-limit:] if limit and rows else []
+    count = len(selected)
+    if count == 0:
+        return {
+            "schema_version": "repomori.baseline_drift_summary.v1",
+            "status": "pass",
+            "log_path": str(log_file),
+            "limit": limit,
+            "count": 0,
+            "warn_count": 0,
+            "max_non_strict_ratio": 0.0,
+            "avg_non_strict_ratio": 0.0,
+            "trend": {
+                "semi_strict_delta": 0,
+                "fallback_delta": 0,
+                "non_strict_delta": 0,
+            },
+            "rows": [],
+            "ordered": True,
+        }
+
+    ratios = [float(row.get("non_strict_ratio", 0.0)) for row in selected]
+    max_ratio = round(max(ratios), 4) if ratios else 0.0
+    avg_ratio = round(sum(ratios) / len(ratios), 4) if ratios else 0.0
+    warn_count = sum(1 for row in selected if row.get("status") == "warn")
+    first = selected[0]
+    last = selected[-1]
+    semi_strict_delta = int(last.get("semi_strict_count", 0)) - int(first.get("semi_strict_count", 0))
+    fallback_delta = int(last.get("fallback_count", 0)) - int(first.get("fallback_count", 0))
+    non_strict_delta = int(last.get("non_strict_count", 0)) - int(first.get("non_strict_count", 0))
+    status = "warn" if warn_count > 0 else "pass"
+
+    return {
+        "schema_version": "repomori.baseline_drift_summary.v1",
+        "status": status,
+        "log_path": str(log_file),
+        "limit": limit,
+        "count": count,
+        "warn_count": warn_count,
+        "max_non_strict_ratio": max_ratio,
+        "avg_non_strict_ratio": avg_ratio,
+        "trend": {
+            "semi_strict_delta": semi_strict_delta,
+            "fallback_delta": fallback_delta,
+            "non_strict_delta": non_strict_delta,
+        },
+        "rows": selected,
+        "ordered": True,
+    }
+
+
+def _build_baseline_drift_warnings(
+    counts: dict[str, Any] | None, *, investigate_threshold: float = 0.20
+) -> dict[str, Any]:
+    """Legacy helper used by tests and older callers."""
+
+    counts_payload = {
+        "summary": {
+            "baseline_match_counts": counts or {},
+        },
+    }
+    return build_baseline_drift_report(
+        counts_payload,
+        run_meta={},
+        investigate_threshold=investigate_threshold,
+    )
 
 
 def info_pack(pack: Path | str) -> dict[str, Any]:

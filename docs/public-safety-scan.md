@@ -62,6 +62,12 @@ drift-tolerant:
 - fallback: `code + path + severity + message` only when that combination is
   uniquely safe
 
+The matching mode is also non-blocking drift telemetry:
+
+- `strict` means exact code/path/severity/line/match alignment
+- `semi_strict` usually means line drift (same match moved lines)
+- `fallback` means message-based matching when unique
+
 The report also includes `baseline_match_counts` in `summary` so you can see how
 many ignores used strict, semi-strict, and fallback matching. Use `--ignore-code`
 for broader policy decisions, for example when a repository intentionally keeps
@@ -78,15 +84,23 @@ stability:
 
 - `summary.baseline_match_counts` (`strict`, `semi_strict`, `fallback`)
 - `checks.scan.drift_warnings` from `release-check` with ratio details and downgrade flags
+- `--drift-log` to persist drift telemetry rows as JSONL for trend tracking
 
 If semi-strict or fallback matching grows over time, treat it as a signal:
 
 - confirm repository line movement is expected
 - regenerate the baseline from a clean baseline source
 - prefer tighter baseline entries where practical
+- track trend rows with `drift-summary` and watch for sustained rises in deltas
 
 This observability is non-blocking by default. We keep the existing `--fail-on`
 threshold behavior unchanged.
+
+Persisted telemetry uses schema `repomori.baseline_drift_record.v1`. Summarize it:
+
+```powershell
+python -m repomori drift-summary D:\Dev\RepoMori\.repomori-baseline-drift.jsonl --limit 30 --json
+```
 
 RepoMori's GitHub Actions workflow runs the stricter `release-check` command on
 every push and pull request:

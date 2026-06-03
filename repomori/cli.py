@@ -46,6 +46,7 @@ from .codec import (
     run_agent_bridge,
     run_demo,
     run_release_check,
+    summarize_baseline_drift_log,
     run_mcp_bridge,
     run_memory_cycle,
     schema_catalog,
@@ -110,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     release_check.add_argument("--demo-out", type=Path, help="Demo smoke output directory.")
     release_check.add_argument("--keep-demo", action="store_true", help="Keep demo smoke output directory.")
     release_check.add_argument("--tests-dir", default="tests", help="Directory passed to unittest discover.")
+    release_check.add_argument("--drift-log", type=Path, help="Append baseline-drift telemetry as JSONL row.")
     release_check.add_argument("--json", action="store_true", help="Print release-check JSON.")
 
     init = sub.add_parser("init", help="Write a RepoMori config file.")
@@ -158,6 +160,11 @@ def main(argv: list[str] | None = None) -> int:
     timeline.add_argument("--limit", type=int, help="Maximum recent snapshots to return.")
     timeline.add_argument("--format", choices=("markdown", "json"), default="markdown")
     timeline.add_argument("--out", type=Path, help="Write the timeline report to this file.")
+
+    drift_summary = sub.add_parser("drift-summary", help="Summarize baseline drift telemetry from a JSONL log.")
+    drift_summary.add_argument("log", type=Path, help="Path to a baseline-drift JSONL log.")
+    drift_summary.add_argument("--limit", type=int, default=20, help="Only analyze the newest N rows.")
+    drift_summary.add_argument("--json", action="store_true", help="Print JSON output.")
 
     stats = sub.add_parser("stats", help="Read snapshot reuse and storage statistics.")
     stats.add_argument("out_dir", type=Path)
@@ -444,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
             demo_out=args.demo_out,
             keep_demo=args.keep_demo,
             tests_dir=args.tests_dir,
+            drift_log=args.drift_log,
         )
         if args.json:
             print(json.dumps(report, indent=2))
@@ -513,6 +521,28 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0
+    if args.command == "drift-summary":
+        summary = summarize_baseline_drift_log(args.log, limit=args.limit)
+        if args.json:
+            print(json.dumps(summary, indent=2))
+        else:
+            print(f"drift summary: {summary['log_path']}")
+            print(f"status: {summary['status']}")
+            print(f"rows: {summary['count']}")
+            print(f"warn rows: {summary['warn_count']}")
+            trend = summary.get("trend", {})
+            print(
+                "trend semi-strict delta: "
+                f"{trend.get('semi_strict_delta', 0)}"
+            )
+            print(
+                "trend fallback delta: "
+                f"{trend.get('fallback_delta', 0)}"
+            )
+            print(f"max non-strict ratio: {summary.get('max_non_strict_ratio', 0.0):.2f}")
+            print(f"avg non-strict ratio: {summary.get('avg_non_strict_ratio', 0.0):.2f}")
+            print(f"ordered: {summary.get('ordered')}")
+        return 0 if summary["status"] != "fail" else 1
     if args.command == "stats":
         report = read_snapshot_stats(args.out_dir, limit=args.limit)
         output = (

@@ -35,6 +35,8 @@ python -m repomori stats D:\Dev\YourRepo\packs --format json
 python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\packs\next.repomori --base D:\Dev\YourRepo\packs\latest.repomori --force --json
 python -m repomori diff-context D:\Dev\YourRepo\packs\previous.repomori D:\Dev\YourRepo\packs\latest.repomori "what changed?" --out D:\Dev\YourRepo\diff-context.md
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
+python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
+python -m repomori drift-summary D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --limit 20 --json
 python -m repomori context D:\Dev\YourRepo\packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
 ```
 

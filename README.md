@@ -50,7 +50,8 @@ bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
 ```powershell
 python -m repomori demo --out D:\Temp\repomori-demo --force --json
 python -m repomori scan D:\Dev\RepoMori --public-release --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
-python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
+python -m repomori drift-summary D:\Temp\repomori-drift.log --limit 20 --json
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
@@ -104,7 +105,8 @@ exactness matters.
 repomori build <repo> <pack> [--base pack] [--force] [--json]
 repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
-repomori release-check [repo] [--baseline file] [--fail-on low] [--skip-tests] [--skip-demo] [--json]
+repomori release-check [repo] [--baseline file] [--fail-on low] [--skip-tests] [--skip-demo] [--drift-log file] [--json]
+repomori drift-summary <log> [--limit n] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
 repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--anchor-out file] [--anchor-verify] [--allow-unverified-anchor] [--anchor-log file] [--no-incremental] [--diff-context] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
@@ -162,7 +164,8 @@ local policy choices.
 `release-check` is the local pre-push/public-release gate. It runs schema
 catalog sanity checks, strict `scan`, `python -m unittest discover -s tests`,
 and a quickstart `demo` smoke, then returns one `repomori.release_check.v1`
-report.
+report. Add `--drift-log` to persist baseline-match drift telemetry and use
+`drift-summary <log> --json` to review trend deltas in CI or nightly scripts.
 
 `build --base` creates an incremental pack. It hashes current files, reuses
 unchanged file records, compressed chunks, symbols, imports, and search index
