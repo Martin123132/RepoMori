@@ -2,84 +2,95 @@
   "schema_version": "repomori.scan.baseline.v1",
   "source_schema_version": "repomori.scan.v1",
   "repo_path": "D:\\Dev\\RepoMori",
-  "created_at": 1779676338,
+  "created_at": 1780493786,
   "ignore": [
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "README.md",
       "message": "D-drive temp path appears in source.",
-      "line": 41
+      "line": 41,
+      "match": "D:\\T...demo"
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "README.md",
       "message": "D-drive temp path appears in source.",
-      "line": 51
+      "line": 51,
+      "match": "D:\\T...demo"
     },
     {
       "severity": "low",
       "code": "windows_user_path",
       "path": "docs/public-safety-scan.md",
       "message": "Local Windows user path appears in source.",
-      "line": 25
+      "line": 25,
+      "match": "C:\\U.....`,"
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "docs/public-safety-scan.md",
       "message": "D-drive temp path appears in source.",
-      "line": 25
+      "line": 25,
+      "match": "D:\\T......`"
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "docs/quickstart.md",
       "message": "D-drive temp path appears in source.",
-      "line": 8
+      "line": 8,
+      "match": "D:\\T...demo"
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "docs/quickstart.md",
       "message": "D-drive temp path appears in source.",
-      "line": 16
+      "line": 16,
+      "match": "D:\\T...demo"
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "docs/quickstart.md",
       "message": "D-drive temp path appears in source.",
-      "line": 17
+      "line": 17,
+      "match": "D:\\T...demo"
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "docs/release-check.md",
       "message": "D-drive temp path appears in source.",
-      "line": 32
+      "line": 32,
+      "match": "D:\\T...demo"
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "examples/quickstart-demo/README.md",
       "message": "D-drive temp path appears in source.",
-      "line": 8
+      "line": 8,
+      "match": "D:\\T...demo"
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "examples/quickstart-demo/README.md",
       "message": "D-drive temp path appears in source.",
-      "line": 14
+      "line": 14,
+      "match": "D:\\T...mori"
     },
     {
       "severity": "low",
       "code": "temp_drive_path",
       "path": "examples/quickstart-demo/README.md",
       "message": "D-drive temp path appears in source.",
-      "line": 15
+      "line": 15,
+      "match": "D:\\T...mori"
     }
   ]
 }

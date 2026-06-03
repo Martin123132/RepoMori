@@ -151,8 +151,13 @@ secrets, private-key files, generated `.repomori` packs, handoff and benchmark
 artifacts, dependency/build noise, huge files, binary-heavy folders, local path
 traces, and license/public-release guardrail gaps. It is local-only and
 dependency-free. Use `--fail-on high` for secret-style failures only, or make it
-stricter with `--fail-on medium` or `--fail-on low`. Use `--baseline` for exact
-known findings and `--ignore-code` only for broad local policy choices.
+stricter with `--fail-on medium` or `--fail-on low`.
+
+Baseline matching is drift-aware: strict `code + path + severity + line + match`,
+then semi-strict `code + path + severity + match` when the line moved, then a
+conservative fallback `code + path + severity + message` when unique.
+Use `--baseline` for exact known findings and `--ignore-code` only for broad
+local policy choices.
 
 `release-check` is the local pre-push/public-release gate. It runs schema
 catalog sanity checks, strict `scan`, `python -m unittest discover -s tests`,

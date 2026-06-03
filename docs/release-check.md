@@ -17,6 +17,11 @@ It runs:
 The report uses schema `repomori.release_check.v1` and includes a pass/fail
 status, settings, summary, and nested check reports.
 
+`release-check` inherits the same baseline match behavior as `scan`: strict
+`code + path + severity + line + match`, then semi-strict when line numbers drift,
+then conservative message fallback only when unique. In JSON output this shows up
+as `summary.baseline_match_counts` in the scan block.
+
 ## Fast Variants
 
 Skip the slower pieces when iterating on scan or schema work:

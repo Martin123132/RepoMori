@@ -54,10 +54,18 @@ python -m repomori scan D:\Dev\RepoMori --public-release --write-baseline D:\Dev
 python -m repomori scan D:\Dev\RepoMori --public-release --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --fail-on low --json
 ```
 
-The baseline file uses schema `repomori.scan.baseline.v1`. It matches findings
-by code, path, and line number when present. Use `--ignore-code` for broader
-policy decisions, for example when a repository intentionally keeps large
-binary fixtures:
+The baseline file uses schema `repomori.scan.baseline.v1`. Matching is now
+drift-tolerant:
+
+- strict: `code + path + severity + line + match`
+- semi-strict: `code + path + severity + match` (line may shift)
+- fallback: `code + path + severity + message` only when that combination is
+  uniquely safe
+
+The report also includes `baseline_match_counts` in `summary` so you can see how
+many ignores used strict, semi-strict, and fallback matching. Use `--ignore-code`
+for broader policy decisions, for example when a repository intentionally keeps
+large binary fixtures:
 
 ```powershell
 python -m repomori scan D:\Dev\RepoMori --ignore-code binary_file --json

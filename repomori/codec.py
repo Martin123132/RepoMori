@@ -731,6 +731,19 @@ def scan_repository(
             "secret_findings": sum(1 for item in active_findings if item["code"] in {"private_key", "openai_api_key", "github_token", "aws_access_key", "generic_secret_assignment", "risky_secret_filename"}),
             "license_findings": sum(1 for item in active_findings if item["code"] in {"missing_license", "private_license_metadata", "missing_public_release_file"}),
             "elapsed_seconds": round(time.time() - started, 4),
+            "baseline_match_counts": {
+                "strict": sum(
+                    1 for finding in ignored_findings if finding.get("baseline_match") == "strict"
+                ),
+                "semi_strict": sum(
+                    1
+                    for finding in ignored_findings
+                    if finding.get("baseline_match") == "semi_strict"
+                ),
+                "fallback": sum(
+                    1 for finding in ignored_findings if finding.get("baseline_match") == "fallback"
+                ),
+            },
         }
     )
     status = "fail" if summary["high"] else "warn" if summary["findings"] else "pass"
@@ -7921,7 +7934,7 @@ def _scan_baseline_entries(baseline: Path | str | dict[str, Any] | None) -> tupl
         if not code or not path_value:
             raise ValueError(f"scan baseline entry {index} must include code and path")
         normalized_entry: dict[str, Any] = {"code": code, "path": path_value}
-        for optional_key in ("line", "severity"):
+        for optional_key in ("line", "severity", "match", "message"):
             if optional_key in entry:
                 normalized_entry[optional_key] = entry[optional_key]
         normalized.append(normalized_entry)
@@ -7936,36 +7949,138 @@ def _scan_filter_findings(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     active = []
     ignored = []
+    fallback_signature_counts = _scan_fallback_finding_signature_counts(findings)
+    baseline_signature_counts = _scan_fallback_baseline_signature_counts(baseline_entries)
     ignore_code_set = set(ignore_codes)
     for finding in findings:
         reason = None
         if finding.get("code") in ignore_code_set:
             reason = "ignore_code"
         else:
-            match = _scan_matching_baseline_entry(finding, baseline_entries)
+            match, match_type = _scan_matching_baseline_entry(
+                finding,
+                baseline_entries,
+                fallback_finding_signature_counts=fallback_signature_counts,
+                baseline_signature_counts=baseline_signature_counts,
+            )
             if match is not None:
                 reason = "baseline"
         if reason:
             ignored_item = dict(finding)
             ignored_item["ignored_reason"] = reason
+            if reason == "baseline" and match_type is not None:
+                ignored_item["baseline_match"] = match_type
             ignored.append(ignored_item)
             continue
         active.append(finding)
     return active, ignored
 
 
-def _scan_matching_baseline_entry(finding: dict[str, Any], entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _scan_fallback_signature(item: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(item.get("code", "")),
+        str(item.get("path", "")),
+        str(item.get("severity", "")),
+        str(item.get("message", "")).strip(),
+    )
+
+
+def _scan_fallback_finding_signature_counts(findings: list[dict[str, Any]]) -> dict[tuple[str, str, str, str], int]:
+    counts: dict[tuple[str, str, str, str], int] = {}
+    for finding in findings:
+        key = _scan_fallback_signature(finding)
+        if not key[2] or not key[3]:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _scan_fallback_baseline_signature_counts(entries: list[dict[str, Any]]) -> dict[tuple[str, str, str, str], int]:
+    counts: dict[tuple[str, str, str, str], int] = {}
     for entry in entries:
-        if entry.get("code") != finding.get("code"):
+        if "message" not in entry or "severity" not in entry:
             continue
-        if entry.get("path") != finding.get("path"):
+        key = _scan_fallback_signature(entry)
+        if not key[2] or not key[3]:
             continue
-        if "line" in entry and entry.get("line") != finding.get("line"):
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _scan_matching_baseline_entry(
+    finding: dict[str, Any],
+    entries: list[dict[str, Any]],
+    *,
+    fallback_finding_signature_counts: dict[tuple[str, str, str, str], int],
+    baseline_signature_counts: dict[tuple[str, str, str, str], int],
+) -> tuple[dict[str, Any] | None, str | None]:
+    finding_code = finding.get("code")
+    finding_path = finding.get("path")
+    finding_severity = str(finding.get("severity", ""))
+    finding_line = finding.get("line")
+    finding_match = finding.get("match")
+    finding_message = str(finding.get("message", "")).strip()
+
+    for entry in entries:
+        if entry.get("code") != finding_code:
             continue
-        if "severity" in entry and entry.get("severity") != finding.get("severity"):
+        if entry.get("path") != finding_path:
             continue
-        return entry
-    return None
+        if entry.get("severity") is not None and str(entry.get("severity")) != finding_severity:
+            continue
+        if "line" not in entry or entry.get("line") is None:
+            continue
+        if entry.get("line") != finding_line:
+            continue
+        if entry.get("match") is not None and entry.get("match") != finding_match:
+            continue
+        return entry, "strict"
+
+    for entry in entries:
+        if entry.get("code") != finding_code:
+            continue
+        if entry.get("path") != finding_path:
+            continue
+        if entry.get("severity") is not None and str(entry.get("severity")) != finding_severity:
+            continue
+        if entry.get("match") is None:
+            continue
+        if entry.get("match") != finding_match:
+            continue
+        if entry.get("line") == finding_line:
+            continue
+        return entry, "semi_strict"
+
+    if not finding_message:
+        return None, None
+    signature = _scan_fallback_signature(
+        {
+            "code": finding_code,
+            "path": finding_path,
+            "severity": finding_severity,
+            "message": finding_message,
+        }
+    )
+    if (
+        baseline_signature_counts.get(signature, 0) != 1
+        or fallback_finding_signature_counts.get(signature, 0) != 1
+    ):
+        return None, None
+
+    for entry in entries:
+        if entry.get("code") != finding_code:
+            continue
+        if entry.get("path") != finding_path:
+            continue
+        if entry.get("severity") is not None and str(entry.get("severity")) != finding_severity:
+            continue
+        if entry.get("message") is None:
+            continue
+        if str(entry.get("message")).strip() != finding_message:
+            continue
+        return entry, "fallback"
+
+    return None, None
 
 
 def scan_baseline_from_report(report: dict[str, Any]) -> dict[str, Any]:
@@ -7983,6 +8098,8 @@ def scan_baseline_from_report(report: dict[str, Any]) -> dict[str, Any]:
         }
         if finding.get("line") is not None:
             entry["line"] = finding.get("line")
+        if finding.get("match") is not None:
+            entry["match"] = finding.get("match")
         entries.append(entry)
     return {
         "schema_version": "repomori.scan.baseline.v1",
