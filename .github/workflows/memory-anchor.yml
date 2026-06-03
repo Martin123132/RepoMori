@@ -4,9 +4,20 @@ on:
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
+    inputs:
+      anchor_mode:
+        description: "Workflow mode: strict, audit, or both"
+        required: false
+        default: "strict"
+        type: choice
+        options:
+          - strict
+          - audit
+          - both
 
 jobs:
-  anchor:
+  anchor-strict:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.anchor_mode != 'audit'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run memory anchor check
+      - name: Run memory anchor check (strict)
         run: |
           python -m repomori memory . \
             --out-dir .repomori-packs \
@@ -45,4 +56,39 @@ jobs:
           print("memory and anchor verification succeeded")
           print(f"memory status={memory_status}")
           print(f"anchor status={anchor_status}")
+          PY
+
+  anchor-audit:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.anchor_mode != 'strict'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run memory anchor check (audit)
+        run: |
+          python -m repomori memory . \
+            --out-dir .repomori-packs \
+            --anchor-out .repomori-packs/timeline-anchor-audit.json \
+            --anchor-verify \
+            --allow-unverified-anchor \
+            --json > memory-anchor-audit.json
+
+      - name: Validate anchor verification (audit)
+        run: |
+          python - <<'PY'
+          import json
+
+          payload = json.loads(open("memory-anchor-audit.json", "r", encoding="utf-8").read())
+          memory_status = payload.get("status")
+          anchor = payload.get("anchor_verification")
+          anchor_status = None if anchor is None else anchor.get("status")
+
+          print("memory status=", memory_status)
+          print("anchor status=", anchor_status)
+          if anchor is not None:
+            print(json.dumps(anchor, indent=2))
           PY

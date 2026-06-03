@@ -71,6 +71,11 @@ python -m repomori memory . --out-dir .repomori-packs --anchor-out .repomori-pac
 RepoMori is also in-tree documented for this workflow with a ready-to-copy
 `.github/workflows/memory-anchor.yml` in this repository.
 
+The workflow supports three manual modes:
+`strict` (default), `audit`, and `both`. Use `audit` to continue through
+mismatches in the same run (`--allow-unverified-anchor`) and `both` to run strict
+and audit checks together.
+
 ## What To Read Next
 
 - [MCP setup](mcp-setup.md)
