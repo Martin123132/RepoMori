@@ -1,6 +1,7 @@
 # RepoMori
 
 [![tests](https://github.com/Martin123132/RepoMori/actions/workflows/tests.yml/badge.svg)](https://github.com/Martin123132/RepoMori/actions/workflows/tests.yml)
+[![memory-anchor](https://github.com/Martin123132/RepoMori/actions/workflows/memory-anchor.yml/badge.svg)](https://github.com/Martin123132/RepoMori/actions/workflows/memory-anchor.yml)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE.md)
 [![source available](https://img.shields.io/badge/source--available-non--commercial-informational)](NOTICE.md)

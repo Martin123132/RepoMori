@@ -76,6 +76,27 @@ The workflow supports three manual modes:
 mismatches in the same run (`--allow-unverified-anchor`) and `both` to run strict
 and audit checks together.
 
+You can also call the reusable workflow from other repos:
+
+```yaml
+name: repomori-anchor
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  repomori-anchor:
+    uses: Martin123132/RepoMori/.github/workflows/memory-anchor-reusable.yml@main
+    with:
+      repo: .
+      out_dir: .repomori-packs
+      anchor_mode: both
+```
+
+Use `anchor_mode` as `strict`, `audit`, or `both`, and pass alternate
+`repo` / `out_dir` values when this repository is not rooted at `.`.
+
 ## What To Read Next
 
 - [MCP setup](mcp-setup.md)

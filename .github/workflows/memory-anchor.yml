@@ -5,6 +5,16 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
+      repo:
+        description: "Repository path to snapshot"
+        required: false
+        default: "."
+        type: string
+      out_dir:
+        description: "Snapshot output directory"
+        required: false
+        default: ".repomori-packs"
+        type: string
       anchor_mode:
         description: "Workflow mode: strict, audit, or both"
         required: false
@@ -16,79 +26,9 @@ on:
           - both
 
 jobs:
-  anchor-strict:
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.anchor_mode != 'audit'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Run memory anchor check (strict)
-        run: |
-          python -m repomori memory . \
-            --out-dir .repomori-packs \
-            --anchor-out .repomori-packs/timeline-anchor.json \
-            --anchor-verify \
-            --json > memory-anchor.json
-
-      - name: Validate anchor verification
-        run: |
-          python - <<'PY'
-          import json
-          import sys
-
-          payload = json.loads(open("memory-anchor.json", "r", encoding="utf-8").read())
-          memory_status = payload.get("status")
-          anchor = payload.get("anchor_verification")
-          anchor_status = None if anchor is None else anchor.get("status")
-
-          if memory_status != "pass":
-            print(f"memory status was {memory_status}")
-            sys.exit(1)
-
-          if anchor_status == "fail":
-            print("anchor verification failed")
-            print(json.dumps(anchor, indent=2))
-            sys.exit(1)
-
-          print("memory and anchor verification succeeded")
-          print(f"memory status={memory_status}")
-          print(f"anchor status={anchor_status}")
-          PY
-
-  anchor-audit:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.anchor_mode != 'strict'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Run memory anchor check (audit)
-        run: |
-          python -m repomori memory . \
-            --out-dir .repomori-packs \
-            --anchor-out .repomori-packs/timeline-anchor-audit.json \
-            --anchor-verify \
-            --allow-unverified-anchor \
-            --json > memory-anchor-audit.json
-
-      - name: Validate anchor verification (audit)
-        run: |
-          python - <<'PY'
-          import json
-
-          payload = json.loads(open("memory-anchor-audit.json", "r", encoding="utf-8").read())
-          memory_status = payload.get("status")
-          anchor = payload.get("anchor_verification")
-          anchor_status = None if anchor is None else anchor.get("status")
-
-          print("memory status=", memory_status)
-          print("anchor status=", anchor_status)
-          if anchor is not None:
-            print(json.dumps(anchor, indent=2))
-          PY
+  run_anchor_checks:
+    uses: ./.github/workflows/memory-anchor-reusable.yml
+    with:
+      repo: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.repo || '.' }}
+      out_dir: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.out_dir || '.repomori-packs' }}
+      anchor_mode: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.anchor_mode || 'strict' }}

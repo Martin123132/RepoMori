@@ -1,0 +1,115 @@
+name: memory-anchor-reusable
+
+on:
+  workflow_call:
+    inputs:
+      repo:
+        description: "Path to the repository root to snapshot."
+        required: false
+        type: string
+        default: "."
+      out_dir:
+        description: "Snapshot output directory (relative or absolute)."
+        required: false
+        type: string
+        default: ".repomori-packs"
+      anchor_mode:
+        description: "Workflow mode: strict, audit, or both."
+        required: false
+        type: string
+        default: "strict"
+      python_version:
+        description: "Python version used for GitHub runners."
+        required: false
+        type: string
+        default: "3.12"
+
+jobs:
+  anchor_strict:
+    if: inputs.anchor_mode != 'audit'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python_version }}"
+
+      - name: Run memory anchor check (strict)
+        run: |
+          if [ -n "${{ inputs.out_dir }}" ]; then
+            ANCHOR_OUT="${{ inputs.out_dir }}/timeline-anchor.json"
+          else
+            ANCHOR_OUT="timeline-anchor.json"
+          fi
+
+          python -m repomori memory "${{ inputs.repo }}" \
+            --out-dir "${{ inputs.out_dir }}" \
+            --anchor-out "${ANCHOR_OUT}" \
+            --anchor-verify \
+            --json > memory-anchor.json
+
+      - name: Validate anchor verification
+        run: |
+          import json
+          import sys
+
+          with open("memory-anchor.json", "r", encoding="utf-8") as fp:
+            payload = json.load(fp)
+
+          memory_status = payload.get("status")
+          anchor = payload.get("anchor_verification")
+          anchor_status = None if anchor is None else anchor.get("status")
+
+          if memory_status != "pass":
+            print(f"memory status was {memory_status}")
+            sys.exit(1)
+
+          if anchor_status == "fail":
+            print("anchor verification failed")
+            print(json.dumps(anchor, indent=2))
+            sys.exit(1)
+
+          print("memory and anchor verification succeeded")
+          print(f"memory status={memory_status}")
+          print(f"anchor status={anchor_status}")
+
+  anchor_audit:
+    if: inputs.anchor_mode != 'strict'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ inputs.python_version }}"
+
+      - name: Run memory anchor check (audit)
+        run: |
+          if [ -n "${{ inputs.out_dir }}" ]; then
+            ANCHOR_OUT="${{ inputs.out_dir }}/timeline-anchor-audit.json"
+          else
+            ANCHOR_OUT="timeline-anchor-audit.json"
+          fi
+
+          python -m repomori memory "${{ inputs.repo }}" \
+            --out-dir "${{ inputs.out_dir }}" \
+            --anchor-out "${ANCHOR_OUT}" \
+            --anchor-verify \
+            --allow-unverified-anchor \
+            --json > memory-anchor-audit.json
+
+      - name: Validate anchor verification (audit)
+        run: |
+          import json
+
+          with open("memory-anchor-audit.json", "r", encoding="utf-8") as fp:
+            payload = json.load(fp)
+
+          memory_status = payload.get("status")
+          anchor = payload.get("anchor_verification")
+          anchor_status = None if anchor is None else anchor.get("status")
+
+          print("memory status=", memory_status)
+          print("anchor status=", anchor_status)
+          if anchor is not None:
+            print(json.dumps(anchor, indent=2))
