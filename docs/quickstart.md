@@ -96,6 +96,7 @@ jobs:
 
 Use `anchor_mode` as `strict`, `audit`, or `both`, and pass alternate
 `repo` / `out_dir` values when this repository is not rooted at `.`.
+See [Reusable workflow guide](memory-anchor-reusable.md) for a complete template.
 
 ## What To Read Next
 
