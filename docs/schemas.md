@@ -35,6 +35,9 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.scan.v1`: local public-safety repository scan report.
 - `repomori.scan.baseline.v1`: acknowledged public-safety scan findings.
 - `repomori.release_check.v1`: local release readiness report.
+- `repomori.baseline_drift_report.v1`: per-run baseline drift telemetry.
+- `repomori.baseline_drift_record.v1`: one JSONL baseline drift log row.
+- `repomori.baseline_drift_summary.v1`: summarized drift-log trend report.
 
 ## Agent Schemas
 

@@ -916,6 +916,7 @@ def build_baseline_drift_report(
     investigate = bool(non_strict_ratio >= investigate_threshold and non_strict_count)
 
     run_meta_dict = dict(run_meta or {})
+    settings = scan_report.get("settings", {}) if isinstance(scan_report.get("settings"), dict) else {}
     return {
         "schema_version": "repomori.baseline_drift_report.v1",
         "status": status,
@@ -930,7 +931,7 @@ def build_baseline_drift_report(
         "investigate": investigate,
         "warnings": warnings,
         "repo_path": run_meta_dict.get("repo_path") or scan_report.get("repo_path"),
-        "baseline_path": run_meta_dict.get("baseline_path"),
+        "baseline_path": run_meta_dict.get("baseline_path") or settings.get("baseline_path"),
         "run_ts": run_meta_dict.get("run_ts", int(time.time())),
         "run_id": run_meta_dict.get("run_id"),
     }
@@ -4538,16 +4539,20 @@ def run_memory_cycle(
     prune = prune_snapshots(out_path, keep=keep, apply=prune_apply)
     timeline = read_snapshot_timeline(out_path, limit=timeline_limit)
 
-    status = "pass"
     anchor_verification_status = anchor_verification["status"] if anchor_verification is not None else None
-    if snapshot.get("status") != "pass" or doctor.get("status") == "fail" or prune.get("errors"):
+    anchor_failed = anchor_verification_status == "fail"
+    anchor_failed_allowed = anchor_failed and allow_unverified_anchor
+    if (
+        snapshot.get("status") != "pass"
+        or doctor.get("status") == "fail"
+        or prune.get("errors")
+        or (anchor_failed and not allow_unverified_anchor)
+    ):
         status = "fail"
-    elif doctor.get("status") == "warn":
+    elif doctor.get("status") == "warn" or anchor_verification_status == "warn" or anchor_failed_allowed:
         status = "warn"
-    elif anchor_verification_status == "warn":
-        status = "warn"
-    elif anchor_verification_status == "fail":
-        status = "fail" if not allow_unverified_anchor else "warn"
+    else:
+        status = "pass"
 
     if anchor_report is None and anchor_verify:
         status = "fail"
@@ -5566,6 +5571,16 @@ def append_anchor_log(
         if isinstance(anchor_payload.get("verification"), dict)
         else {}
     )
+    payload_current_chain = (
+        anchor_payload.get("current_chain")
+        if isinstance(anchor_payload.get("current_chain"), dict)
+        else {}
+    )
+    payload_current_chain_summary = (
+        payload_current_chain.get("summary")
+        if isinstance(payload_current_chain.get("summary"), dict)
+        else {}
+    )
 
     errors = anchor_payload.get("errors")
     if not isinstance(errors, list):
@@ -5598,11 +5613,16 @@ def append_anchor_log(
             payload_chain.get("head_chain_hash")
             or payload_chain.get("chain_head_hash")
             or payload_summary.get("head_chain_hash")
+            or payload_summary.get("current_head_hash")
+            or payload_summary.get("anchor_head_hash")
+            or payload_current_chain_summary.get("head_chain_hash")
         ),
         "snapshot_count": (
             payload_chain.get("snapshot_count")
             or payload_summary.get("snapshot_count")
             or payload_summary.get("checked_count")
+            or payload_current_chain_summary.get("snapshot_count")
+            or payload_current_chain_summary.get("checked_count")
         ),
         "errors": errors,
         "warnings": warnings,

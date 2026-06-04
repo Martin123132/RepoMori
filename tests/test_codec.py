@@ -831,6 +831,16 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertTrue(fallback["downgraded_from_message_match"])
         self.assertEqual(fallback["status"], "warn")
 
+        with_scan_meta = build_baseline_drift_report(
+            {
+                "repo_path": "D:/Temp/demo",
+                "settings": {"baseline_path": "D:/Temp/demo/.repomori-scan-baseline.json"},
+                "summary": {"baseline_match_counts": {"strict": 1, "semi_strict": 0, "fallback": 0}},
+            },
+        )
+        self.assertEqual(with_scan_meta["repo_path"], "D:/Temp/demo")
+        self.assertEqual(with_scan_meta["baseline_path"], "D:/Temp/demo/.repomori-scan-baseline.json")
+
     def test_snapshot_repo_builds_latest_and_compares_previous(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -1463,6 +1473,8 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(len(audit_rows), 1)
             self.assertEqual(audit_rows[0]["anchor_schema_version"], "repomori.snapshot_anchor.verify.v1")
             self.assertEqual(audit_rows[0]["anchor_status"], "pass")
+            self.assertIsNotNone(audit_rows[0]["chain_head_hash"])
+            self.assertEqual(audit_rows[0]["snapshot_count"], 1)
 
     def test_run_memory_cycle_anchor_verification_failures_and_allow_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1510,6 +1522,33 @@ class RepoMoriCodecTests(unittest.TestCase):
                 )
                 self.assertEqual(allowed["summary"]["anchor_verification_status"], "fail")
                 self.assertEqual(allowed["status"], "warn")
+
+            def doctor_warning(*_args: object, **_kwargs: object) -> dict[str, object]:
+                return {
+                    "schema_version": "repomori.doctor.v1",
+                    "status": "warn",
+                    "error_count": 0,
+                    "warning_count": 1,
+                    "summary": {},
+                    "errors": [],
+                    "warnings": [{"scope": "chain", "message": "forced warning"}],
+                }
+
+            with (
+                patch.object(codec, "verify_snapshot_anchor", side_effect=force_failure),
+                patch.object(codec, "doctor_snapshot_dir", side_effect=doctor_warning),
+            ):
+                failed_with_doctor_warning = run_memory_cycle(
+                    repo,
+                    out,
+                    no_handoff=True,
+                    anchor_out=str(anchor_path),
+                    anchor_verify=True,
+                    allow_unverified_anchor=False,
+                )
+                self.assertEqual(failed_with_doctor_warning["summary"]["doctor_status"], "warn")
+                self.assertEqual(failed_with_doctor_warning["summary"]["anchor_verification_status"], "fail")
+                self.assertEqual(failed_with_doctor_warning["status"], "fail")
 
     def test_append_anchor_log_appends_jsonl_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
