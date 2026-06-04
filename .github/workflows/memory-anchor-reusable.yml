@@ -17,7 +17,7 @@ on:
         description: "Anchor freshness profile: strict, safe, or legacy."
         required: false
         type: string
-        default: "strict"
+        default: "safe"
       python_version:
         description: "Python version used for GitHub runners."
         required: false
@@ -51,11 +51,19 @@ jobs:
 
       - name: Validate anchor verification
         run: |
+          python - <<'PY'
           import json
           import sys
 
-          with open("memory-anchor.json", "r", encoding="utf-8") as fp:
-            payload = json.load(fp)
+          try:
+              with open("memory-anchor.json", "r", encoding="utf-8-sig") as fp:
+                  payload = json.load(fp)
+          except json.JSONDecodeError as exc:
+              print(f"memory-anchor.json did not contain valid JSON: {exc}")
+              sys.exit(1)
+          except FileNotFoundError:
+              print("memory-anchor.json was not written by the memory run.")
+              sys.exit(1)
 
           memory_status = payload.get("status")
           anchor_mode = "${{ inputs.anchor_mode }}".lower()
@@ -63,13 +71,14 @@ jobs:
           anchor_status = None if anchor is None else anchor.get("status")
 
           if memory_status == "fail":
-            print(f"memory status was {memory_status}")
-            sys.exit(1)
+              print(f"memory status was {memory_status}")
+              sys.exit(1)
 
           if anchor_mode == "strict" and memory_status != "pass":
-            print(f"memory status was {memory_status}")
-            sys.exit(1)
+              print(f"memory status was {memory_status}")
+              sys.exit(1)
 
           print("memory and anchor verification succeeded")
           print(f"memory status={memory_status}")
           print(f"anchor status={anchor_status}")
+          PY

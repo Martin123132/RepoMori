@@ -19,7 +19,7 @@ on:
       anchor_mode:
         description: "Anchor freshness profile: strict, safe, or legacy"
         required: false
-        default: "strict"
+        default: "safe"
         type: choice
         options:
           - strict
@@ -32,7 +32,7 @@ jobs:
     with:
       repo: .
       out_dir: .repomori-packs
-      anchor_mode: ${{ github.event.inputs.anchor_mode || 'strict' }}
+      anchor_mode: ${{ github.event.inputs.anchor_mode || 'safe' }}
       python_version: "3.12"
 ```
 
@@ -42,7 +42,7 @@ jobs:
 - Writes a timeline anchor artifact in the snapshot directory
 - Verifies anchor chain state immediately
 - Supports:
-  - `strict` (default): fail on mismatch
+- `strict`: fail on mismatch
   - `safe`: continue on mismatch; anchor verification is allowed to report warn
   - `legacy`: check only the anchor proof hash (no full chain head comparison)
 

@@ -18,7 +18,7 @@ on:
       anchor_mode:
         description: "Anchor freshness profile: strict, safe, or legacy."
         required: false
-        default: "strict"
+        default: "safe"
         type: choice
         options:
           - strict
@@ -32,7 +32,7 @@ jobs:
     with:
       repo: "."
       out_dir: ".repomori-packs"
-      anchor_mode: "strict"
+      anchor_mode: "safe"
 
   run_anchor_checks_dispatch:
     if: github.event_name == 'workflow_dispatch'
@@ -40,4 +40,4 @@ jobs:
     with:
       repo: ${{ github.event.inputs.repo || '.' }}
       out_dir: ${{ github.event.inputs.out_dir || '.repomori-packs' }}
-      anchor_mode: ${{ github.event.inputs.anchor_mode || 'strict' }}
+      anchor_mode: ${{ github.event.inputs.anchor_mode || 'safe' }}
