@@ -108,3 +108,7 @@ every push and pull request:
 ```powershell
 python -m repomori release-check . --baseline .repomori-scan-baseline.json --fail-on low --json
 ```
+
+## See also
+
+- [Baseline drift watchlist](baseline-drift-watchlist.md)

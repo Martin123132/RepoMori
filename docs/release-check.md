@@ -72,3 +72,7 @@ python -m repomori release-check D:\Dev\RepoMori --demo-out D:\Temp\repomori-rel
 
 GitHub Actions runs the full release check on Python 3.12 while the separate
 test matrix still covers Python 3.10, 3.11, and 3.12.
+
+## See also
+
+- [Baseline drift watchlist](baseline-drift-watchlist.md)

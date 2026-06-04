@@ -107,5 +107,6 @@ See [Reusable workflow guide](memory-anchor-reusable.md) for a complete template
 - [Agent protocol](agent-protocol.md)
 - [Public safety scan](public-safety-scan.md)
 - [Release check](release-check.md)
+- [Baseline drift watchlist](baseline-drift-watchlist.md)
 - [Incremental packs](incremental-packs.md)
 - [License FAQ](license-faq.md)

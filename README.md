@@ -350,6 +350,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Schemas](docs/schemas.md)
 - [Public safety scan](docs/public-safety-scan.md)
 - [Release check](docs/release-check.md)
+- [Baseline drift watchlist](docs/baseline-drift-watchlist.md)
 - [Reusable anchor workflow](docs/memory-anchor-reusable.md)
 - [Incremental packs](docs/incremental-packs.md)
 - [License FAQ](docs/license-faq.md)
