@@ -44,6 +44,11 @@ SNAPSHOT_CHAIN_FIELDS = {
     "entry_hash",
     "chain_hash",
 }
+ANCHOR_FRESHNESS_PROFILES = {
+    "safe",
+    "strict",
+    "legacy",
+}
 
 SCHEMA_DEFINITIONS = (
     {
@@ -229,6 +234,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "repo_path", "settings", "summary", "checks"],
     },
     {
+        "schema_version": "repomori.health.v1",
+        "kind": "report",
+        "title": "Release health and trend bundle",
+        "producer": "run_release_health",
+        "required_fields": ["schema_version", "status", "repo_path", "settings", "summary", "checks"],
+    },
+    {
         "schema_version": "repomori.baseline_drift_report.v1",
         "kind": "report",
         "title": "Baseline drift telemetry report",
@@ -257,6 +269,15 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "default_profile", "profiles"],
     },
 )
+
+_RELEASE_CHECK_ARTIFACT_DIR_NAME = ".repomori-release-check"
+_RELEASE_CHECK_ARTIFACT_MARKDOWN = "release-check.md"
+_RELEASE_CHECK_ARTIFACT_REPORT = "release-check.json"
+_RELEASE_CHECK_ARTIFACT_DRIFT_LOG = "baseline-drift.jsonl"
+
+_RELEASE_HEALTH_ARTIFACT_DIR_NAME = ".repomori-health"
+_RELEASE_HEALTH_ARTIFACT_MARKDOWN = "release-health.md"
+_RELEASE_HEALTH_ARTIFACT_REPORT = "release-health.json"
 
 EXCLUDED_DIRS = {
     ".git",
@@ -788,6 +809,275 @@ def scan_repository(
     return report
 
 
+def _release_check_artifacts_dir(repo_path: Path, artifacts_dir: Path | str | None) -> Path:
+    if artifacts_dir is not None:
+        return Path(artifacts_dir).resolve()
+    return repo_path / _RELEASE_CHECK_ARTIFACT_DIR_NAME
+
+
+def _release_health_artifacts_dir(repo_path: Path, artifacts_dir: Path | str | None) -> Path:
+    if artifacts_dir is not None:
+        return Path(artifacts_dir).resolve()
+    return repo_path / _RELEASE_HEALTH_ARTIFACT_DIR_NAME
+
+
+def _normalize_policy_threshold(raw: Any, *, metric: str) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    mapping: dict[str, Any] = {}
+    for key, out_key in (
+        ("warn-at", "warn_at"),
+        ("warn_at", "warn_at"),
+        ("warn", "warn_at"),
+    ):
+        if key in raw:
+            mapping[out_key] = raw[key]
+    for key, out_key in (
+        ("fail-at", "fail_at"),
+        ("fail_at", "fail_at"),
+        ("fail", "fail_at"),
+    ):
+        if key in raw:
+            mapping[out_key] = raw[key]
+    if metric == "ratio":
+        for key, out_key in (
+            ("investigate-at", "investigate_at"),
+            ("investigate_at", "investigate_at"),
+            ("investigate", "investigate_at"),
+        ):
+            if key in raw:
+                mapping[out_key] = raw[key]
+
+    out: dict[str, Any] = {}
+    for key in ("warn_at", "fail_at"):
+        value = mapping.get(key)
+        if value is None:
+            continue
+        if metric == "ratio":
+            try:
+                converted = float(value)
+            except (TypeError, ValueError):
+                continue
+            if converted < 0:
+                continue
+            out[key] = converted
+            continue
+        try:
+            converted = int(value)
+        except (TypeError, ValueError):
+            continue
+        if converted < 0:
+            continue
+        out[key] = converted
+
+    if metric == "ratio":
+        value = mapping.get("investigate_at")
+        if value is not None:
+            try:
+                converted = float(value)
+            except (TypeError, ValueError):
+                converted = None
+            if converted is not None and converted >= 0:
+                out["investigate_at"] = converted
+    return out
+
+
+def _read_drift_policy(policy_path: Path | str | None) -> dict[str, Any] | None:
+    if policy_path is None:
+        return None
+    path = Path(policy_path).resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Drift policy not found: {path}")
+    raw_text = path.read_text(encoding="utf-8-sig")
+    try:
+        raw = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Drift policy must be valid JSON: {path}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError(f"Drift policy must be a JSON object: {path}")
+
+    def _metric(name: str, metric: str) -> dict[str, Any]:
+        value = raw.get(name, {})
+        if not isinstance(value, dict):
+            return {}
+        return _normalize_policy_threshold(value, metric=metric)
+
+    non_strict_ratio = _metric("non_strict_ratio", metric="ratio")
+    semi_strict_delta = _metric("semi_strict_delta", metric="delta")
+    fallback_delta = _metric("fallback_delta", metric="delta")
+
+    global_ratio = _normalize_policy_threshold(raw, metric="ratio")
+    global_delta = _normalize_policy_threshold(raw, metric="delta")
+    if not non_strict_ratio:
+        non_strict_ratio = dict(global_ratio)
+    if not semi_strict_delta:
+        semi_strict_delta = dict(global_delta)
+    if not fallback_delta:
+        fallback_delta = dict(global_delta)
+
+    # If a user only provides top-level threshold keys and also metric-specific
+    # entries, top-level values should still seed any missing metric fields.
+    if "warn_at" in global_ratio and "warn_at" not in non_strict_ratio:
+        non_strict_ratio["warn_at"] = global_ratio["warn_at"]
+    if "fail_at" in global_ratio and "fail_at" not in non_strict_ratio:
+        non_strict_ratio["fail_at"] = global_ratio["fail_at"]
+    if "investigate_at" in global_ratio and "investigate_at" not in non_strict_ratio:
+        non_strict_ratio["investigate_at"] = global_ratio["investigate_at"]
+
+    if "warn_at" in global_delta and "warn_at" not in semi_strict_delta:
+        semi_strict_delta["warn_at"] = global_delta["warn_at"]
+    if "fail_at" in global_delta and "fail_at" not in semi_strict_delta:
+        semi_strict_delta["fail_at"] = global_delta["fail_at"]
+    if "warn_at" in global_delta and "warn_at" not in fallback_delta:
+        fallback_delta["warn_at"] = global_delta["warn_at"]
+    if "fail_at" in global_delta and "fail_at" not in fallback_delta:
+        fallback_delta["fail_at"] = global_delta["fail_at"]
+
+    # Keep only expected keys for deterministic reporting.
+    def _trim_thresholds(values: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: values[key]
+            for key in ("warn_at", "investigate_at", "fail_at")
+            if key in values
+        }
+
+    return {
+        "path": str(path),
+        "non_strict_ratio": _trim_thresholds(non_strict_ratio),
+        "semi_strict_delta": _trim_thresholds(semi_strict_delta),
+        "fallback_delta": _trim_thresholds(fallback_delta),
+    }
+
+
+def _evaluate_drift_policy(drift: dict[str, Any], policy: dict[str, Any] | None) -> dict[str, Any]:
+    if policy is None:
+        return {
+            "status": "pass",
+            "status_reason": "no_policy",
+            "warn_count": 0,
+            "fail_count": 0,
+            "violations": [],
+            "settings": None,
+        }
+    if not isinstance(policy, dict):
+        return {
+            "status": "warn",
+            "status_reason": "invalid_policy",
+            "warn_count": 1,
+            "fail_count": 0,
+            "violations": [
+                {
+                    "metric": "policy",
+                    "level": "warn",
+                    "message": "drift policy was not a valid object",
+                    "path": str(policy) if not isinstance(policy, dict) else None,
+                }
+            ],
+            "settings": None,
+        }
+
+    non_strict_ratio = policy.get("non_strict_ratio", {})
+    semi_strict_delta = policy.get("semi_strict_delta", {})
+    fallback_delta = policy.get("fallback_delta", {})
+    violations: list[dict[str, Any]] = []
+    warn_count = 0
+    fail_count = 0
+
+    def _check_ratio(
+        value: Any,
+        setting: dict[str, Any],
+        *,
+        metric_name: str,
+    ) -> None:
+        nonlocal warn_count, fail_count
+        if not isinstance(value, (int, float)):
+            return
+        if "warn_at" in setting and value >= setting["warn_at"]:
+            warn_count += 1
+            violations.append(
+                {
+                    "metric": metric_name,
+                    "level": "warn",
+                    "value": value,
+                    "threshold": setting["warn_at"],
+                    "path": policy.get("path"),
+                }
+            )
+        if "investigate_at" in setting and value >= setting["investigate_at"]:
+            violations.append(
+                {
+                    "metric": metric_name,
+                    "level": "investigate",
+                    "value": value,
+                    "threshold": setting["investigate_at"],
+                    "path": policy.get("path"),
+                }
+            )
+        if "fail_at" in setting and value > setting["fail_at"]:
+            fail_count += 1
+            violations.append(
+                {
+                    "metric": metric_name,
+                    "level": "fail",
+                    "value": value,
+                    "threshold": setting["fail_at"],
+                    "path": policy.get("path"),
+                }
+            )
+
+    _check_ratio(
+        drift.get("non_strict_ratio", 0.0),
+        non_strict_ratio,
+        metric_name="non_strict_ratio",
+    )
+    _check_ratio(
+        drift.get("semi_strict_count", 0),
+        semi_strict_delta,
+        metric_name="semi_strict_delta",
+    )
+    _check_ratio(
+        drift.get("fallback_count", 0),
+        fallback_delta,
+        metric_name="fallback_delta",
+    )
+
+    status = "fail" if fail_count else "warn" if warn_count else "pass"
+    return {
+        "status": status,
+        "status_reason": None if status == "pass" else f"policy_{status}",
+        "warn_count": warn_count,
+        "fail_count": fail_count,
+        "violations": violations,
+        "settings": {
+            "path": policy.get("path"),
+            "non_strict_ratio": non_strict_ratio,
+            "semi_strict_delta": semi_strict_delta,
+            "fallback_delta": fallback_delta,
+        },
+    }
+
+
+def _release_check_summary_status(
+    checks: dict[str, dict[str, Any]],
+    *,
+    include_policy_warnings: bool = False,
+    drift_policy_status: str | None = None,
+) -> str:
+    # keep --fail-on behavior stable in release-check; this helper is shared with
+    # release-health where policy warnings can be folded into status.
+    if include_policy_warnings:
+        if drift_policy_status == "fail":
+            return "fail"
+        if drift_policy_status == "warn":
+            return "warn"
+    for check in checks.values():
+        if check.get("status") == "fail":
+            return "fail"
+        if check.get("status") == "warn":
+            return "warn"
+    return "pass"
+
+
 def run_release_check(
     repo: Path | str,
     *,
@@ -800,6 +1090,8 @@ def run_release_check(
     keep_demo: bool = False,
     tests_dir: Path | str = "tests",
     drift_log: Path | str | None = None,
+    drift_policy: Path | str | None = None,
+    artifacts_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Run the local pre-release readiness loop."""
 
@@ -828,9 +1120,21 @@ def run_release_check(
         scan,
         run_meta=drift_meta,
     )
+    policy = _read_drift_policy(drift_policy) if drift_policy is not None else None
+    drift_policy_report = _evaluate_drift_policy(drift, policy)
+
     drift_log_report = None
+    drift_log_path: Path | None = None
+    artifacts_path = _release_check_artifacts_dir(repo_path, artifacts_dir=artifacts_dir)
+
     if drift_log is not None:
-        drift_log_report = append_baseline_drift_log(drift, drift_log)
+        drift_log_path = Path(drift_log).resolve()
+    elif drift_log is None and artifacts_dir is not None:
+        # ensure the report and drift telemetry are kept for CI uploads unless
+        # this command is intentionally using a private temporary directory.
+        drift_log_path = artifacts_path / _RELEASE_CHECK_ARTIFACT_DRIFT_LOG
+    if drift_log_path is not None:
+        drift_log_report = append_baseline_drift_log(drift, drift_log_path)
     scan_ok = not _scan_has_severity_threshold(scan, fail_on)
     tests_check = _release_tests_check(repo_path, tests_dir) if run_tests else _release_skipped_check("tests")
     demo_check = (
@@ -852,14 +1156,16 @@ def run_release_check(
             "drift": drift,
             "drift_warnings": drift,
             "drift_log": drift_log_report,
+            "drift_policy": drift_policy_report,
         },
         "tests": tests_check,
         "demo": demo_check,
     }
     failed = [name for name, check in checks.items() if not check.get("ok")]
-    status = "pass" if not failed else "fail"
+    status = _release_check_summary_status(checks)
     elapsed = round(time.time() - started, 4)
-    return {
+
+    report = {
         "schema_version": "repomori.release_check.v1",
         "status": status,
         "repo_path": str(repo_path),
@@ -872,7 +1178,9 @@ def run_release_check(
             "demo_out": str(Path(demo_out).resolve()) if demo_out is not None else None,
             "keep_demo": keep_demo,
             "tests_dir": str(tests_dir),
-            "drift_log": str(drift_log) if drift_log is not None else None,
+            "drift_log": str(drift_log_path) if drift_log_path is not None else None,
+            "drift_policy": str(Path(drift_policy).resolve()) if drift_policy is not None else None,
+            "artifacts_dir": str(artifacts_path),
         },
         "summary": {
             "elapsed_seconds": elapsed,
@@ -881,9 +1189,294 @@ def run_release_check(
             "scan_ignored_findings": scan.get("summary", {}).get("ignored_findings"),
             "tests_returncode": tests_check.get("returncode"),
             "demo_status": demo_check.get("demo_status"),
+            "drift_policy_status": drift_policy_report.get("status"),
         },
         "checks": checks,
+        "artifacts": {
+            "json": str(artifacts_path / _RELEASE_CHECK_ARTIFACT_REPORT),
+            "markdown": str(artifacts_path / _RELEASE_CHECK_ARTIFACT_MARKDOWN),
+            "drift_log": str(drift_log_path) if drift_log_path is not None else None,
+        },
     }
+    if artifacts_dir is not None:
+        artifacts_path.mkdir(parents=True, exist_ok=True)
+        report_path = artifacts_path / _RELEASE_CHECK_ARTIFACT_REPORT
+        _write_json(report_path, report)
+        markdown_path = artifacts_path / _RELEASE_CHECK_ARTIFACT_MARKDOWN
+        markdown_path.write_text(format_release_check_markdown(report), encoding="utf-8")
+
+    return report
+
+
+def _build_missing_drift_summary(
+    log_path: Path | str | None,
+    *,
+    status: str = "warn",
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "repomori.baseline_drift_summary.v1",
+        "status": status,
+        "log_path": str(log_path) if log_path is not None else "<missing>",
+        "limit": 0,
+        "count": 0,
+        "warn_count": 0,
+        "max_non_strict_ratio": 0.0,
+        "avg_non_strict_ratio": 0.0,
+        "trend": {
+            "semi_strict_delta": 0,
+            "fallback_delta": 0,
+            "non_strict_delta": 0,
+        },
+        "rows": [],
+        "ordered": True,
+        "status_reason": reason,
+    }
+
+
+def run_release_health(
+    repo: Path | str,
+    *,
+    snapshot_dir: Path | str | None = None,
+    baseline: Path | str | None = None,
+    fail_on: str = "low",
+    public_release: bool = True,
+    run_tests: bool = True,
+    run_demo_smoke: bool = True,
+    demo_out: Path | str | None = None,
+    keep_demo: bool = False,
+    tests_dir: Path | str = "tests",
+    drift_log: Path | str | None = None,
+    drift_policy: Path | str | None = None,
+    timeline_limit: int = 5,
+    drift_summary_limit: int = 20,
+    doctor_verify_packs: bool = False,
+    artifacts_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """Run a snapshot + timeline release health bundle."""
+
+    if timeline_limit <= 0:
+        raise ValueError("timeline_limit must be greater than zero")
+    if drift_summary_limit <= 0:
+        raise ValueError("drift_summary_limit must be greater than zero")
+
+    started = time.time()
+    repo_path = Path(repo).resolve()
+    if not repo_path.is_dir():
+        raise ValueError(f"Repository folder not found: {repo_path}")
+    if fail_on not in SCAN_SEVERITY_ORDER:
+        raise ValueError("fail_on must be one of: info, low, medium, high")
+
+    artifacts_path = _release_health_artifacts_dir(repo_path, artifacts_dir=artifacts_dir)
+    release_check_artifacts = artifacts_path if artifacts_dir is not None else None
+    if release_check_artifacts is not None:
+        release_check_artifacts.mkdir(parents=True, exist_ok=True)
+
+    snapshot_path = (
+        Path(snapshot_dir).resolve()
+        if snapshot_dir is not None
+        else repo_path / "packs"
+    )
+    if snapshot_dir is None:
+        # maintain existing local default for one-shot health checks.
+        snapshot_path = Path(snapshot_path)
+    # release-check defaults to repository-scoped drift telemetry defaults; pass that
+    # path explicitly when this check is writing artifacts.
+    release_check_log = (
+        Path(drift_log).resolve()
+        if drift_log is not None
+        else None
+    )
+    if drift_log is None and release_check_artifacts is not None:
+        release_check_log = release_check_artifacts / _RELEASE_CHECK_ARTIFACT_DRIFT_LOG
+
+    release_check = run_release_check(
+        repo_path,
+        baseline=baseline,
+        fail_on=fail_on,
+        public_release=public_release,
+        run_tests=run_tests,
+        run_demo_smoke=run_demo_smoke,
+        demo_out=demo_out,
+        keep_demo=keep_demo,
+        tests_dir=tests_dir,
+        drift_log=release_check_log if release_check_log is not None else None,
+        drift_policy=drift_policy,
+        artifacts_dir=release_check_artifacts,
+    )
+
+    doctor = doctor_snapshot_dir(snapshot_path, verify_packs=doctor_verify_packs)
+    chain = verify_snapshot_chain(snapshot_path)
+    timeline = read_snapshot_timeline(snapshot_path, limit=timeline_limit)
+    timeline_status = (
+        chain.get("status")
+        or (timeline.get("summary", {}).get("chain_status"))
+    )
+    if timeline_status not in {"pass", "warn", "fail"}:
+        timeline_status = "warn"
+    timeline["status"] = timeline_status
+
+    drift_summary_log = release_check.get("artifacts", {}).get("drift_log")
+    if not drift_summary_log and release_check_log is not None:
+        drift_summary_log = str(release_check_log)
+    if drift_summary_log is None:
+        drift_summary = _build_missing_drift_summary(
+            release_check_log,
+            status="warn",
+            reason="No drift log path was supplied.",
+        )
+    else:
+        try:
+            drift_summary = summarize_baseline_drift_log(drift_summary_log, limit=drift_summary_limit)
+        except FileNotFoundError:
+            drift_summary = _build_missing_drift_summary(
+                drift_summary_log,
+                status="warn",
+                reason="Drift summary log is not available yet.",
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            drift_summary = _build_missing_drift_summary(
+                drift_summary_log,
+                status="warn",
+                reason=f"Could not summarize drift log: {exc}",
+            )
+
+    checks = {
+        "release_check": release_check,
+        "doctor": doctor,
+        "chain": chain,
+        "timeline": timeline,
+        "drift_summary": drift_summary,
+    }
+    status = _release_check_summary_status(
+        checks,
+        include_policy_warnings=True,
+        drift_policy_status=release_check.get("summary", {}).get("drift_policy_status"),
+    )
+    summary = {
+        "elapsed_seconds": round(time.time() - started, 4),
+        "release_check_status": release_check.get("status"),
+        "doctor_status": doctor.get("status"),
+        "chain_status": chain.get("status"),
+        "timeline_status": timeline_status,
+        "drift_summary_status": drift_summary.get("status"),
+        "failed_checks": [name for name, check in checks.items() if check.get("status") == "fail"],
+    }
+    report = {
+        "schema_version": "repomori.health.v1",
+        "status": status,
+        "repo_path": str(repo_path),
+        "snapshot_dir": str(snapshot_path),
+        "settings": {
+            "snapshot_dir": str(snapshot_path),
+            "baseline": str(Path(baseline).resolve()) if baseline is not None else None,
+            "fail_on": fail_on,
+            "public_release": public_release,
+            "run_tests": run_tests,
+            "run_demo_smoke": run_demo_smoke,
+            "demo_out": str(Path(demo_out).resolve()) if demo_out is not None else None,
+            "keep_demo": keep_demo,
+            "tests_dir": str(tests_dir),
+            "drift_log": str(release_check_log) if release_check_log is not None else None,
+            "drift_policy": str(Path(drift_policy).resolve()) if drift_policy is not None else None,
+            "drift_summary_limit": drift_summary_limit,
+            "timeline_limit": timeline_limit,
+            "doctor_verify_packs": doctor_verify_packs,
+            "artifacts_dir": str(artifacts_path),
+        },
+        "summary": summary,
+        "checks": checks,
+        "artifacts": {
+            "json": str(artifacts_path / _RELEASE_HEALTH_ARTIFACT_REPORT),
+            "markdown": str(artifacts_path / _RELEASE_HEALTH_ARTIFACT_MARKDOWN),
+        },
+    }
+
+    if artifacts_dir is not None:
+        artifacts_path.mkdir(parents=True, exist_ok=True)
+        health_report_path = artifacts_path / _RELEASE_HEALTH_ARTIFACT_REPORT
+        _write_json(health_report_path, report)
+        health_markdown = format_release_health_markdown(report)
+        (artifacts_path / _RELEASE_HEALTH_ARTIFACT_MARKDOWN).write_text(
+            health_markdown,
+            encoding="utf-8",
+        )
+
+    return report
+
+
+def format_release_check_markdown(report: dict[str, Any]) -> str:
+    """Render a compact release-check report as Markdown."""
+
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Release Check",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Repository: `{report.get('repo_path')}`",
+        f"- Elapsed: `{summary.get('elapsed_seconds', 0)}s`",
+        f"- Failed checks: `{', '.join(summary.get('failed_checks', []) or []) or 'none'}`",
+    ]
+    checks = report.get("checks", {})
+    if checks:
+        lines.append("")
+        lines.append("## Checks")
+        for name, check in checks.items():
+            if not isinstance(check, dict):
+                continue
+            detail = check.get("status", "unknown")
+            line = f"- {name}: `{detail}`"
+            if name == "scan":
+                scan_summary = check.get("summary", {})
+                policy_status = None
+                policy = check.get("drift_policy") or {}
+                if isinstance(policy, dict):
+                    policy_status = policy.get("status")
+                detail_parts = [
+                    f"findings={scan_summary.get('findings', 0)}",
+                    f"ignored={scan_summary.get('ignored_findings', 0)}",
+                    f"drift_policy={policy_status or 'na'}",
+                ]
+                line = line[:-1] + f" {' '.join(detail_parts)}`"
+            lines.append(line)
+        return "\n".join(lines).rstrip() + "\n"
+
+
+def format_release_health_markdown(report: dict[str, Any]) -> str:
+    """Render a compact release-health report as Markdown."""
+
+    summary = report.get("summary", {})
+    checks = report.get("checks", {})
+    lines = [
+        "# RepoMori Release Health",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Repository: `{report.get('repo_path')}`",
+        f"- Snapshot Directory: `{report.get('snapshot_dir')}`",
+        f"- Elapsed: `{summary.get('elapsed_seconds', 0)}s`",
+    ]
+    lines.append("")
+    lines.append("## Checks")
+    for name in ("release_check", "doctor", "chain", "timeline", "drift_summary"):
+        check = checks.get(name, {})
+        if not isinstance(check, dict):
+            continue
+        status = check.get("status", "unknown")
+        detail = f"- {name}: `{status}`"
+        if name == "release_check":
+            drift_policy = check.get("summary", {}).get("drift_policy_status")
+            if drift_policy:
+                detail += f" drift_policy={drift_policy}"
+        elif name == "drift_summary":
+            detail += f" ratio={check.get('max_non_strict_ratio', 0.0):.2f}"
+        elif name == "timeline":
+            chain_status = check.get("chain_status")
+            if chain_status is not None:
+                detail += f" chain={chain_status}"
+            if check.get("chain", {}).get("status"):
+                detail += f" chain_report={check['chain']['status']}"
+        lines.append(detail)
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def build_baseline_drift_report(
@@ -4478,6 +5071,7 @@ def run_memory_cycle(
     anchor_verify: bool = False,
     allow_unverified_anchor: bool = False,
     anchor_log: str | None = None,
+    anchor_freshness: str | None = None,
 ) -> dict[str, Any]:
     """Run the full offline snapshot memory loop for a repository."""
 
@@ -4496,6 +5090,23 @@ def run_memory_cycle(
     anchor_report = None
     anchor_verification = None
     anchor_log_report = None
+
+    if anchor_freshness is not None:
+        anchor_freshness = _normalize_anchor_freshness(anchor_freshness)
+    anchor_check_current = True
+    if anchor_out is not None and anchor_freshness is not None:
+        if anchor_freshness == "strict":
+            anchor_verify = True
+            allow_unverified_anchor = False
+            anchor_check_current = True
+        elif anchor_freshness == "safe":
+            anchor_verify = True
+            allow_unverified_anchor = True
+            anchor_check_current = True
+        elif anchor_freshness == "legacy":
+            anchor_verify = True
+            allow_unverified_anchor = True
+            anchor_check_current = False
 
     if anchor_verify and anchor_out is None:
         raise ValueError("anchor_verify requires anchor_out.")
@@ -4527,7 +5138,11 @@ def run_memory_cycle(
         anchor_out_path.parent.mkdir(parents=True, exist_ok=True)
         _write_json(anchor_out_path, anchor_report)
         if anchor_verify:
-            anchor_verification = verify_snapshot_anchor(anchor_out_path, out_path)
+            anchor_verification = verify_snapshot_anchor(
+                anchor_out_path,
+                out_path,
+                check_current=anchor_check_current,
+            )
         if anchor_log is not None:
             anchor_payload_for_log = (
                 anchor_verification if anchor_verification is not None else anchor_report
@@ -4604,6 +5219,7 @@ def run_memory_cycle(
             "diff_context_include_source": diff_context_include_source,
             "anchor_out": anchor_out,
             "anchor_verify": anchor_verify,
+            "anchor_freshness": anchor_freshness,
             "allow_unverified_anchor": allow_unverified_anchor,
             "anchor_log": anchor_log,
         },
@@ -4635,6 +5251,7 @@ def run_memory_cycle(
             "diff_context_removed_count": snapshot_summary.get("diff_context_removed_count"),
             "anchor_status": anchor_report.get("status") if anchor_report is not None else None,
             "anchor_path": str(Path(anchor_out).resolve()) if anchor_out is not None else None,
+            "anchor_freshness": anchor_freshness,
             "anchor_verification_status": anchor_verification_status,
             "anchor_hash": anchor_report.get("anchor_hash") if anchor_report is not None else None,
         },
@@ -4674,6 +5291,7 @@ def init_config(
     diff_context_snippets_per_file: int = 2,
     diff_context_max_bytes: int = 8192,
     diff_context_include_source: bool = True,
+    anchor_freshness: str | None = None,
 ) -> dict[str, Any]:
     """Write a local RepoMori config file for memory runs."""
 
@@ -4705,6 +5323,8 @@ def init_config(
         raise ValueError("handoff_question must not be empty")
     if diff_context and not diff_context_question.strip():
         raise ValueError("diff_context_question must not be empty")
+    if anchor_freshness is not None:
+        anchor_freshness = _normalize_anchor_freshness(anchor_freshness)
 
     settings = {
         "repo": str(repo_path),
@@ -4729,6 +5349,7 @@ def init_config(
         "anchor_out": None,
         "anchor_verify": False,
         "allow_unverified_anchor": False,
+        "anchor_freshness": anchor_freshness,
         "anchor_log": None,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -6904,10 +7525,24 @@ def _format_memory_config(profile: str, settings: dict[str, Any]) -> str:
         "anchor_out",
         "anchor_verify",
         "allow_unverified_anchor",
+        "anchor_freshness",
         "anchor_log",
     ):
         lines.append(f"{key} = {_toml_value(settings[key])}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _normalize_anchor_freshness(value: Any) -> str | None:
+    if value is None:
+        return None  # type: ignore[return-value]
+    if not isinstance(value, str):
+        raise ValueError("anchor_freshness must be one of: safe, strict, legacy")
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if normalized in {"safe", "strict", "legacy"}:
+        return normalized
+    raise ValueError(f"Invalid anchor_freshness '{value}'. Expected safe, strict, or legacy.")
 
 
 def _read_memory_config(path: Path) -> dict[str, Any]:
@@ -6969,6 +7604,7 @@ def _normalize_memory_config_settings(path: Path, settings: dict[str, Any]) -> d
         "anchor_out": None,
         "anchor_verify": False,
         "allow_unverified_anchor": False,
+        "anchor_freshness": None,
         "anchor_log": None,
     }
     normalized = {**defaults, **settings}
@@ -6992,6 +7628,7 @@ def _normalize_memory_config_settings(path: Path, settings: dict[str, Any]) -> d
         "allow_unverified_anchor",
     ):
         normalized[key] = _coerce_config_bool(path, key, normalized[key])
+    normalized["anchor_freshness"] = _normalize_anchor_freshness(normalized.get("anchor_freshness"))
     for key in ("keep", "timeline_limit", "chunk_size", "compare_limit", "diff_context_limit", "diff_context_snippet_lines", "diff_context_snippets_per_file", "diff_context_max_bytes"):
         normalized[key] = _coerce_config_int(path, key, normalized[key])
     normalized["handoff_question"] = str(normalized.get("handoff_question") or "")
@@ -7097,6 +7734,7 @@ MCP_TOOLS = (
                 "anchor_out": {"type": "string"},
                 "anchor_verify": {"type": "boolean"},
                 "allow_unverified_anchor": {"type": "boolean"},
+                "anchor_freshness": {"type": "string", "enum": ["safe", "strict", "legacy"]},
                 "anchor_log": {"type": "string"},
                 "handoff_question": {"type": "string"},
                 "no_handoff": {"type": "boolean"},
@@ -7531,6 +8169,7 @@ def _agent_memory_kwargs(params: dict[str, Any], settings: dict[str, Any]) -> di
         "anchor_out": params.get("anchor_out") if params.get("anchor_out") is not None else settings.get("anchor_out"),
         "anchor_verify": bool(params.get("anchor_verify", settings.get("anchor_verify", False))),
         "allow_unverified_anchor": bool(params.get("allow_unverified_anchor", settings.get("allow_unverified_anchor", False))),
+        "anchor_freshness": params.get("anchor_freshness", settings.get("anchor_freshness")),
         "anchor_log": params.get("anchor_log") if params.get("anchor_log") is not None else settings.get("anchor_log"),
         "no_handoff": bool(params.get("no_handoff", settings.get("no_handoff", False))),
         "keep": _agent_int(params, "keep", int(settings.get("keep", 20))),

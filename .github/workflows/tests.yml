@@ -26,4 +26,19 @@ jobs:
         with:
           python-version: "3.12"
       - name: Run release check
-        run: python -m repomori release-check . --baseline .repomori-scan-baseline.json --fail-on low --json
+        run: |
+          python -m repomori release-check . \
+            --baseline .repomori-scan-baseline.json \
+            --fail-on low \
+            --artifacts-dir .repomori-release-check \
+            --drift-log .repomori-release-check/baseline-drift.jsonl \
+            --json
+      - name: Upload release-check artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repomori-release-check-artifacts
+          path: |
+            .repomori-release-check/release-check.json
+            .repomori-release-check/release-check.md
+            .repomori-release-check/baseline-drift.jsonl

@@ -6,6 +6,7 @@ offline, dependency-free, and model-free.
 ```powershell
 python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Dev\RepoMori\.repomori-baseline-drift.jsonl --json
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json --json
 ```
 
 It runs:
@@ -25,6 +26,9 @@ as `summary.baseline_match_counts` in the scan block.
 
 `--fail-on` controls only scan severity thresholds; drift telemetry is informative
 only. We keep strict/non-strict matching behavior and fail policy unchanged.
+When present, `--drift-policy` adds optional policy evaluation to
+`checks.scan.drift_policy` and `checks.scan.drift_policy.status` without
+changing scan severity blocking.
 
 Release-check reports an explicit `checks.scan.drift_warnings` section:
 
@@ -52,6 +56,24 @@ python -m repomori release-check D:\Dev\RepoMori `
 python -m repomori drift-summary D:\Temp\repomori-drift.jsonl --limit 20 --json
 ```
 
+Use a non-blocking drift policy for operational guardrails:
+
+```powershell
+python -m repomori release-check D:\Dev\RepoMori `
+  --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json `
+  --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json `
+  --drift-log D:\Temp\repomori-drift.jsonl `
+  --json
+```
+
+```json
+{
+  "non_strict_ratio": { "warn-at": 0.2, "investigate-at": 0.35, "fail-at": 0.95 },
+  "semi_strict_delta": { "warn-at": 2, "fail-at": 8 },
+  "fallback_delta": { "warn-at": 1, "fail-at": 4 }
+}
+```
+
 `drift-summary` reads the JSONL telemetry, reports semi_strict/fallback deltas
 across the newest rows, and flags runs that carried drift warnings.
 
@@ -72,6 +94,16 @@ python -m repomori release-check D:\Dev\RepoMori --demo-out D:\Temp\repomori-rel
 
 GitHub Actions runs the full release check on Python 3.12 while the separate
 test matrix still covers Python 3.10, 3.11, and 3.12.
+
+For reproducible artifact locations, pass `--artifacts-dir` explicitly:
+
+```powershell
+python -m repomori release-check D:\Dev\RepoMori `
+  --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json `
+  --artifacts-dir D:\Dev\RepoMori\.repomori-release-check `
+  --drift-log D:\Dev\RepoMori\.repomori-release-check\baseline-drift.jsonl `
+  --json
+```
 
 ## See also
 

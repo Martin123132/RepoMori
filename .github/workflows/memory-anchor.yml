@@ -16,14 +16,14 @@ on:
         default: ".repomori-packs"
         type: string
       anchor_mode:
-        description: "Workflow mode: strict, audit, or both"
+        description: "Anchor freshness profile: strict, safe, or legacy."
         required: false
         default: "strict"
         type: choice
         options:
           - strict
-          - audit
-          - both
+          - safe
+          - legacy
 
 jobs:
   run_anchor_checks_schedule:

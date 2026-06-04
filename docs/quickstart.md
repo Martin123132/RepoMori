@@ -36,6 +36,7 @@ python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\packs\next.repomori --b
 python -m repomori diff-context D:\Dev\YourRepo\packs\previous.repomori D:\Dev\YourRepo\packs\latest.repomori "what changed?" --out D:\Dev\YourRepo\diff-context.md
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
+python -m repomori release-health D:\Dev\YourRepo --snapshot-dir D:\Dev\YourRepo\packs --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori drift-summary D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --limit 20 --json
 python -m repomori context D:\Dev\YourRepo\packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
 ```
@@ -45,6 +46,8 @@ It stays offline and reports likely secrets, generated artifacts, build noise,
 large files, local path traces, and license guardrail gaps. Write a baseline
 only for intentional findings you want future scans to acknowledge.
 `release-check` combines schema sanity, strict scan, unit tests, and demo smoke.
+`release-health` wraps `release-check` with doctor + chain + timeline + drift
+summary for local health snapshots after one or more memory runs.
 Use `build --base` when you already have a recent pack and want to reuse
 unchanged file state. `memory` and `snapshot` do that automatically against the
 latest pack unless you pass `--no-incremental`. Use `diff-context` when an
@@ -60,23 +63,29 @@ python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --diff-context 
 
 This builds a fresh incremental snapshot, creates a handoff package unless disabled, writes changed-files context when a previous snapshot exists, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Use `brief` on the pack directory to create one agent-readable start file, `chain` to verify timeline integrity, `anchor` to export a small proof of the current chain head, `verify-anchor` to check that proof later, and `stats` to see how many files and chunks RepoMori avoided rebuilding.
 
-For automation, add `--anchor-out` to export a timeline anchor every run and `--anchor-verify` to validate it right away. `--allow-unverified-anchor` keeps the run non-fatal if you need to continue while investigating a mismatch.
+For automation, add `--anchor-out` to export a timeline anchor every run and choose
+an anchor freshness profile:
+
+- `strict` (default): fail if the anchor indicates mismatch with the current timeline.
+- `safe`: continue and keep the mismatch as a warning (`--anchor-freshness safe`).
+- `legacy`: compare only against the exported proof hash (`--anchor-freshness legacy`).
+
+Use `--anchor-freshness strict` to preserve the previous strict failure behavior in
+CI-style runs.
 
 ## CI and Nightly Automation
 
 Use a scheduled job to keep a repo timeline anchored on a cadence:
 
 ```powershell
-python -m repomori memory . --out-dir .repomori-packs --anchor-out .repomori-packs/timeline-anchor.json --anchor-verify --json
+python -m repomori memory . --out-dir .repomori-packs --anchor-out .repomori-packs/timeline-anchor.json --anchor-freshness safe --json
 ```
 
 RepoMori is also in-tree documented for this workflow with a ready-to-copy
 `.github/workflows/memory-anchor.yml` in this repository.
 
 The workflow supports three manual modes:
-`strict` (default), `audit`, and `both`. Use `audit` to continue through
-mismatches in the same run (`--allow-unverified-anchor`) and `both` to run strict
-and audit checks together.
+`strict` (default), `safe`, and `legacy`.
 
 You can also call the reusable workflow from other repos:
 
@@ -93,10 +102,10 @@ jobs:
     with:
       repo: .
       out_dir: .repomori-packs
-      anchor_mode: both
+      anchor_mode: safe
 ```
 
-Use `anchor_mode` as `strict`, `audit`, or `both`, and pass alternate
+Use `anchor_mode` as `strict`, `safe`, or `legacy`, and pass alternate
 `repo` / `out_dir` values when this repository is not rooted at `.`.
 See [Reusable workflow guide](memory-anchor-reusable.md) for a complete template.
 

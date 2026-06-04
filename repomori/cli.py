@@ -46,6 +46,7 @@ from .codec import (
     run_agent_bridge,
     run_demo,
     run_release_check,
+    run_release_health,
     summarize_baseline_drift_log,
     run_mcp_bridge,
     run_memory_cycle,
@@ -112,7 +113,56 @@ def main(argv: list[str] | None = None) -> int:
     release_check.add_argument("--keep-demo", action="store_true", help="Keep demo smoke output directory.")
     release_check.add_argument("--tests-dir", default="tests", help="Directory passed to unittest discover.")
     release_check.add_argument("--drift-log", type=Path, help="Append baseline-drift telemetry as JSONL row.")
+    release_check.add_argument(
+        "--drift-policy",
+        type=Path,
+        help="JSON drift policy file for non-blocking policy checks.",
+    )
+    release_check.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        help="Write release-check artifacts to this directory.",
+    )
     release_check.add_argument("--json", action="store_true", help="Print release-check JSON.")
+
+    release_health = sub.add_parser("release-health", help="Run release-check, doctor, chain, timeline, and drift-summary.")
+    release_health.add_argument("repo", type=Path, nargs="?", default=Path.cwd(), help="Repository folder to check.")
+    release_health.add_argument("--snapshot-dir", type=Path, help="Snapshot directory for doctor, chain, and timeline.")
+    release_health.add_argument("--baseline", type=Path, help="Scan baseline; defaults to <repo>/.repomori-scan-baseline.json when present.")
+    release_health.add_argument(
+        "--fail-on",
+        choices=("info", "low", "medium", "high"),
+        default="low",
+        help=(
+            "Exit nonzero if scan findings reach this severity or worse. "
+            "Baseline drift telemetry remains non-blocking."
+        ),
+    )
+    release_health.add_argument("--no-public-release", action="store_true", help="Skip public-release guardrail checks in scan.")
+    release_health.add_argument("--skip-tests", action="store_true", help="Skip unittest discovery.")
+    release_health.add_argument("--skip-demo", action="store_true", help="Skip quickstart demo smoke.")
+    release_health.add_argument("--demo-out", type=Path, help="Demo smoke output directory.")
+    release_health.add_argument("--keep-demo", action="store_true", help="Keep demo smoke output directory.")
+    release_health.add_argument("--tests-dir", default="tests", help="Directory passed to unittest discover.")
+    release_health.add_argument("--drift-log", type=Path, help="Append baseline-drift telemetry as JSONL row.")
+    release_health.add_argument(
+        "--drift-policy",
+        type=Path,
+        help="JSON drift policy file for non-blocking policy checks.",
+    )
+    release_health.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        help="Write release-health artifacts to this directory.",
+    )
+    release_health.add_argument("--timeline-limit", type=int, default=5, help="Recent snapshots to include.")
+    release_health.add_argument("--drift-summary-limit", type=int, default=20, help="Rows to include in drift-summary.")
+    release_health.add_argument(
+        "--doctor-verify-packs",
+        action="store_true",
+        help="Run full pack verification during doctor.",
+    )
+    release_health.add_argument("--json", action="store_true", help="Print release-health JSON.")
 
     init = sub.add_parser("init", help="Write a RepoMori config file.")
     init.add_argument("repo", type=Path, help="Repository folder to remember.")
@@ -132,6 +182,11 @@ def main(argv: list[str] | None = None) -> int:
     init_incremental_group.add_argument("--no-incremental", dest="incremental", action="store_false", help="Rebuild snapshot packs without reusing latest pack state.")
     init.add_argument("--no-compare", action="store_true", help="Do not compare against latest.repomori.")
     init.add_argument("--compare-limit", type=int, default=50)
+    init.add_argument(
+        "--anchor-freshness",
+        choices=("safe", "strict", "legacy"),
+        help="Anchor freshness mode for memory anchor verification.",
+    )
     init.add_argument("--diff-context", action="store_true", help="Write changed-files context during memory runs.")
     init.add_argument("--diff-context-question", default="what changed?")
     init.add_argument("--diff-context-max-files", type=int, default=8)
@@ -209,10 +264,21 @@ def main(argv: list[str] | None = None) -> int:
     memory.add_argument("--config", type=Path, help="Config file path; defaults to nearest repomori.toml.")
     memory.add_argument("--profile", help="Config profile to use.")
     memory.add_argument("--anchor-out", type=Path, help="Write a timeline anchor to this file.")
-    memory.add_argument("--anchor-verify", action="store_true", help="Verify the exported anchor against current timeline.")
+    memory.add_argument(
+        "--anchor-verify",
+        action="store_true",
+        default=None,
+        help="Verify the exported anchor against current timeline.",
+    )
+    memory.add_argument(
+        "--anchor-freshness",
+        choices=("safe", "strict", "legacy"),
+        help="Anchor freshness profile: strict = fail on mismatch, safe = allow mismatch, legacy = proof-only validation.",
+    )
     memory.add_argument(
         "--allow-unverified-anchor",
         action="store_true",
+        default=None,
         help="Allow memory runs to continue when anchor verification fails.",
     )
     memory.add_argument("--anchor-log", type=Path, help="Append one anchor audit row per memory run.")
@@ -441,6 +507,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         return 1 if _scan_has_threshold(report, args.fail_on) else 0
     if args.command == "release-check":
+        artifacts_dir = args.artifacts_dir
+        if args.json and artifacts_dir is None:
+            artifacts_dir = args.repo / ".repomori-release-check"
         report = run_release_check(
             args.repo,
             baseline=args.baseline,
@@ -452,12 +521,41 @@ def main(argv: list[str] | None = None) -> int:
             keep_demo=args.keep_demo,
             tests_dir=args.tests_dir,
             drift_log=args.drift_log,
+            drift_policy=args.drift_policy,
+            artifacts_dir=artifacts_dir,
         )
         if args.json:
             print(json.dumps(report, indent=2))
         else:
             _print_release_check(report)
         return 0 if report["status"] == "pass" else 1
+    if args.command == "release-health":
+        artifacts_dir = args.artifacts_dir
+        if args.json and artifacts_dir is None:
+            artifacts_dir = Path(args.repo).resolve() / ".repomori-health"
+        report = run_release_health(
+            args.repo,
+            snapshot_dir=args.snapshot_dir,
+            baseline=args.baseline,
+            fail_on=args.fail_on,
+            public_release=not args.no_public_release,
+            run_tests=not args.skip_tests,
+            run_demo_smoke=not args.skip_demo,
+            demo_out=args.demo_out,
+            keep_demo=args.keep_demo,
+            tests_dir=args.tests_dir,
+            drift_log=args.drift_log,
+            drift_policy=args.drift_policy,
+            timeline_limit=args.timeline_limit,
+            drift_summary_limit=args.drift_summary_limit,
+            doctor_verify_packs=args.doctor_verify_packs,
+            artifacts_dir=artifacts_dir,
+        )
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            _print(report, args.json)
+        return 0 if report["status"] != "fail" else 1
     if args.command == "init":
         result = init_config(
             args.repo,
@@ -482,6 +580,7 @@ def main(argv: list[str] | None = None) -> int:
             diff_context_snippets_per_file=args.diff_context_snippets_per_file,
             diff_context_max_bytes=args.diff_context_max_bytes,
             diff_context_include_source=not args.diff_context_no_source,
+            anchor_freshness=args.anchor_freshness,
         )
         if args.json:
             print(json.dumps(result, indent=2))
@@ -615,6 +714,7 @@ def main(argv: list[str] | None = None) -> int:
             anchor_out=settings["anchor_out"],
             anchor_verify=settings["anchor_verify"],
             allow_unverified_anchor=settings["allow_unverified_anchor"],
+            anchor_freshness=settings["anchor_freshness"],
             anchor_log=settings["anchor_log"],
             no_handoff=settings["no_handoff"],
             keep=settings["keep"],
@@ -1002,6 +1102,7 @@ def _memory_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         "handoff_question": _setting(args.handoff_question, settings, "handoff_question", "continue this repo"),
         "anchor_out": str(args.anchor_out.resolve()) if args.anchor_out is not None else settings.get("anchor_out"),
         "anchor_log": str(args.anchor_log.resolve()) if args.anchor_log is not None else settings.get("anchor_log"),
+        "anchor_freshness": _setting(args.anchor_freshness, settings, "anchor_freshness", None),
         "anchor_verify": _setting(args.anchor_verify, settings, "anchor_verify", False),
         "allow_unverified_anchor": _setting(args.allow_unverified_anchor, settings, "allow_unverified_anchor", False),
         "no_handoff": _setting(args.no_handoff, settings, "no_handoff", False),

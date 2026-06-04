@@ -102,7 +102,16 @@ Persisted telemetry uses schema `repomori.baseline_drift_record.v1`. Summarize i
 python -m repomori drift-summary D:\Dev\RepoMori\.repomori-baseline-drift.jsonl --limit 30 --json
 ```
 
-RepoMori's GitHub Actions workflow runs the stricter `release-check` command on
+You can also add operational drift thresholds with `release-check`:
+
+```powershell
+python -m repomori release-check D:\Dev\RepoMori `
+  --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json `
+  --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json `
+  --json
+```
+
+RepoMori's GitHub Actions workflow runs the `release-check` command on
 every push and pull request:
 
 ```powershell

@@ -57,6 +57,7 @@ from repomori.codec import (
     run_demo,
     run_memory_cycle,
     run_release_check,
+    run_release_health,
     append_baseline_drift_log,
     summarize_baseline_drift_log,
     schema_catalog,
@@ -783,6 +784,107 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(drift["downgraded_from_message_match"])
             self.assertEqual(drift["status"], "warn")
             self.assertIn("line-based strict baseline matches were downgraded to semi-strict by line drift", drift["warnings"])
+
+    def test_run_release_health_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-health"
+            self._public_ready_repo(repo)
+            out = Path(tmp) / "snapshots"
+            run_memory_cycle(repo, out, no_handoff=True)
+
+            health_dir = Path(tmp) / "health-artifacts"
+            report = run_release_health(
+                repo,
+                snapshot_dir=out,
+                run_tests=False,
+                run_demo_smoke=False,
+                artifacts_dir=health_dir,
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.health.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertIn("release_check", report["checks"])
+            self.assertIn("doctor", report["checks"])
+            self.assertIn("chain", report["checks"])
+            self.assertIn("timeline", report["checks"])
+            self.assertIn("drift_summary", report["checks"])
+            self.assertEqual(report["artifacts"]["json"], str((health_dir / "release-health.json")))
+            self.assertEqual(report["artifacts"]["markdown"], str((health_dir / "release-health.md")))
+            self.assertTrue((health_dir / "release-health.json").exists())
+            self.assertTrue((health_dir / "release-health.md").exists())
+
+    def test_run_release_health_obeys_drift_policy_without_failing_on_fail_on(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-health-policy"
+            repo.mkdir()
+            (repo / "README.md").write_text(
+                "D:\\Temp\\repomori-demo\\one\\file.py\n",
+                encoding="utf-8",
+            )
+            initial = scan_repository(repo, public_release=False)
+            baseline = Path(tmp) / "scan-baseline.json"
+            write_scan_baseline(initial, baseline)
+
+            (repo / "README.md").write_text(
+                "# heading\nD:\\Temp\\repomori-demo\\one\\file.py\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "snapshots"
+            run_memory_cycle(repo, out, no_handoff=True)
+
+            drift_log = Path(tmp) / "drift.log"
+            policy = Path(tmp) / "drift-policy.json"
+            policy.write_text(json.dumps({
+                "non_strict_ratio": {"warn-at": 0.2, "fail-at": 1.0},
+            }), encoding="utf-8")
+
+            report = run_release_health(
+                repo,
+                snapshot_dir=out,
+                baseline=baseline,
+                public_release=False,
+                run_tests=False,
+                run_demo_smoke=False,
+                drift_policy=policy,
+                drift_log=drift_log,
+                artifacts_dir=Path(tmp) / "health-policy-artifacts",
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.health.v1")
+            self.assertEqual(report["checks"]["release_check"]["summary"]["drift_policy_status"], "warn")
+            self.assertEqual(report["status"], "warn")
+            self.assertTrue(drift_log.exists())
+
+    def test_run_release_health_policy_can_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-health-policy-fail"
+            repo.mkdir()
+            (repo / "README.md").write_text("D:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            initial = scan_repository(repo, public_release=False)
+            baseline = Path(tmp) / "scan-baseline.json"
+            write_scan_baseline(initial, baseline)
+
+            (repo / "README.md").write_text("# heading\nD:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            out = Path(tmp) / "snapshots"
+            run_memory_cycle(repo, out, no_handoff=True)
+
+            policy = Path(tmp) / "drift-policy.json"
+            policy.write_text(json.dumps({"non_strict_ratio": {"warn-at": 0.2, "fail-at": 0.9}}), encoding="utf-8")
+
+            report = run_release_health(
+                repo,
+                snapshot_dir=out,
+                baseline=baseline,
+                public_release=False,
+                run_tests=False,
+                run_demo_smoke=False,
+                drift_policy=policy,
+                artifacts_dir=Path(tmp) / "health-policy-fail-artifacts",
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.health.v1")
+            self.assertEqual(report["checks"]["release_check"]["summary"]["drift_policy_status"], "fail")
+            self.assertEqual(report["status"], "fail")
 
     def test_baseline_drift_warning_math(self) -> None:
         conservative = build_baseline_drift_report(
@@ -2106,6 +2208,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.scan.v1", schema_versions)
         self.assertIn("repomori.scan.baseline.v1", schema_versions)
         self.assertIn("repomori.release_check.v1", schema_versions)
+        self.assertIn("repomori.health.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
         self.assertIn("repomori.brief.v1", schema_versions)
@@ -3742,6 +3845,195 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(drift["semi_strict_count"], 1)
             self.assertEqual(drift["ignored_total"], 2)
             self.assertIn("non_strict_ratio", drift)
+
+    def test_cli_release_check_json_writes_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-artifacts"
+            self._public_ready_repo(repo)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-check",
+                    str(repo),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.release_check.v1")
+            artifact_dir = repo / ".repomori-release-check"
+            self.assertTrue(Path(payload["artifacts"]["json"]).exists())
+            self.assertTrue(Path(payload["artifacts"]["markdown"]).exists())
+            self.assertEqual(payload["artifacts"]["json"], str(artifact_dir / "release-check.json"))
+            self.assertEqual(payload["artifacts"]["markdown"], str(artifact_dir / "release-check.md"))
+            if payload["checks"]["scan"]["drift_log"] is not None:
+                self.assertTrue(Path(payload["checks"]["scan"]["drift_log"]["log_path"]).exists())
+                self.assertEqual(payload["checks"]["scan"]["drift_log"]["status"], "appended")
+
+    def test_cli_release_health_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-health-cli"
+            self._public_ready_repo(repo)
+            out = Path(tmp) / "snapshots"
+            run_memory_cycle(repo, out, no_handoff=True)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-health",
+                    str(repo),
+                    "--snapshot-dir",
+                    str(out),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.health.v1")
+            self.assertIn("release_check", payload["checks"])
+            self.assertIn("timeline", payload["checks"])
+            self.assertIn("chain", payload["checks"])
+            self.assertIn("drift_summary", payload["checks"])
+            self.assertEqual(payload["checks"]["release_check"]["schema_version"], "repomori.release_check.v1")
+            self.assertEqual(payload["status"], "pass")
+
+    def test_cli_release_health_drift_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-health-cli-policy"
+            repo.mkdir()
+            (repo / "README.md").write_text("D:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            initial = scan_repository(repo, public_release=False)
+            baseline = Path(tmp) / "scan-baseline.json"
+            write_scan_baseline(initial, baseline)
+
+            (repo / "README.md").write_text("# heading\nD:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            out = Path(tmp) / "snapshots"
+            run_memory_cycle(repo, out, no_handoff=True)
+
+            drift_log = Path(tmp) / "release-health-drift.log"
+            policy = Path(tmp) / "drift-policy.json"
+            policy.write_text(json.dumps({"non_strict_ratio": {"warn-at": 0.2}}), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-health",
+                    str(repo),
+                    "--snapshot-dir",
+                    str(out),
+                    "--baseline",
+                    str(baseline),
+                    "--drift-policy",
+                    str(policy),
+                    "--drift-log",
+                    str(drift_log),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--no-public-release",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["checks"]["release_check"]["summary"]["drift_policy_status"], "warn")
+            self.assertEqual(payload["status"], "warn")
+            self.assertTrue(drift_log.exists())
+
+    def test_cli_release_health_drift_policy_can_fail_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-health-cli-policy-fail"
+            repo.mkdir()
+            (repo / "README.md").write_text("D:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            initial = scan_repository(repo, public_release=False)
+            baseline = Path(tmp) / "scan-baseline.json"
+            write_scan_baseline(initial, baseline)
+
+            (repo / "README.md").write_text("# heading\nD:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            out = Path(tmp) / "snapshots"
+            run_memory_cycle(repo, out, no_handoff=True)
+
+            policy = Path(tmp) / "drift-policy.json"
+            policy.write_text(json.dumps({"non_strict_ratio": {"warn-at": 0.2, "fail-at": 0.9}}), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-health",
+                    str(repo),
+                    "--snapshot-dir",
+                    str(out),
+                    "--baseline",
+                    str(baseline),
+                    "--drift-policy",
+                    str(policy),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--no-public-release",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["checks"]["release_check"]["summary"]["drift_policy_status"], "fail")
+            self.assertEqual(payload["status"], "fail")
+
+    def test_release_check_drift_policy_with_bom_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-bom-policy"
+            repo.mkdir()
+            (repo / "README.md").write_text("D:\\Temp\\repomori-demo\\one\\file.py\n", encoding="utf-8")
+            baseline = Path(tmp) / "scan-baseline.json"
+            write_scan_baseline(scan_repository(repo, public_release=False), baseline)
+
+            policy = Path(tmp) / "drift-policy.json"
+            policy.write_bytes(
+                json.dumps(
+                    {"non_strict_ratio": {"warn-at": 0.2, "fail-at": 1.0}},
+                    indent=2,
+                ).encode("utf-8-sig")
+            )
+
+            report = run_release_check(
+                repo,
+                baseline=baseline,
+                run_tests=False,
+                run_demo_smoke=False,
+                drift_policy=policy,
+            )
+            self.assertEqual(report["checks"]["scan"]["drift_policy"]["status"], "warn")
 
     def test_cli_release_check_drift_log_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

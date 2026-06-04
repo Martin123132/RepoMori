@@ -51,6 +51,7 @@ bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
 python -m repomori demo --out D:\Temp\repomori-demo --force --json
 python -m repomori scan D:\Dev\RepoMori --public-release --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
 python -m repomori drift-summary D:\Temp\repomori-drift.log --limit 20 --json
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
@@ -105,7 +106,8 @@ exactness matters.
 repomori build <repo> <pack> [--base pack] [--force] [--json]
 repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
-repomori release-check [repo] [--baseline file] [--fail-on low] [--skip-tests] [--skip-demo] [--drift-log file] [--json]
+repomori release-check [repo] [--baseline file] [--fail-on low] [--drift-policy file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--drift-log file] [--json]
+repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
 repomori drift-summary <log> [--limit n] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
 repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--anchor-out file] [--anchor-verify] [--allow-unverified-anchor] [--anchor-log file] [--no-incremental] [--diff-context] [--keep n] [--prune-apply] [--json]
@@ -166,6 +168,17 @@ catalog sanity checks, strict `scan`, `python -m unittest discover -s tests`,
 and a quickstart `demo` smoke, then returns one `repomori.release_check.v1`
 report. Add `--drift-log` to persist baseline-match drift telemetry and use
 `drift-summary <log> --json` to review trend deltas in CI or nightly scripts.
+`--drift-policy` is optional and non-blocking by default: it can flag warn or
+investigation conditions without changing the existing `--fail-on` behavior.
+Use `--artifacts-dir` when you want report/telemetry in a predictable folder.
+
+`release-health` runs the release-check bundle plus snapshot health, timeline tail,
+chain verification, and drift summary in one report (`repomori.health.v1`). Use
+it as your regular local loop for repeatable health checks:
+
+```powershell
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\packs --drift-log D:\Temp\repomori-drift.log --json
+```
 
 `build --base` creates an incremental pack. It hashes current files, reuses
 unchanged file records, compressed chunks, symbols, imports, and search index
@@ -350,6 +363,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Schemas](docs/schemas.md)
 - [Public safety scan](docs/public-safety-scan.md)
 - [Release check](docs/release-check.md)
+- [Release health](docs/release-health.md)
 - [Baseline drift watchlist](docs/baseline-drift-watchlist.md)
 - [Reusable anchor workflow](docs/memory-anchor-reusable.md)
 - [Incremental packs](docs/incremental-packs.md)

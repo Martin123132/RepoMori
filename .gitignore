@@ -9,6 +9,9 @@ __pycache__/
 .venv/
 venv/
 
+.repomori-release-check/
+.repomori-health/
+
 build/
 dist/
 *.egg-info/

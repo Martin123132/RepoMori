@@ -17,14 +17,14 @@ on:
   workflow_dispatch:
     inputs:
       anchor_mode:
-        description: "Workflow mode: strict, audit, or both"
+        description: "Anchor freshness profile: strict, safe, or legacy"
         required: false
         default: "strict"
         type: choice
         options:
           - strict
-          - audit
-          - both
+          - safe
+          - legacy
 
 jobs:
   repomori_anchor:
@@ -43,10 +43,17 @@ jobs:
 - Verifies anchor chain state immediately
 - Supports:
   - `strict` (default): fail on mismatch
-  - `audit`: continue even on mismatch (`--allow-unverified-anchor`)
-  - `both`: run strict + audit check runs
+  - `safe`: continue on mismatch; anchor verification is allowed to report warn
+  - `legacy`: check only the anchor proof hash (no full chain head comparison)
 
 ### Permissions and setup
 
 The caller repo only needs the checked-out code and Python. No secrets, keys, or
 provider config are required.
+
+## Workflow behavior by profile
+
+- `strict`: step fails unless `memory` reports `status == "pass"`.
+- `safe`: step fails on `status == "fail"` but allows `status == "warn"` for anchor drift.
+- `legacy`: same non-failing behavior as `safe`; useful when timeline-structure changes are
+  expected but anchor hash checks should still be recorded.
