@@ -77,7 +77,7 @@ jobs:
             REPO="."
           fi
           if [ -z "$SNAPSHOT_DIR" ]; then
-            SNAPSHOT_DIR="${REPO}/packs"
+            SNAPSHOT_DIR="${REPO}/.repomori-packs"
           fi
           if [ -z "$ARTIFACTS_DIR_INPUT" ]; then
             ARTIFACTS_DIR="${REPO}/.repomori-release-health"

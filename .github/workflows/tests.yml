@@ -25,6 +25,35 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Preflight release-check workspace
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+
+          repo = Path(".").resolve()
+          blocked = []
+          for child in sorted(repo.iterdir()):
+              rel = child.name
+              lower = rel.lower()
+              if rel in {".git", ".github"}:
+                  continue
+              if rel.startswith(".repomori-"):
+                  continue
+              if child.is_dir() and lower in {"pack", "packs", "benchmark", "benchmarks", "handoff", "handoffs"}:
+                  blocked.append(f"directory: {child}")
+              if child.is_file() and child.suffix.lower() == ".repomori":
+                  blocked.append(f"file: {child}")
+
+          if blocked:
+              print("release-check preflight blocked by top-level RepoMori artifacts:")
+              for item in blocked:
+                  print(f" - {item}")
+              print("Move generated artifacts to hidden paths (for example .repomori-packs).")
+              sys.exit(1)
+
+          print("release-check preflight passed")
+          PY
       - name: Run release check
         run: |
           python -m repomori release-check . \

@@ -749,6 +749,51 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["checks"]["demo"]["demo_status"], "pass")
             self.assertFalse(demo_out.exists())
 
+    def test_run_release_check_fails_on_workspace_generated_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-block"
+            self._public_ready_repo(repo)
+            (repo / "packs").mkdir()
+            (repo / "benchmarks").mkdir()
+            (repo / "handoff").mkdir()
+            (repo / "tmp.repomori").write_text("stale artifact", encoding="utf-8")
+
+            report = run_release_check(
+                repo,
+                run_tests=False,
+                run_demo_smoke=False,
+                fail_on="low",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertIn("workspace", report["summary"]["failed_checks"])
+            self.assertFalse(report["checks"]["workspace"]["ok"])
+            self.assertEqual(report["checks"]["workspace"]["status"], "fail")
+            self.assertGreaterEqual(report["checks"]["workspace"]["count"], 3)
+            self.assertTrue(any("workspace:" in row for row in report["failure_reasons"]))
+
+    def test_run_release_check_allows_hidden_workspace_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-clean"
+            self._public_ready_repo(repo)
+            hidden_artifacts = repo / ".repomori-release-check"
+            hidden_artifacts.mkdir()
+            (hidden_artifacts / "release-check.repomori").write_text("keep-hidden", encoding="utf-8")
+            (repo / ".repomori-packs").mkdir()
+
+            report = run_release_check(
+                repo,
+                run_tests=False,
+                run_demo_smoke=False,
+                fail_on="low",
+                artifacts_dir=hidden_artifacts,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["failed_checks"], [])
+            self.assertTrue(report["checks"]["workspace"]["ok"])
+            self.assertEqual(report["checks"]["workspace"]["status"], "pass")
+
     def test_run_release_check_reports_baseline_drift_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release-drift"
@@ -1624,6 +1669,9 @@ class RepoMoriCodecTests(unittest.TestCase):
                 )
                 self.assertEqual(allowed["summary"]["anchor_verification_status"], "fail")
                 self.assertEqual(allowed["status"], "warn")
+                self.assertTrue(
+                    any("anchor verification failed" in reason.lower() for reason in allowed["failure_reasons"])
+                )
 
             def doctor_warning(*_args: object, **_kwargs: object) -> dict[str, object]:
                 return {
@@ -1651,6 +1699,97 @@ class RepoMoriCodecTests(unittest.TestCase):
                 self.assertEqual(failed_with_doctor_warning["summary"]["doctor_status"], "warn")
                 self.assertEqual(failed_with_doctor_warning["summary"]["anchor_verification_status"], "fail")
                 self.assertEqual(failed_with_doctor_warning["status"], "fail")
+                self.assertTrue(any(reason.startswith("doctor:") for reason in failed_with_doctor_warning["failure_reasons"]))
+
+    def test_run_memory_cycle_anchor_freshness_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-anchor-profile"
+            anchor_path = out / "timeline-anchor.json"
+            checks: list[bool] = []
+
+            def verify_profile_fail(
+                _anchor: Path | str,
+                _out: Path | str,
+                check_current: bool = True,
+            ) -> dict[str, object]:
+                checks.append(check_current)
+                return {
+                    "schema_version": "repomori.snapshot_anchor.verify.v1",
+                    "status": "fail",
+                    "anchor_path": str(_anchor),
+                    "out_dir": str(_out),
+                    "summary": {
+                        "error_count": 1,
+                        "warning_count": 0,
+                        "anchor_hash_valid": False,
+                        "chain_head_matches": False,
+                        "latest_snapshot_matches": False,
+                        "current_pack_hash_matches": False,
+                    },
+                    "errors": [{"scope": "anchor", "message": "forced profile failure"}],
+                    "warnings": [],
+                }
+
+            with patch.object(codec, "verify_snapshot_anchor", side_effect=verify_profile_fail):
+                strict = run_memory_cycle(
+                    repo,
+                    out,
+                    no_handoff=True,
+                    anchor_out=str(anchor_path),
+                    anchor_freshness="strict",
+                )
+                safe = run_memory_cycle(
+                    repo,
+                    out,
+                    no_handoff=True,
+                    anchor_out=str(anchor_path),
+                    anchor_freshness="safe",
+                )
+                legacy = run_memory_cycle(
+                    repo,
+                    out,
+                    no_handoff=True,
+                    anchor_out=str(anchor_path),
+                    anchor_freshness="legacy",
+                )
+
+            self.assertEqual(checks, [True, True, False])
+            self.assertEqual(strict["summary"]["anchor_freshness"], "strict")
+            self.assertEqual(safe["summary"]["anchor_freshness"], "safe")
+            self.assertEqual(legacy["summary"]["anchor_freshness"], "legacy")
+            self.assertEqual(strict["status"], "fail")
+            self.assertEqual(safe["status"], "warn")
+            self.assertEqual(legacy["status"], "warn")
+            self.assertTrue(any("forced profile failure" in reason for reason in strict["failure_reasons"]))
+            self.assertTrue(any("forced profile failure" in reason for reason in safe["failure_reasons"]))
+            self.assertTrue(any("forced profile failure" in reason for reason in legacy["failure_reasons"]))
+
+    def test_run_memory_cycle_reports_doctor_missing_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory"
+
+            def doctor_missing_timeline(*_args: object, **_kwargs: object) -> dict[str, object]:
+                return {
+                    "schema_version": "repomori.doctor.v1",
+                    "status": "fail",
+                    "error_count": 1,
+                    "warning_count": 0,
+                    "summary": {},
+                    "errors": [{"scope": "latest", "path": str(out / "snapshots.json"), "message": "latest.repomori does not exist."}],
+                    "warnings": [],
+                }
+
+            with patch.object(codec, "doctor_snapshot_dir", side_effect=doctor_missing_timeline):
+                report = run_memory_cycle(
+                    repo,
+                    out,
+                    no_handoff=True,
+                )
+            self.assertEqual(report["status"], "fail")
+            self.assertIn("doctor:", " ".join(report["failure_reasons"]))
+            self.assertTrue(any("latest.repomori does not exist" in reason for reason in report["failure_reasons"]))
 
     def test_append_anchor_log_appends_jsonl_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3156,6 +3295,41 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(Path(payload["summary"]["anchor_path"]).exists())
             self.assertEqual(payload["anchor"]["schema_version"], "repomori.snapshot_anchor.v1")
 
+    def test_cli_memory_anchor_freshness_profiles_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-anchor-profile-cli"
+            anchor = Path(tmp) / "memory-anchor.json"
+
+            for mode in ("strict", "safe", "legacy"):
+                payload = json.loads(
+                    subprocess.check_output(
+                        [
+                            sys.executable,
+                            "-m",
+                            "repomori",
+                            "memory",
+                            str(repo),
+                            "--out-dir",
+                            str(out),
+                            "--no-handoff",
+                            "--anchor-out",
+                            str(anchor),
+                            "--anchor-freshness",
+                            mode,
+                            "--json",
+                        ],
+                        cwd=Path(__file__).resolve().parents[1],
+                        text=True,
+                    )
+                )
+
+                self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+                self.assertEqual(payload["status"], "pass")
+                self.assertEqual(payload["summary"]["anchor_freshness"], mode)
+                self.assertIsNotNone(payload["anchor_verification"])
+                self.assertEqual(payload["anchor_verification"]["status"], "pass")
+
     def test_cli_memory_anchor_verify_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -3800,6 +3974,70 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "pass")
             self.assertEqual(payload["checks"]["tests"]["status"], "skipped")
             self.assertEqual(payload["checks"]["demo"]["status"], "skipped")
+
+    def test_cli_release_check_fails_with_workspace_generated_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-cli-block"
+            self._public_ready_repo(repo)
+            (repo / "packs").mkdir()
+            (repo / "tmp.repomori").write_text("stale artifact", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-check",
+                    str(repo),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "fail")
+            self.assertIn("workspace", payload["summary"]["failed_checks"])
+            self.assertFalse(payload["checks"]["workspace"]["ok"])
+            self.assertTrue(any("workspace:" in row for row in payload["failure_reasons"]))
+
+    def test_cli_release_check_allows_hidden_workspace_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-cli-clean"
+            self._public_ready_repo(repo)
+            hidden_dir = repo / ".repomori-release-check"
+            hidden_dir.mkdir()
+            (hidden_dir / "release-check.repomori").write_text("keep hidden", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-check",
+                    str(repo),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--artifacts-dir",
+                    str(hidden_dir),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["summary"]["failed_checks"], [])
+            self.assertEqual(payload["checks"]["workspace"]["status"], "pass")
 
     def test_cli_release_check_includes_drift_warning_section(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

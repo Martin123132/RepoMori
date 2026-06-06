@@ -30,7 +30,7 @@ MCP clients usually start this command for you. A typical client config looks li
 ## Prepare A Repo Config
 
 ```powershell
-python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --force
+python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --force
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
 ```
 

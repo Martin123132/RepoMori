@@ -32,8 +32,12 @@ changing scan severity blocking.
 
 `release-check` treats generated snapshot artifacts as findings (repo-level
 `packs/` directories, `.repomori` pack files, and oversize files) on purpose.
-On machines where local builds leave artifacts in the source tree, run from a clean
-working copy or add those known findings to your baseline intentionally.
+Run from a clean tree or pass outputs through hidden `.repomori-*` locations
+(for example `.repomori-packs`, `.repomori-release-check`, `.repomori-health`)
+before running release checks.
+GitHub Actions now runs a preflight workspace check for top-level RepoMori artifacts
+before the heavier checks, so root-level `packs/` and top-level `.repomori` files
+fail early with explicit guidance.
 
 Release-check reports an explicit `checks.scan.drift_warnings` section:
 

@@ -2,7 +2,8 @@
 
 `release-health` is the consolidated local health bundle for a repository:
 
-- If `--snapshot-dir` is omitted, it reads snapshots from `<repo>/packs`.
+- If `--snapshot-dir` is omitted, it reads snapshots from `<repo>/.repomori-packs` by
+  default.
 
 - release readiness (scan, schema sanity, optional unit-test/demo steps),
 - snapshot health (`doctor`),
@@ -13,16 +14,16 @@
 It runs offline, dependency-free, and model-free.
 
 ```powershell
-python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\packs --json
-python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json --json
-python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\packs --drift-log D:\Dev\RepoMori\.repomori-baseline-drift.jsonl --artifacts-dir D:\Dev\RepoMori\.repomori-health --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-log D:\Dev\RepoMori\.repomori-baseline-drift.jsonl --artifacts-dir D:\Dev\RepoMori\.repomori-health --json
 ```
 
 Use this command for a predictable post-memory check after CI or after local work:
 
 ```powershell
-python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --json
-python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\packs --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json --json
+python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json --json
 ```
 
 Output schema is `repomori.health.v1`. The result includes:
@@ -83,5 +84,5 @@ the artifacts directory:
 Store these in CI so regressions can be reviewed without re-running locally.
 
 ```powershell
-python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\packs --json --artifacts-dir D:\Temp\repomori-health
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --json --artifacts-dir D:\Temp\repomori-health
 ```

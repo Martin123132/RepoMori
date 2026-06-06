@@ -368,6 +368,15 @@ SCAN_GENERATED_DIR_NAMES = {
     "pack",
     "packs",
 }
+RELEASE_CHECK_WORKSPACE_GENERATED_DIRS = {
+    "pack",
+    "packs",
+    "benchmark",
+    "benchmarks",
+    "handoff",
+    "handoffs",
+}
+RELEASE_CHECK_WORKSPACE_ALLOWED_PREFIX = ".repomori-"
 SCAN_NOISE_DIR_NAMES = {
     ".cache",
     ".gradle",
@@ -815,6 +824,92 @@ def _release_check_artifacts_dir(repo_path: Path, artifacts_dir: Path | str | No
     return repo_path / _RELEASE_CHECK_ARTIFACT_DIR_NAME
 
 
+def _release_check_workspace_health_check(
+    repo_path: Path,
+    *,
+    allowed_paths: set[Path] | None = None,
+) -> dict[str, Any]:
+    """Check for top-level generated artifacts that should be isolated first."""
+
+    allowed: set[Path] = set(allowed_paths or set())
+    issues: list[dict[str, Any]] = []
+    for entry in sorted(repo_path.iterdir()):
+        resolved = entry.resolve()
+        if resolved in allowed:
+            continue
+        rel = entry.name
+        lower = rel.lower()
+        if lower in {".git", ".github"}:
+            continue
+        if lower.startswith(RELEASE_CHECK_WORKSPACE_ALLOWED_PREFIX):
+            continue
+        if entry.is_dir() and lower in RELEASE_CHECK_WORKSPACE_GENERATED_DIRS:
+            issues.append(
+                {
+                    "path": str(entry),
+                    "scope": "directory",
+                    "message": (
+                        f"Top-level generated directory '{rel}' should be moved under a dedicated"
+                        " workspace such as .repomori-packs or .repomori-release-check."
+                    ),
+                }
+            )
+            continue
+        if (
+            entry.is_file()
+            and entry.suffix.lower() == ".repomori"
+            and not rel.startswith(RELEASE_CHECK_WORKSPACE_ALLOWED_PREFIX)
+        ):
+            issues.append(
+                {
+                    "path": str(entry),
+                    "scope": "file",
+                    "message": (
+                        f"Top-level '{rel}' pack artifact should be written outside the"
+                        " repository root before release-check."
+                    ),
+                }
+            )
+
+    if issues:
+        return {
+            "name": "workspace",
+            "ok": False,
+            "status": "fail",
+            "issues": issues,
+            "count": len(issues),
+        }
+    return {"name": "workspace", "ok": True, "status": "pass", "issues": [], "count": 0}
+
+
+def _release_check_scan_failure_reasons(scan_report: dict[str, Any]) -> list[str]:
+    """Return concise release-check reasons for common scan-driven hard failures."""
+
+    findings = scan_report.get("findings", [])
+    generated_directories = [item for item in findings if item.get("code") == "generated_artifact_dir"]
+    generated_pack_files = [item for item in findings if item.get("code") == "repomori_pack_artifact"]
+    reasons: list[str] = []
+    if generated_directories:
+        paths = sorted({str(item.get("path", "")) for item in generated_directories})
+        sample = ", ".join(paths[:3])
+        if len(paths) > 3:
+            sample = f"{sample}, +{len(paths)-3} more"
+        reasons.append(
+            f"Scan detected generated artifact directorie(s): {sample}"
+            "; isolate RepoMori outputs from repo root."
+        )
+    if generated_pack_files:
+        paths = sorted({str(item.get("path", "")) for item in generated_pack_files})
+        sample = ", ".join(paths[:3])
+        if len(paths) > 3:
+            sample = f"{sample}, +{len(paths)-3} more"
+        reasons.append(
+            f"Scan detected .repomori pack artifact(s): {sample}; move generated pack"
+            " outputs to a dedicated hidden path."
+        )
+    return reasons
+
+
 def _release_health_artifacts_dir(repo_path: Path, artifacts_dir: Path | str | None) -> Path:
     if artifacts_dir is not None:
         return Path(artifacts_dir).resolve()
@@ -1104,6 +1199,9 @@ def run_release_check(
     started = time.time()
     baseline_path = Path(baseline).resolve() if baseline is not None else repo_path / ".repomori-scan-baseline.json"
     baseline_arg: Path | None = baseline_path if baseline_path.exists() else None
+    artifacts_path = _release_check_artifacts_dir(repo_path, artifacts_dir=artifacts_dir)
+    allowed_workspace_paths = {artifacts_path}
+    workspace_check = _release_check_workspace_health_check(repo_path, allowed_paths=allowed_workspace_paths)
 
     schema_check = _release_schema_check()
     scan = scan_repository(
@@ -1125,7 +1223,6 @@ def run_release_check(
 
     drift_log_report = None
     drift_log_path: Path | None = None
-    artifacts_path = _release_check_artifacts_dir(repo_path, artifacts_dir=artifacts_dir)
 
     if drift_log is not None:
         drift_log_path = Path(drift_log).resolve()
@@ -1144,6 +1241,13 @@ def run_release_check(
     )
 
     checks = {
+        "workspace": {
+            "name": "workspace",
+            "ok": workspace_check["ok"],
+            "status": workspace_check["status"],
+            "issues": workspace_check["issues"],
+            "count": workspace_check["count"],
+        },
         "schema": schema_check,
         "scan": {
             "name": "scan",
@@ -1153,6 +1257,7 @@ def run_release_check(
             "baseline_path": str(baseline_arg) if baseline_arg else None,
             "summary": scan.get("summary", {}),
             "report": scan,
+            "failure_reasons": _release_check_scan_failure_reasons(scan),
             "drift": drift,
             "drift_warnings": drift,
             "drift_log": drift_log_report,
@@ -1164,6 +1269,23 @@ def run_release_check(
     failed = [name for name, check in checks.items() if not check.get("ok")]
     status = _release_check_summary_status(checks)
     elapsed = round(time.time() - started, 4)
+    failure_reasons: list[str] = []
+    for check_name, check in checks.items():
+        if not isinstance(check, dict) or check.get("status") != "fail":
+            continue
+        if check_name == "workspace":
+            for issue in check.get("issues", []):
+                message = issue.get("message")
+                if message:
+                    failure_reasons.append(f"workspace: {message}")
+        elif check_name == "scan":
+            for reason in check.get("failure_reasons", []):
+                if reason:
+                    failure_reasons.append(f"scan: {reason}")
+        else:
+            failure_reason = check.get("status_reason")
+            if isinstance(failure_reason, str) and failure_reason.strip():
+                failure_reasons.append(f"{check_name}: {failure_reason}")
 
     report = {
         "schema_version": "repomori.release_check.v1",
@@ -1190,7 +1312,9 @@ def run_release_check(
             "tests_returncode": tests_check.get("returncode"),
             "demo_status": demo_check.get("demo_status"),
             "drift_policy_status": drift_policy_report.get("status"),
+            "failure_reason_count": len(failure_reasons),
         },
+        "failure_reasons": failure_reasons,
         "checks": checks,
         "artifacts": {
             "json": str(artifacts_path / _RELEASE_CHECK_ARTIFACT_REPORT),
@@ -1275,10 +1399,10 @@ def run_release_health(
     snapshot_path = (
         Path(snapshot_dir).resolve()
         if snapshot_dir is not None
-        else repo_path / "packs"
+        else repo_path / ".repomori-packs"
     )
     if snapshot_dir is None:
-        # maintain existing local default for one-shot health checks.
+        # keep behavior deterministic for legacy callers and docs.
         snapshot_path = Path(snapshot_path)
     # release-check defaults to repository-scoped drift telemetry defaults; pass that
     # path explicitly when this check is writing artifacts.
@@ -1438,8 +1562,19 @@ def format_release_check_markdown(report: dict[str, Any]) -> str:
                     f"drift_policy={policy_status or 'na'}",
                 ]
                 line = line[:-1] + f" {' '.join(detail_parts)}`"
+            elif name == "workspace":
+                line = line[:-1] + f" issues={check.get('count', 0)}`"
+                for issue in check.get("issues", []):
+                    message = issue.get("message")
+                    if message:
+                        lines.append(f"  - {message}")
             lines.append(line)
-        return "\n".join(lines).rstrip() + "\n"
+        if report.get("failure_reasons"):
+            lines.append("")
+            lines.append("## Failure Reasons")
+            for reason in report.get("failure_reasons", []):
+                lines.append(f"- {reason}")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def format_release_health_markdown(report: dict[str, Any]) -> str:
@@ -5090,6 +5225,7 @@ def run_memory_cycle(
     anchor_report = None
     anchor_verification = None
     anchor_log_report = None
+    failure_reasons: list[str] = []
 
     if anchor_freshness is not None:
         anchor_freshness = _normalize_anchor_freshness(anchor_freshness)
@@ -5172,6 +5308,62 @@ def run_memory_cycle(
     if anchor_report is None and anchor_verify:
         status = "fail"
 
+    if snapshot.get("status") != "pass":
+        verify_report = snapshot.get("verify", {})
+        verify_errors = verify_report.get("errors")
+        if isinstance(verify_errors, list) and verify_errors:
+            first = verify_errors[0]
+            if isinstance(first, dict):
+                message = str(first.get("message", "Snapshot verification failed.")).strip()
+            else:
+                message = "Snapshot verification failed."
+            failure_reasons.append(f"snapshot: {message}")
+        else:
+            failure_reasons.append("snapshot: snapshot verification failed")
+    if doctor.get("status") == "fail":
+        for error in doctor.get("errors", []):
+            message = str(error.get("message", "")).strip()
+            if message:
+                failure_reasons.append(f"doctor: {message}")
+        if not doctor.get("errors"):
+            failure_reasons.append("doctor: snapshot doctor reported fail status")
+    elif doctor.get("status") == "warn":
+        for warning in doctor.get("warnings", []):
+            message = str(warning.get("message", "")).strip()
+            if message:
+                failure_reasons.append(f"doctor: {message}")
+    if prune.get("errors"):
+        for error in prune.get("errors", []):
+            message = str(error.get("message", "")).strip()
+            if message:
+                failure_reasons.append(f"prune: {message}")
+        if not prune.get("errors"):
+            failure_reasons.append("prune: prune reported error status")
+    if anchor_verification is not None:
+        for error in anchor_verification.get("errors", []):
+            message = str(error.get("message", "")).strip()
+            if message:
+                failure_reasons.append(f"anchor: {message}")
+        if anchor_failed and not allow_unverified_anchor and not anchor_verification.get("errors"):
+            failure_reasons.append(
+                "anchor: anchor verification failed and no verification override was enabled"
+            )
+        if anchor_failed and allow_unverified_anchor:
+            failure_reasons.append(
+                "anchor: anchor verification failed, but continue requested by allow_unverified_anchor"
+            )
+    elif anchor_verify:
+        failure_reasons.append("anchor: anchor verification requested but no anchor verification report was produced")
+    if status == "fail" and not failure_reasons:
+        if snapshot.get("status") != "pass":
+            failure_reasons.append("snapshot: snapshot step failed")
+        elif doctor.get("status") == "fail":
+            failure_reasons.append("doctor: snapshot doctor failed")
+        elif prune.get("errors"):
+            failure_reasons.append("prune: prune reported errors")
+        elif anchor_failed and not allow_unverified_anchor:
+            failure_reasons.append("anchor: anchor verification failed")
+
     snapshot_summary = snapshot.get("summary", {})
     artifacts = {
         "pack": snapshot_summary.get("pack_path"),
@@ -5227,6 +5419,7 @@ def run_memory_cycle(
             "elapsed_seconds": round(time.time() - started, 4),
             "snapshot_status": snapshot.get("status"),
             "doctor_status": doctor.get("status"),
+            "failure_reason_count": len(failure_reasons),
             "doctor_errors": doctor.get("error_count"),
             "doctor_warnings": doctor.get("warning_count"),
             "prune_applied": prune.get("applied"),
@@ -5255,6 +5448,7 @@ def run_memory_cycle(
             "anchor_verification_status": anchor_verification_status,
             "anchor_hash": anchor_report.get("anchor_hash") if anchor_report is not None else None,
         },
+        "failure_reasons": failure_reasons,
         "artifacts": artifacts,
         "snapshot": snapshot,
         "doctor": doctor,

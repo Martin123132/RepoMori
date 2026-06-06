@@ -51,30 +51,30 @@ bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
 python -m repomori demo --out D:\Temp\repomori-demo --force --json
 python -m repomori scan D:\Dev\RepoMori --public-release --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
-python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
 python -m repomori drift-summary D:\Temp\repomori-drift.log --limit 20 --json
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
-python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs
+python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
-python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --prune-apply --json
-python -m repomori build D:\Dev\RepoMori D:\Dev\RepoMori\packs\next.repomori --base D:\Dev\RepoMori\packs\latest.repomori --force --json
+python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --prune-apply --json
+python -m repomori build D:\Dev\RepoMori D:\Dev\RepoMori\.repomori-packs\next.repomori --base D:\Dev\RepoMori\.repomori-packs\latest.repomori --force --json
 python -m repomori agent --config D:\Dev\RepoMori\repomori.toml
 python -m repomori mcp --config D:\Dev\RepoMori\repomori.toml
 python -m repomori schema --json
-python -m repomori brief D:\Dev\RepoMori\packs --out D:\Dev\RepoMori\agent-brief.md
-python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --handoff "continue this repo" --json
-python -m repomori chain D:\Dev\RepoMori\packs --json
-python -m repomori anchor D:\Dev\RepoMori\packs --out D:\Dev\RepoMori\timeline-anchor.json
-python -m repomori verify-anchor D:\Dev\RepoMori\timeline-anchor.json D:\Dev\RepoMori\packs --json
-python -m repomori timeline D:\Dev\RepoMori\packs --format json
-python -m repomori doctor D:\Dev\RepoMori\packs --json
-python -m repomori prune D:\Dev\RepoMori\packs --keep 20 --json
-python -m repomori prune D:\Dev\RepoMori\packs --keep 20 --apply --json
+python -m repomori brief D:\Dev\RepoMori\.repomori-packs --out D:\Dev\RepoMori\agent-brief.md
+python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --handoff "continue this repo" --json
+python -m repomori chain D:\Dev\RepoMori\.repomori-packs --json
+python -m repomori anchor D:\Dev\RepoMori\.repomori-packs --out D:\Dev\RepoMori\timeline-anchor.json
+python -m repomori verify-anchor D:\Dev\RepoMori\timeline-anchor.json D:\Dev\RepoMori\.repomori-packs --json
+python -m repomori timeline D:\Dev\RepoMori\.repomori-packs --format json
+python -m repomori doctor D:\Dev\RepoMori\.repomori-packs --json
+python -m repomori prune D:\Dev\RepoMori\.repomori-packs --keep 20 --json
+python -m repomori prune D:\Dev\RepoMori\.repomori-packs --keep 20 --apply --json
 python -m repomori info C:\path\to\repo.repomori
 python -m repomori query C:\path\to\repo.repomori storage
 python -m repomori diagnose C:\path\to\repo.repomori "where is storage handled?" --json
 python -m repomori brief C:\path\to\repo.repomori --out repo-brief.md
-python -m repomori brief D:\Dev\RepoMori\packs --format json
+python -m repomori brief D:\Dev\RepoMori\.repomori-packs --format json
 python -m repomori compare C:\path\to\old.repomori C:\path\to\new.repomori --out compare.md
 python -m repomori context C:\path\to\repo.repomori "where is storage handled?" --out context.md
 python -m repomori verify C:\path\to\repo.repomori
@@ -169,8 +169,9 @@ and a quickstart `demo` smoke, then returns one `repomori.release_check.v1`
 report. Add `--drift-log` to persist baseline-match drift telemetry and use
 `drift-summary <log> --json` to review trend deltas in CI or nightly scripts.
 `release-check` is intentionally strict about generated snapshot artifacts (such as
-local `packs/` directories and `.repomori` files). Run it from a clean working
-tree or baseline those intentional artifacts explicitly.
+local `packs/` or `bench*` directories and `.repomori` files). Keep generated
+snapshot output in hidden paths (like `.repomori-packs`) and run from a clean
+working tree or baseline intentional artifacts explicitly.
 `--drift-policy` is optional and non-blocking by default: it can flag warn or
 investigation conditions without changing the existing `--fail-on` behavior.
 Use `--artifacts-dir` when you want report/telemetry in a predictable folder.
@@ -180,7 +181,7 @@ chain verification, and drift summary in one report (`repomori.health.v1`). Use
 it as your regular local loop for repeatable health checks:
 
 ```powershell
-python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\packs --drift-log D:\Temp\repomori-drift.log --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-log D:\Temp\repomori-drift.log --json
 ```
 
 `build --base` creates an incremental pack. It hashes current files, reuses

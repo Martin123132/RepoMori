@@ -743,6 +743,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"diff context: {report['summary']['diff_context_status']}")
             print(f"prune applied: {report['summary']['prune_applied']}")
             print(f"timeline snapshots: {report['summary']['timeline_snapshot_count']}")
+            if report.get("failure_reasons"):
+                print("failure reasons:")
+                for reason in report["failure_reasons"]:
+                    print(f"- {reason}")
         return 0 if report["status"] != "fail" else 1
     if args.command == "agent":
         return run_agent_bridge(
@@ -1080,6 +1084,10 @@ def _print_release_check(report: dict) -> None:
         elif name == "demo":
             detail += f" demo_status={check.get('demo_status', check.get('status'))}"
         print(f"- {name}: {detail}")
+    if report.get("failure_reasons"):
+        print("failure reasons:")
+        for reason in report.get("failure_reasons", []):
+            print(f"- {reason}")
 
 
 def _memory_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:

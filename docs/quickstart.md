@@ -15,7 +15,7 @@ Inspect the output:
 ```powershell
 python -m repomori query D:\Temp\repomori-demo\demo.repomori "sqlite connect Store" --json
 python -m repomori context D:\Temp\repomori-demo\demo.repomori "sqlite connect Store" --out D:\Temp\repomori-demo\context.md
-python -m repomori timeline D:\Temp\repomori-demo\packs --format json
+python -m repomori timeline D:\Temp\repomori-demo\.repomori-packs --format json
 ```
 
 ## Use Your Own Repository
@@ -23,22 +23,22 @@ python -m repomori timeline D:\Temp\repomori-demo\packs --format json
 ```powershell
 python -m repomori scan D:\Dev\YourRepo --public-release --json
 python -m repomori scan D:\Dev\YourRepo --public-release --write-baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
-python -m repomori init D:\Dev\YourRepo --out-dir D:\Dev\YourRepo\packs
+python -m repomori init D:\Dev\YourRepo --out-dir D:\Dev\YourRepo\.repomori-packs
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --json
-python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Temp\repomori-anchor.json --json
-python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Temp\repomori-anchor.json --anchor-verify --json
-python -m repomori brief D:\Dev\YourRepo\packs --out D:\Dev\YourRepo\agent-brief.md
-python -m repomori chain D:\Dev\YourRepo\packs --json
-python -m repomori anchor D:\Dev\YourRepo\packs --out D:\Dev\YourRepo\timeline-anchor.json
-python -m repomori verify-anchor D:\Dev\YourRepo\timeline-anchor.json D:\Dev\YourRepo\packs --json
-python -m repomori stats D:\Dev\YourRepo\packs --format json
-python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\packs\next.repomori --base D:\Dev\YourRepo\packs\latest.repomori --force --json
-python -m repomori diff-context D:\Dev\YourRepo\packs\previous.repomori D:\Dev\YourRepo\packs\latest.repomori "what changed?" --out D:\Dev\YourRepo\diff-context.md
+python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json --json
+python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json --anchor-verify --json
+python -m repomori brief D:\Dev\YourRepo\.repomori-packs --out D:\Dev\YourRepo\agent-brief.md
+python -m repomori chain D:\Dev\YourRepo\.repomori-packs --json
+python -m repomori anchor D:\Dev\YourRepo\.repomori-packs --out D:\Dev\YourRepo\timeline-anchor.json
+python -m repomori verify-anchor D:\Dev\YourRepo\timeline-anchor.json D:\Dev\YourRepo\.repomori-packs --json
+python -m repomori stats D:\Dev\YourRepo\.repomori-packs --format json
+python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\.repomori-packs\next.repomori --base D:\Dev\YourRepo\.repomori-packs\latest.repomori --force --json
+python -m repomori diff-context D:\Dev\YourRepo\.repomori-packs\previous.repomori D:\Dev\YourRepo\.repomori-packs\latest.repomori "what changed?" --out D:\Dev\YourRepo\diff-context.md
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
-python -m repomori release-health D:\Dev\YourRepo --snapshot-dir D:\Dev\YourRepo\packs --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
+python -m repomori release-health D:\Dev\YourRepo --snapshot-dir D:\Dev\YourRepo\.repomori-packs --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori drift-summary D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --limit 20 --json
-python -m repomori context D:\Dev\YourRepo\packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
+python -m repomori context D:\Dev\YourRepo\.repomori-packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
 ```
 
 `scan` is optional but recommended before publishing or building public packs.

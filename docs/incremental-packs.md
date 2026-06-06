@@ -4,7 +4,7 @@
 from an existing pack.
 
 ```powershell
-python -m repomori build D:\Dev\RepoMori D:\Dev\RepoMori\packs\next.repomori --base D:\Dev\RepoMori\packs\latest.repomori --force --json
+python -m repomori build D:\Dev\RepoMori D:\Dev\RepoMori\.repomori-packs\next.repomori --base D:\Dev\RepoMori\.repomori-packs\latest.repomori --force --json
 ```
 
 The builder hashes each current source file. When a file path and SHA-256 match
@@ -32,8 +32,8 @@ Snapshot and memory workflows use incremental builds automatically. If
 the base for the next snapshot:
 
 ```powershell
-python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --json
-python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\packs --json
+python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --json
+python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --json
 ```
 
 Use `--no-incremental` on `snapshot`, `memory`, or `init` when you want future
@@ -42,5 +42,5 @@ runs to rebuild every file instead.
 Use `stats` to inspect cumulative reuse:
 
 ```powershell
-python -m repomori stats D:\Dev\RepoMori\packs --format json
+python -m repomori stats D:\Dev\RepoMori\.repomori-packs --format json
 ```
