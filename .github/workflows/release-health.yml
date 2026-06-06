@@ -1,0 +1,128 @@
+name: release-health
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Repository path to analyze."
+        required: false
+        default: "."
+        type: string
+      snapshot_dir:
+        description: "Snapshot directory for doctor/chain/timeline checks."
+        required: false
+        default: ".repomori-packs"
+        type: string
+      baseline:
+        description: "Optional scan baseline path."
+        required: false
+        default: ""
+        type: string
+      drift_policy:
+        description: "Optional drift policy path."
+        required: false
+        default: ""
+        type: string
+      drift_log:
+        description: "Optional drift log output path."
+        required: false
+        default: ""
+        type: string
+      artifacts_dir:
+        description: "Directory for release-health artifacts."
+        required: false
+        default: ""
+        type: string
+      fail_on:
+        description: "Release-check severity gate: info, low, medium, high."
+        required: false
+        default: "low"
+        type: string
+
+jobs:
+  run_release_health:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - id: run
+        name: Run release-health bundle
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            REPO="${{ github.event.inputs.repo }}"
+            SNAPSHOT_DIR="${{ github.event.inputs.snapshot_dir }}"
+            BASELINE_INPUT="${{ github.event.inputs.baseline }}"
+            DRIFT_POLICY_INPUT="${{ github.event.inputs.drift_policy }}"
+            DRIFT_LOG_INPUT="${{ github.event.inputs.drift_log }}"
+            ARTIFACTS_DIR_INPUT="${{ github.event.inputs.artifacts_dir }}"
+            FAIL_ON="${{ github.event.inputs.fail_on }}"
+          else
+            REPO="."
+            SNAPSHOT_DIR=".repomori-packs"
+            BASELINE_INPUT=""
+            DRIFT_POLICY_INPUT=""
+            DRIFT_LOG_INPUT=""
+            ARTIFACTS_DIR_INPUT=""
+            FAIL_ON="low"
+          fi
+
+          if [ -z "$REPO" ]; then
+            REPO="."
+          fi
+          if [ -z "$SNAPSHOT_DIR" ]; then
+            SNAPSHOT_DIR=".repomori-packs"
+          fi
+          if [ -z "$ARTIFACTS_DIR_INPUT" ]; then
+            ARTIFACTS_DIR="${REPO}/.repomori-release-health"
+          else
+            ARTIFACTS_DIR="$ARTIFACTS_DIR_INPUT"
+          fi
+
+          mkdir -p "$ARTIFACTS_DIR"
+
+          DRIFT_LOG="$ARTIFACTS_DIR/baseline-drift.jsonl"
+          if [ -n "$DRIFT_LOG_INPUT" ]; then
+            DRIFT_LOG="$DRIFT_LOG_INPUT"
+            DRIFT_LOG_DIR="$(dirname "$DRIFT_LOG")"
+            mkdir -p "$DRIFT_LOG_DIR"
+          fi
+
+          ARGS=(
+            "python" "-m" "repomori"
+            "release-health" "$REPO"
+            "--snapshot-dir" "$SNAPSHOT_DIR"
+            "--json"
+            "--artifacts-dir" "$ARTIFACTS_DIR"
+            "--drift-log" "$DRIFT_LOG"
+            "--fail-on" "$FAIL_ON"
+          )
+
+          if [ -n "$BASELINE_INPUT" ]; then
+            ARGS+=("--baseline" "$BASELINE_INPUT")
+          fi
+          if [ -n "$DRIFT_POLICY_INPUT" ]; then
+            ARGS+=("--drift-policy" "$DRIFT_POLICY_INPUT")
+          fi
+
+          "${ARGS[@]}"
+
+          echo "artifacts_dir=$ARTIFACTS_DIR" >> "$GITHUB_OUTPUT"
+          echo "drift_log=$DRIFT_LOG" >> "$GITHUB_OUTPUT"
+          echo "release_health_json=$ARTIFACTS_DIR/release-health.json" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release-health artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repomori-release-health
+          path: |
+            ${{ steps.run.outputs.artifacts_dir }}/release-health.json
+            ${{ steps.run.outputs.artifacts_dir }}/release-health.md
+            ${{ steps.run.outputs.drift_log }}

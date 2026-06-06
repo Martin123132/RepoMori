@@ -3916,6 +3916,50 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["checks"]["release_check"]["schema_version"], "repomori.release_check.v1")
             self.assertEqual(payload["status"], "pass")
 
+    def test_cli_release_health_artifacts_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-health-cli-artifacts"
+            self._public_ready_repo(repo)
+            out = Path(tmp) / "snapshots"
+            run_memory_cycle(repo, out, no_handoff=True)
+
+            artifacts_dir = Path(tmp) / "release-health-artifacts"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-health",
+                    str(repo),
+                    "--snapshot-dir",
+                    str(out),
+                    "--json",
+                    "--artifacts-dir",
+                    str(artifacts_dir),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--no-public-release",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.health.v1")
+            self.assertTrue(Path(payload["artifacts"]["json"]).exists())
+            self.assertTrue(Path(payload["artifacts"]["markdown"]).exists())
+            self.assertEqual(payload["artifacts"]["json"], str(artifacts_dir / "release-health.json"))
+            self.assertEqual(payload["artifacts"]["markdown"], str(artifacts_dir / "release-health.md"))
+            release_check = payload["checks"]["release_check"]
+            self.assertEqual(release_check["artifacts"]["drift_log"], str(artifacts_dir / "baseline-drift.jsonl"))
+            self.assertTrue(Path(release_check["artifacts"]["drift_log"]).exists())
+            self.assertTrue(
+                Path(release_check["checks"]["scan"]["drift_log"]["log_path"]).exists()
+            )
+
     def test_cli_release_health_drift_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release-health-cli-policy"

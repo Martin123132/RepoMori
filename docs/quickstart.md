@@ -66,12 +66,13 @@ This builds a fresh incremental snapshot, creates a handoff package unless disab
 For automation, add `--anchor-out` to export a timeline anchor every run and choose
 an anchor freshness profile:
 
-- `strict` (default): fail if the anchor indicates mismatch with the current timeline.
-- `safe`: continue and keep the mismatch as a warning (`--anchor-freshness safe`).
+- `safe` (default): continue and keep the mismatch as a warning (`--anchor-freshness safe`).
+- `strict`: fail if the anchor indicates mismatch with the current timeline.
 - `legacy`: compare only against the exported proof hash (`--anchor-freshness legacy`).
 
-Use `--anchor-freshness strict` to preserve the previous strict failure behavior in
-CI-style runs.
+Use `--anchor-freshness strict` only if you want CI-style hard failure when anchor
+verification mismatches. `safe` is the default for backward-compatible local
+automation.
 
 ## CI and Nightly Automation
 
@@ -85,7 +86,7 @@ RepoMori is also in-tree documented for this workflow with a ready-to-copy
 `.github/workflows/memory-anchor.yml` in this repository.
 
 The workflow supports three manual modes:
-`strict` (default), `safe`, and `legacy`.
+`safe`, `strict`, and `legacy`.
 
 You can also call the reusable workflow from other repos:
 
