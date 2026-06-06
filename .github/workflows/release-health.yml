@@ -13,7 +13,7 @@ on:
       snapshot_dir:
         description: "Snapshot directory for doctor/chain/timeline checks."
         required: false
-        default: ".repomori-packs"
+        default: ""
         type: string
       baseline:
         description: "Optional scan baseline path."
@@ -65,7 +65,7 @@ jobs:
             FAIL_ON="${{ github.event.inputs.fail_on }}"
           else
             REPO="."
-            SNAPSHOT_DIR=".repomori-packs"
+            SNAPSHOT_DIR=""
             BASELINE_INPUT=""
             DRIFT_POLICY_INPUT=""
             DRIFT_LOG_INPUT=""
@@ -77,7 +77,7 @@ jobs:
             REPO="."
           fi
           if [ -z "$SNAPSHOT_DIR" ]; then
-            SNAPSHOT_DIR=".repomori-packs"
+            SNAPSHOT_DIR="${REPO}/packs"
           fi
           if [ -z "$ARTIFACTS_DIR_INPUT" ]; then
             ARTIFACTS_DIR="${REPO}/.repomori-release-health"
@@ -97,12 +97,15 @@ jobs:
           ARGS=(
             "python" "-m" "repomori"
             "release-health" "$REPO"
-            "--snapshot-dir" "$SNAPSHOT_DIR"
             "--json"
             "--artifacts-dir" "$ARTIFACTS_DIR"
             "--drift-log" "$DRIFT_LOG"
             "--fail-on" "$FAIL_ON"
           )
+
+          if [ -n "$SNAPSHOT_DIR" ]; then
+            ARGS+=( "--snapshot-dir" "$SNAPSHOT_DIR" )
+          fi
 
           if [ -n "$BASELINE_INPUT" ]; then
             ARGS+=("--baseline" "$BASELINE_INPUT")

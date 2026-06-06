@@ -168,6 +168,9 @@ catalog sanity checks, strict `scan`, `python -m unittest discover -s tests`,
 and a quickstart `demo` smoke, then returns one `repomori.release_check.v1`
 report. Add `--drift-log` to persist baseline-match drift telemetry and use
 `drift-summary <log> --json` to review trend deltas in CI or nightly scripts.
+`release-check` is intentionally strict about generated snapshot artifacts (such as
+local `packs/` directories and `.repomori` files). Run it from a clean working
+tree or baseline those intentional artifacts explicitly.
 `--drift-policy` is optional and non-blocking by default: it can flag warn or
 investigation conditions without changing the existing `--fail-on` behavior.
 Use `--artifacts-dir` when you want report/telemetry in a predictable folder.

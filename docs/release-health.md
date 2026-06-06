@@ -2,6 +2,8 @@
 
 `release-health` is the consolidated local health bundle for a repository:
 
+- If `--snapshot-dir` is omitted, it reads snapshots from `<repo>/packs`.
+
 - release readiness (scan, schema sanity, optional unit-test/demo steps),
 - snapshot health (`doctor`),
 - snapshot chain verification (`chain`),

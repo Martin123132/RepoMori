@@ -2,7 +2,7 @@
   "schema_version": "repomori.scan.baseline.v1",
   "source_schema_version": "repomori.scan.v1",
   "repo_path": "D:\\Dev\\RepoMori",
-  "created_at": 1780604597,
+  "created_at": 1780772265,
   "ignore": [
     {
       "severity": "low",
@@ -73,7 +73,7 @@
       "code": "temp_drive_path",
       "path": "docs/release-check.md",
       "message": "D-drive temp path appears in source.",
-      "line": 53,
+      "line": 58,
       "match": "D:\\T...sonl"
     },
     {
@@ -81,7 +81,7 @@
       "code": "temp_drive_path",
       "path": "docs/release-check.md",
       "message": "D-drive temp path appears in source.",
-      "line": 56,
+      "line": 61,
       "match": "D:\\T...sonl"
     },
     {
@@ -89,7 +89,7 @@
       "code": "temp_drive_path",
       "path": "docs/release-check.md",
       "message": "D-drive temp path appears in source.",
-      "line": 65,
+      "line": 70,
       "match": "D:\\T...sonl"
     },
     {
@@ -97,7 +97,7 @@
       "code": "temp_drive_path",
       "path": "docs/release-health.md",
       "message": "D-drive temp path appears in source.",
-      "line": 71,
+      "line": 86,
       "match": "D:\\T...alth"
     },
     {

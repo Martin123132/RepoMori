@@ -30,6 +30,11 @@ When present, `--drift-policy` adds optional policy evaluation to
 `checks.scan.drift_policy` and `checks.scan.drift_policy.status` without
 changing scan severity blocking.
 
+`release-check` treats generated snapshot artifacts as findings (repo-level
+`packs/` directories, `.repomori` pack files, and oversize files) on purpose.
+On machines where local builds leave artifacts in the source tree, run from a clean
+working copy or add those known findings to your baseline intentionally.
+
 Release-check reports an explicit `checks.scan.drift_warnings` section:
 
 - `strict_count`, `semi_strict_count`, `fallback_count`, `ignored_total`
