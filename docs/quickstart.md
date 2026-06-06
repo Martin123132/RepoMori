@@ -25,12 +25,11 @@ python -m repomori scan D:\Dev\YourRepo --public-release --json
 python -m repomori scan D:\Dev\YourRepo --public-release --write-baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori init D:\Dev\YourRepo --out-dir D:\Dev\YourRepo\.repomori-packs
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --json
-python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json --json
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json --anchor-verify --json
+python -m repomori anchor D:\Dev\YourRepo\.repomori-packs --out D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json --json
+python -m repomori verify-anchor D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json D:\Dev\YourRepo\.repomori-packs --json
 python -m repomori brief D:\Dev\YourRepo\.repomori-packs --out D:\Dev\YourRepo\agent-brief.md
 python -m repomori chain D:\Dev\YourRepo\.repomori-packs --json
-python -m repomori anchor D:\Dev\YourRepo\.repomori-packs --out D:\Dev\YourRepo\timeline-anchor.json
-python -m repomori verify-anchor D:\Dev\YourRepo\timeline-anchor.json D:\Dev\YourRepo\.repomori-packs --json
 python -m repomori stats D:\Dev\YourRepo\.repomori-packs --format json
 python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\.repomori-packs\next.repomori --base D:\Dev\YourRepo\.repomori-packs\latest.repomori --force --json
 python -m repomori diff-context D:\Dev\YourRepo\.repomori-packs\previous.repomori D:\Dev\YourRepo\.repomori-packs\latest.repomori "what changed?" --out D:\Dev\YourRepo\diff-context.md
@@ -62,6 +61,10 @@ python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --diff-context 
 ```
 
 This builds a fresh incremental snapshot, creates a handoff package unless disabled, writes changed-files context when a previous snapshot exists, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Use `brief` on the pack directory to create one agent-readable start file, `chain` to verify timeline integrity, `anchor` to export a small proof of the current chain head, `verify-anchor` to check that proof later, and `stats` to see how many files and chunks RepoMori avoided rebuilding.
+
+`anchor` and `verify-anchor` expect an existing timeline in `<out-dir>`; if you have not
+run `memory` yet, start with `python -m repomori memory --config ...` (you can include
+`--anchor-out` there too).
 
 For automation, add `--anchor-out` to export a timeline anchor every run and choose
 an anchor freshness profile:

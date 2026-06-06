@@ -64,8 +64,9 @@ python -m repomori schema --json
 python -m repomori brief D:\Dev\RepoMori\.repomori-packs --out D:\Dev\RepoMori\agent-brief.md
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --handoff "continue this repo" --json
 python -m repomori chain D:\Dev\RepoMori\.repomori-packs --json
-python -m repomori anchor D:\Dev\RepoMori\.repomori-packs --out D:\Dev\RepoMori\timeline-anchor.json
-python -m repomori verify-anchor D:\Dev\RepoMori\timeline-anchor.json D:\Dev\RepoMori\.repomori-packs --json
+python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --anchor-out D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json --anchor-verify --json
+python -m repomori anchor D:\Dev\RepoMori\.repomori-packs --out D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json --json
+python -m repomori verify-anchor D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json D:\Dev\RepoMori\.repomori-packs --json
 python -m repomori timeline D:\Dev\RepoMori\.repomori-packs --format json
 python -m repomori doctor D:\Dev\RepoMori\.repomori-packs --json
 python -m repomori prune D:\Dev\RepoMori\.repomori-packs --keep 20 --json
@@ -86,6 +87,9 @@ python -m repomori check-handoff D:\handoffs\repo --json
 python -m repomori bench D:\Dev\RepoMori --out D:\benchmarks\repomori
 python -m repomori get C:\path\to\repo.repomori path\inside\repo.py --out restored.py
 ```
+
+`anchor` and `verify-anchor` expect an existing snapshot directory; run
+`memory` first (or use `memory --anchor-out ... --anchor-verify`) before calling them.
 
 ## Why
 
@@ -138,6 +142,10 @@ repomori check-handoff <dir> [--json]
 repomori bench <repo> --out <dir> [--force] [--json]
 repomori get <pack> <path> [--out file]
 ```
+
+`anchor` and `verify-anchor` expect an existing snapshot directory. If this is your first
+run for a repository, start with `memory` (for example with `--anchor-out ... --anchor-verify`)
+so the snapshot timeline exists before exporting or verifying an anchor.
 
 `context` creates an offline, source-backed bundle for AI agents. It ranks
 matching files, restores exact text from compressed chunks, adds line-numbered
