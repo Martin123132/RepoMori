@@ -3112,6 +3112,32 @@ class RepoMoriCodecTests(unittest.TestCase):
             )
             self.assertIn("# RepoMori Snapshot Anchor", anchor_md.read_text(encoding="utf-8"))
 
+    def test_cli_anchor_out_and_fail_writes_hint_to_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "missing-snapshots"
+            anchor_md = Path(tmp) / "anchor.md"
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "anchor",
+                    str(out),
+                    "--format",
+                    "markdown",
+                    "--out",
+                    str(anchor_md),
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("anchor:", process.stderr)
+            self.assertTrue(anchor_md.exists())
+            self.assertIn("snapshot directory does not exist", process.stderr.lower())
+
     def test_cli_verify_anchor_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -3138,6 +3164,38 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "pass")
             self.assertTrue(payload["summary"]["anchor_hash_valid"])
             self.assertTrue(payload["summary"]["chain_head_matches"])
+
+    def test_cli_verify_anchor_out_fail_shows_stderr_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _ = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "verify-anchor-base"
+            missing_out = out / "does-not-exist"
+            anchor_file = Path(tmp) / "anchor.json"
+            snapshot_repo(repo, out)
+            anchor_file.write_text(json.dumps(build_snapshot_anchor(out), indent=2), encoding="utf-8")
+
+            anchor_verify_output = Path(tmp) / "verify-anchor.md"
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "verify-anchor",
+                    str(anchor_file),
+                    str(missing_out),
+                    "--format",
+                    "markdown",
+                    "--out",
+                    str(anchor_verify_output),
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("verify-anchor:", process.stderr)
+            self.assertIn("anchor chain head does not match current snapshot timeline head", process.stderr.lower())
 
     def test_cli_stats_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

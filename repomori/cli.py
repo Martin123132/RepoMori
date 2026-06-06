@@ -682,6 +682,8 @@ def main(argv: list[str] | None = None) -> int:
             args.out.write_text(output, encoding="utf-8")
         else:
             print(output, end="" if output.endswith("\n") else "\n")
+        if report.get("status") != "pass" and not args.json and args.out:
+            _print_report_status_hint(report, "anchor")
         return 0 if report["status"] != "fail" else 1
     if args.command == "verify-anchor":
         report = verify_snapshot_anchor(args.anchor, args.out_dir, check_current=not args.no_current)
@@ -696,6 +698,8 @@ def main(argv: list[str] | None = None) -> int:
             args.out.write_text(output, encoding="utf-8")
         else:
             print(output, end="" if output.endswith("\n") else "\n")
+        if report.get("status") != "pass" and not args.json and args.out:
+            _print_report_status_hint(report, "verify-anchor")
         return 0 if report["status"] != "fail" else 1
     if args.command == "doctor":
         result = doctor_snapshot_dir(args.out_dir, verify_packs=args.verify_packs)
@@ -1048,6 +1052,47 @@ def _print_scan(report: dict) -> None:
     extra = len(report.get("findings", [])) - 20
     if extra > 0:
         print(f"... {extra} more finding(s)")
+
+
+def _print_report_status_hint(report: dict, title: str) -> None:
+    """Emit a compact status hint for CLI commands that wrote structured output to a file."""
+
+    status = report.get("status")
+    if status in {None, "pass"}:
+        return
+
+    issues = []
+    for error in report.get("errors", []):
+        if isinstance(error, dict):
+            path = str(error.get("path", "")).strip()
+            message = str(error.get("message", "")).strip()
+            if path and message:
+                issues.append(f"{path}: {message}")
+            elif message:
+                issues.append(message)
+    if not issues:
+        verification = report.get("verification") if isinstance(report.get("verification"), dict) else None
+        if verification is not None:
+            for error in verification.get("errors", []):
+                if isinstance(error, dict):
+                    path = str(error.get("path", "")).strip()
+                    message = str(error.get("message", "")).strip()
+                    if path and message:
+                        issues.append(f"{path}: {message}")
+                    elif message:
+                        issues.append(message)
+        for warning in report.get("warnings", []):
+            if isinstance(warning, dict):
+                path = str(warning.get("path", "")).strip()
+                message = str(warning.get("message", "")).strip()
+                if path and message:
+                    issues.append(f"{path}: {message}")
+                elif message:
+                    issues.append(message)
+
+    print(f"{title}: {status}", file=sys.stderr)
+    for issue in issues[:5]:
+        print(f"- {issue}", file=sys.stderr)
 
 
 def _scan_has_threshold(report: dict, threshold: str) -> bool:
