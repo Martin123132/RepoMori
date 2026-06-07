@@ -82,14 +82,22 @@ jobs:
           MODES=(strict safe legacy)
 
           for mode in "${MODES[@]}"; do
+            MODE_DIR="${BASE_DIR}/${mode}"
+            OUT_DIR="${MODE_DIR}/packs"
             REPORT="${BASE_DIR}/memory-anchor-${mode}.json"
+            mkdir -p "$OUT_DIR"
             python -m repomori memory "$REPO" \
               --out-dir "$OUT_DIR" \
               --no-handoff \
-              --anchor-out "${OUT_DIR}/timeline-anchor.json" \
+              --anchor-out "${MODE_DIR}/timeline-anchor.json" \
               --anchor-freshness "$mode" \
               --anchor-verify \
               --json > "$REPORT"
+
+            if [ ! -s "${MODE_DIR}/timeline-anchor.json" ]; then
+              echo "missing anchor for mode=$mode"
+              exit 1
+            fi
 
             python - <<'PY' "$REPORT" "$mode"
 import json
@@ -121,10 +129,10 @@ The smoke command keeps runs explicit and reproducible:
 - `strict` is the hard-fail mode for CI-quality enforcement.
 - `legacy` is hash-only compare mode for migration-safe checks.
 - On each run this workflow emits these stable outputs in `out_dir`:
-  - `memory-anchor-strict.json`
-  - `memory-anchor-safe.json`
-  - `memory-anchor-legacy.json`
-- `timeline-anchor.json` is written for each mode under the same `out_dir/packs`.
+- `memory-anchor-strict.json`
+- `memory-anchor-safe.json`
+- `memory-anchor-legacy.json`
+- `timeline-anchor.json` is written for each mode under `out_dir/<mode>/timeline-anchor.json`.
 
 ### Permissions and setup
 

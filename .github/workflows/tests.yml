@@ -18,6 +18,185 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests
 
+  workflow-self-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate workflow YAML contract
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import sys
+          from pathlib import Path
+
+
+          def fail(message: str, *, path: str | None = None) -> None:
+              prefix = f"{path}: " if path else ""
+              print(f"workflow self-check failed: {prefix}{message}")
+              raise SystemExit(1)
+
+
+          workflow_dir = Path(".github/workflows")
+          workflow_paths = [
+              workflow_dir / "memory-anchor-smoke.yml",
+              workflow_dir / "release-health.yml",
+              workflow_dir / "memory-anchor.yml",
+              workflow_dir / "memory-anchor-reusable.yml",
+          ]
+
+          yaml_spec = importlib.util.find_spec("yaml")
+          fallback_mode = yaml_spec is None
+          if fallback_mode:
+              print("PyYAML unavailable; using resilient string-based workflow checks.")
+          else:
+              import yaml
+
+          for path in workflow_paths:
+              if not path.exists():
+                  fail("workflow file is missing", path=str(path))
+              text = path.read_text(encoding="utf-8")
+              if path.name == "memory-anchor-smoke.yml":
+                  if "MODES=(strict safe legacy)" not in text:
+                      fail("expected smoke mode matrix is missing", path=str(path))
+                  if "memory-anchor-${mode}.json" not in text:
+                      fail("smoke artifact naming contract is missing", path=str(path))
+                  if "timeline-anchor.json" not in text:
+                      fail("smoke anchor output contract is missing", path=str(path))
+              if path.name == "release-health.yml":
+                  if "--drift-log" not in text:
+                      fail("release-health command contract missing --drift-log", path=str(path))
+                  if "release-health.json" not in text or "release-health.md" not in text:
+                      fail("release-health required artifacts are not declared", path=str(path))
+              if path.name == "memory-anchor.yml":
+                  if "inputs.anchor_mode" not in text:
+                      fail("memory-anchor reusable dispatcher contract changed", path=str(path))
+              if path.name == "memory-anchor-reusable.yml":
+                  if "anchor_mode" not in text or "--anchor-freshness" not in text:
+                      fail("reusable memory-anchor contract changed", path=str(path))
+
+              if not fallback_mode:
+                  payload = yaml.safe_load(text)
+                  if not isinstance(payload, dict):
+                      fail("workflow content did not parse as mapping", path=str(path))
+                  if "on" not in payload or "jobs" not in payload:
+                      fail("workflow is missing required keys", path=str(path))
+                  if not isinstance(payload.get("jobs"), dict):
+                      fail("workflow jobs block is not a mapping", path=str(path))
+
+          print("workflow YAML contract checks passed.")
+          PY
+      - id: workflow_self_check
+        name: Run workflow command contract smoke
+        run: |
+          set -euo pipefail
+          BASE_DIR="${RUNNER_TEMP}/repomori-workflow-smoke"
+          SMOKE_PACKS="${BASE_DIR}/packs"
+          HEALTH_OUT="${BASE_DIR}/release-health"
+          DRIFT_LOG="${BASE_DIR}/baseline-drift.jsonl"
+          rm -rf "$BASE_DIR"
+          mkdir -p "$SMOKE_PACKS" "$HEALTH_OUT"
+          echo "base_dir=$BASE_DIR" >> "$GITHUB_OUTPUT"
+          echo "health_out=$HEALTH_OUT" >> "$GITHUB_OUTPUT"
+          echo "smoke_packs=$SMOKE_PACKS" >> "$GITHUB_OUTPUT"
+          echo "drift_log=$DRIFT_LOG" >> "$GITHUB_OUTPUT"
+
+          for mode in strict safe legacy; do
+            REPORT="${BASE_DIR}/memory-anchor-${mode}.json"
+            echo "Running memory smoke mode=${mode}"
+            python -m repomori memory . \
+              --out-dir "$SMOKE_PACKS" \
+              --no-handoff \
+              --anchor-out "$SMOKE_PACKS/timeline-anchor.json" \
+              --anchor-freshness "$mode" \
+              --anchor-verify \
+              --json > "$REPORT"
+            if [ ! -s "$REPORT" ]; then
+              echo "::error::workflow self-check: missing memory smoke report for mode $mode."
+              exit 1
+            fi
+            if [ ! -s "$SMOKE_PACKS/timeline-anchor.json" ]; then
+              echo "::error::workflow self-check: anchor not emitted for mode $mode."
+              exit 1
+            fi
+            python - "$REPORT" "$mode" <<'PY'
+            import json
+            import sys
+            from pathlib import Path
+
+            report = Path(sys.argv[1])
+            mode = sys.argv[2]
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            anchor = payload.get("summary", {}).get("anchor_freshness")
+            status = payload.get("status")
+            if anchor != mode:
+                raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {anchor}")
+            if status not in {"pass", "warn"}:
+                raise SystemExit(f"memory status was {status} for mode={mode}")
+            print(f"mode={mode} status={status}")
+            PY
+          done
+
+          for mode in strict safe legacy; do
+            if [ ! -s "${BASE_DIR}/memory-anchor-${mode}.json" ]; then
+              echo "::error::workflow self-check: missing emitted memory smoke artifact for mode ${mode}."
+              exit 1
+            fi
+          done
+
+          if [ ! -s "${BASE_DIR}/memory-anchor-strict.json" ] \
+            || [ ! -s "${BASE_DIR}/memory-anchor-safe.json" ] \
+            || [ ! -s "${BASE_DIR}/memory-anchor-legacy.json" ]; then
+            echo "::error::workflow self-check: one or more memory smoke artifacts were not generated."
+            exit 1
+          fi
+
+          python -m repomori release-health . \
+            --snapshot-dir "$SMOKE_PACKS" \
+            --skip-tests \
+            --skip-demo \
+            --baseline .repomori-scan-baseline.json \
+            --json \
+            --artifacts-dir "$HEALTH_OUT" \
+            --drift-log "$DRIFT_LOG"
+
+          if [ ! -f "$HEALTH_OUT/release-health.json" ] || [ ! -s "$HEALTH_OUT/release-health.json" ]; then
+            echo "::error::workflow self-check: release-health JSON artifact was not created."
+            exit 1
+          fi
+          if [ ! -f "$HEALTH_OUT/release-health.md" ] || [ ! -s "$HEALTH_OUT/release-health.md" ]; then
+            echo "::error::workflow self-check: release-health markdown artifact was not created."
+            exit 1
+          fi
+          if [ ! -f "$DRIFT_LOG" ] || [ ! -s "$DRIFT_LOG" ]; then
+            echo "::error::workflow self-check: release-health drift log was not written."
+            exit 1
+          fi
+
+          python - "$HEALTH_OUT/release-health.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if payload.get("schema_version") != "repomori.health.v1":
+              raise SystemExit("release-health schema_version was unexpected")
+          if "checks" not in payload:
+              raise SystemExit("release-health payload is missing checks")
+          if payload.get("artifacts", {}).get("json") is None:
+              raise SystemExit("release-health artifacts.json path missing")
+          print("release-health contract smoke passed")
+          PY
+      - name: Archive workflow self-check artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repomori-workflow-self-check
+          path: |
+            ${{ steps.workflow_self_check.outputs.base_dir }}/
+
   release-check:
     runs-on: ubuntu-latest
     steps:

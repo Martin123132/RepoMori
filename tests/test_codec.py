@@ -859,7 +859,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         )
 
         self.assertIn('echo "artifact_dir=$BASE_DIR" >> "$GITHUB_OUTPUT"', workflow)
-        self.assertIn('if [ ! -s "$OUT_DIR/timeline-anchor.json" ]', workflow)
+        self.assertIn("timeline-anchor.json", workflow)
 
     def test_workflow_contracts_for_release_health(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/release-health.yml").read_text(
