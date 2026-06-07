@@ -155,10 +155,10 @@ jobs:
             if not anchor_path.is_file():
                 raise SystemExit(f"anchor file was not found for mode={mode}")
             print(
-                f"mode={mode} status={status} anchor_verification_status={anchor_verification} "
-                f"anchor_exists={'yes' if anchor_path.exists() else 'no'} report_bytes={report.stat().st_size}"
+              f"mode={mode} status={status} anchor_verification_status={anchor_verification} "
+              f"anchor_exists={'yes' if anchor_path.exists() else 'no'} report_bytes={report.stat().st_size}"
             )
-            PY
+PY
             echo "  mode ${mode} validation complete"
           done
 
@@ -211,7 +211,7 @@ jobs:
           if payload.get("artifacts", {}).get("json") is None:
               raise SystemExit("release-health artifacts.json path missing")
           print("release-health contract smoke passed")
-          PY
+PY
       - name: Archive workflow self-check artifacts
         if: always()
         uses: actions/upload-artifact@v4
