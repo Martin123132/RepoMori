@@ -1,6 +1,6 @@
 name: memory-anchor-smoke
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       repo:
