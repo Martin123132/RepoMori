@@ -3044,6 +3044,32 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["returned_count"], 1)
             self.assertEqual(payload["summary"]["chain_status"], "pass")
 
+    def test_cli_timeline_out_fail_shows_stderr_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-snapshots"
+            timeline_md = Path(tmp) / "timeline.md"
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "timeline",
+                    str(missing),
+                    "--format",
+                    "markdown",
+                    "--out",
+                    str(timeline_md),
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("timeline:", process.stderr)
+            self.assertTrue(timeline_md.exists())
+            self.assertIn("snapshot directory does not exist", process.stderr.lower())
+
     def test_cli_chain_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))

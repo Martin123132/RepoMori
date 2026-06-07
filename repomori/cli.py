@@ -610,6 +610,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report["status"] == "pass" else 1
     if args.command == "timeline":
         report = read_snapshot_timeline(args.out_dir, limit=args.limit)
+        status = report.get("summary", {}).get("chain_status")
+        if status not in {"pass", "warn", "fail"}:
+            status = "warn"
         output = (
             json.dumps(report, indent=2)
             if args.format == "json"
@@ -618,9 +621,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)
             args.out.write_text(output, encoding="utf-8")
+            if status != "pass" and not getattr(args, "json", False):
+                _print_report_status_hint(
+                    {
+                        "status": status,
+                        "errors": report.get("chain", {}).get("errors", []),
+                        "warnings": report.get("chain", {}).get("warnings", []),
+                    },
+                    "timeline",
+                )
         else:
             print(output, end="" if output.endswith("\n") else "\n")
-        return 0
+        return 0 if status != "fail" else 1
     if args.command == "drift-summary":
         summary = summarize_baseline_drift_log(args.log, limit=args.limit)
         if args.json:
