@@ -26,10 +26,11 @@ jobs:
       - name: Run memory anchor profile smoke matrix
         shell: bash
         run: |
-          REPO="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.repo || '.' }}"
-          BASE="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.out_dir || '.repomori-smoke' }}"
+          REPO="${{ github.event.inputs.repo || '.' }}"
+          BASE="${{ github.event.inputs.out_dir || '.repomori-smoke' }}"
           OUT_DIR="${BASE}/packs"
           mkdir -p "$OUT_DIR"
+          echo "SMOKE_OUT=$BASE" >> "$GITHUB_ENV"
 
           for mode in strict safe legacy; do
             REPORT="$BASE/memory-anchor-${mode}.json"
@@ -41,20 +42,7 @@ jobs:
               --anchor-verify \
               --json > "$REPORT"
 
-            python - <<'PY' "$REPORT" "$mode"
-import json
-import sys
-from pathlib import Path
-
-report_path = Path(sys.argv[1])
-mode = sys.argv[2]
-payload = json.loads(report_path.read_text(encoding="utf-8"))
-if payload.get("summary", {}).get("anchor_freshness") != mode:
-    raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {payload.get('summary', {}).get('anchor_freshness')}")
-if payload.get("status") not in {"pass", "warn"}:
-    raise SystemExit(f"memory status not acceptable for mode={mode}: {payload.get('status')}")
-print(f"mode={mode} status={payload.get('status')}")
-PY
+            python -c "import json,sys;from pathlib import Path;p=Path(sys.argv[1]);mode=sys.argv[2];payload=json.loads(p.read_text(encoding='utf-8'));summary=payload.get('summary', {});anchor=summary.get('anchor_freshness');status=payload.get('status');assert anchor == mode, 'anchor_freshness mismatch for mode=%s: %s' % (mode, anchor);assert status in ('pass', 'warn'), 'memory status not acceptable for mode=%s: %s' % (mode, status);print('mode=%s status=%s' % (mode, status))" "$REPORT" "$mode"
           done
 
       - name: Archive anchor smoke artifacts
@@ -62,4 +50,4 @@ PY
         uses: actions/upload-artifact@v4
         with:
           name: repomori-memory-anchor-smoke
-          path: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.out_dir || '.repomori-smoke' }}/*.json
+          path: ${{ env.SMOKE_OUT || '.repomori-smoke' }}/*.json
