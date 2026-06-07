@@ -25,7 +25,7 @@ python -m repomori scan D:\Dev\YourRepo --public-release --json
 python -m repomori scan D:\Dev\YourRepo --public-release --write-baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori init D:\Dev\YourRepo --out-dir D:\Dev\YourRepo\.repomori-packs
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --json
-python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json --anchor-verify --json
+python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --anchor-out D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json --anchor-freshness safe --anchor-verify --json
 python -m repomori anchor D:\Dev\YourRepo\.repomori-packs --out D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json --json
 python -m repomori verify-anchor D:\Dev\YourRepo\.repomori-packs\timeline-anchor.json D:\Dev\YourRepo\.repomori-packs --json
 python -m repomori brief D:\Dev\YourRepo\.repomori-packs --out D:\Dev\YourRepo\agent-brief.md

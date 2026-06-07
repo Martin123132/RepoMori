@@ -64,7 +64,7 @@ python -m repomori schema --json
 python -m repomori brief D:\Dev\RepoMori\.repomori-packs --out D:\Dev\RepoMori\agent-brief.md
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --handoff "continue this repo" --json
 python -m repomori chain D:\Dev\RepoMori\.repomori-packs --json
-python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --anchor-out D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json --anchor-verify --json
+python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --anchor-out D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json --anchor-freshness safe --anchor-verify --json
 python -m repomori anchor D:\Dev\RepoMori\.repomori-packs --out D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json --json
 python -m repomori verify-anchor D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json D:\Dev\RepoMori\.repomori-packs --json
 python -m repomori timeline D:\Dev\RepoMori\.repomori-packs --format json
