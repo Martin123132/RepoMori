@@ -251,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
     doctor.add_argument("out_dir", type=Path)
     doctor.add_argument("--verify-packs", action="store_true", help="Run full pack verification for indexed packs.")
     doctor.add_argument("--json", action="store_true", help="Print doctor JSON.")
+    doctor.add_argument("--out", type=Path, help="Write the doctor report to this file.")
 
     prune = sub.add_parser("prune", help="Plan or apply safe snapshot cleanup.")
     prune.add_argument("out_dir", type=Path)
@@ -668,6 +669,8 @@ def main(argv: list[str] | None = None) -> int:
             args.out.write_text(output, encoding="utf-8")
         else:
             print(output, end="" if output.endswith("\n") else "\n")
+        if report.get("status") != "pass" and not args.json and args.out:
+            _print_report_status_hint(report, "chain")
         return 0 if report["status"] != "fail" else 1
     if args.command == "anchor":
         report = build_snapshot_anchor(args.out_dir)
@@ -703,7 +706,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report["status"] != "fail" else 1
     if args.command == "doctor":
         result = doctor_snapshot_dir(args.out_dir, verify_packs=args.verify_packs)
-        _print(result, args.json)
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(json.dumps(result, indent=2), encoding="utf-8")
+            if result.get("status") != "pass" and not args.json:
+                _print_report_status_hint(result, "doctor")
+        else:
+            _print(result, args.json)
         return 0 if result["status"] != "fail" else 1
     if args.command == "prune":
         result = prune_snapshots(args.out_dir, keep=args.keep, apply=args.apply)

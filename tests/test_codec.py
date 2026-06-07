@@ -3071,6 +3071,32 @@ class RepoMoriCodecTests(unittest.TestCase):
             markdown = format_snapshot_chain_markdown(payload)
             self.assertIn("Head hash", markdown)
 
+    def test_cli_chain_out_fail_shows_stderr_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-snapshots"
+            chain_md = Path(tmp) / "chain.md"
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "chain",
+                    str(missing),
+                    "--format",
+                    "markdown",
+                    "--out",
+                    str(chain_md),
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("chain:", process.stderr)
+            self.assertTrue(chain_md.exists())
+            self.assertIn("snapshot directory does not exist", process.stderr.lower())
+
     def test_cli_anchor_json_and_markdown_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -3250,6 +3276,30 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.doctor.v1")
             self.assertEqual(payload["status"], "pass")
             self.assertEqual(payload["error_count"], 0)
+
+    def test_cli_doctor_out_fail_shows_stderr_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "doctor-missing"
+            report = Path(tmp) / "doctor.md"
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "doctor",
+                    str(out),
+                    "--out",
+                    str(report),
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("doctor:", process.stderr)
+            self.assertTrue(report.exists())
+            self.assertIn("snapshot directory does not exist", process.stderr.lower())
 
     def test_cli_prune_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
