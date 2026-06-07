@@ -26,9 +26,11 @@ jobs:
       - name: Run memory anchor profile smoke matrix
         shell: bash
         run: |
+          set -euo pipefail
           WORKSPACE_DIR="${GITHUB_WORKSPACE:-$(pwd)}"
           REPO="${{ github.event.inputs.repo || '.' }}"
-          BASE="${WORKSPACE_DIR}/${{ github.event.inputs.out_dir || '.repomori-smoke' }}"
+          OUT_DIR_NAME="${{ github.event.inputs.out_dir || '.repomori-smoke' }}"
+          BASE="${WORKSPACE_DIR}/${OUT_DIR_NAME}"
           OUT_DIR="${BASE}/packs"
           mkdir -p "$OUT_DIR"
 
@@ -51,3 +53,4 @@ jobs:
         with:
           name: repomori-memory-anchor-smoke
           path: ${{ github.workspace }}/${{ github.event.inputs.out_dir || '.repomori-smoke' }}
+          include-hidden-files: true
