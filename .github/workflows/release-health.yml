@@ -116,6 +116,22 @@ jobs:
 
           "${ARGS[@]}"
 
+          required_artifacts=(
+            "$ARTIFACTS_DIR/release-health.json"
+            "$ARTIFACTS_DIR/release-health.md"
+          )
+          for artifact in "${required_artifacts[@]}"; do
+            if [ ! -f "$artifact" ] || [ ! -s "$artifact" ]; then
+              echo "::error::release-health command did not produce required artifact: $artifact"
+              exit 1
+            fi
+          done
+
+          if [ -n "$DRIFT_LOG" ] && [ ! -f "$DRIFT_LOG" ]; then
+            echo "::error::release-health command did not produce expected drift log: $DRIFT_LOG"
+            exit 1
+          fi
+
           echo "artifacts_dir=$ARTIFACTS_DIR" >> "$GITHUB_OUTPUT"
           echo "drift_log=$DRIFT_LOG" >> "$GITHUB_OUTPUT"
           echo "release_health_json=$ARTIFACTS_DIR/release-health.json" >> "$GITHUB_OUTPUT"

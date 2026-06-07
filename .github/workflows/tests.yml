@@ -32,6 +32,14 @@ jobs:
           import sys
 
           repo = Path(".").resolve()
+          generated_dirs = {
+              "pack",
+              "packs",
+              "benchmark",
+              "benchmarks",
+              "handoff",
+              "handoffs",
+          }
           blocked = []
           for child in sorted(repo.iterdir()):
               rel = child.name
@@ -40,16 +48,21 @@ jobs:
                   continue
               if rel.startswith(".repomori-"):
                   continue
-              if child.is_dir() and lower in {"pack", "packs", "benchmark", "benchmarks", "handoff", "handoffs"}:
+              if child.is_dir() and lower in generated_dirs:
                   blocked.append(f"directory: {child}")
               if child.is_file() and child.suffix.lower() == ".repomori":
                   blocked.append(f"file: {child}")
 
           if blocked:
-              print("release-check preflight blocked by top-level RepoMori artifacts:")
+              print("release-check preflight blocked by visible top-level artifacts:")
               for item in blocked:
                   print(f" - {item}")
-              print("Move generated artifacts to hidden paths (for example .repomori-packs).")
+              print("Move generated outputs under hidden directories for this repo, for example:")
+              print("  - .repomori-packs")
+              print("  - .repomori-release-check")
+              print("  - .repomori-release-health")
+              print("  - .repomori-health")
+              print("Then rerun release-check from a clean repo root.")
               sys.exit(1)
 
           print("release-check preflight passed")

@@ -75,11 +75,14 @@ jobs:
         shell: bash
         run: |
           REPO="${{ inputs.repo || '.' }}"
-          OUT_DIR="${{ inputs.out_dir || '.repomori-smoke' }}/packs"
+          BASE_DIR="${{ inputs.out_dir || '.repomori-smoke' }}"
+          OUT_DIR="${BASE_DIR}/packs"
+          mkdir -p "$BASE_DIR"
           mkdir -p "$OUT_DIR"
+          MODES=(strict safe legacy)
 
-          for mode in strict safe legacy; do
-            REPORT="${OUT_DIR}/memory-anchor-${mode}.json"
+          for mode in "${MODES[@]}"; do
+            REPORT="${BASE_DIR}/memory-anchor-${mode}.json"
             python -m repomori memory "$REPO" \
               --out-dir "$OUT_DIR" \
               --no-handoff \
@@ -88,20 +91,28 @@ jobs:
               --anchor-verify \
               --json > "$REPORT"
 
-            python - <<'PY'
+            python - <<'PY' "$REPORT" "$mode"
 import json
 import sys
 from pathlib import Path
 
-mode = Path(sys.argv[1]).name.split("-")[-1].replace(".json", "")
+mode = sys.argv[2]
 path = Path(sys.argv[1])
 payload = json.loads(path.read_text(encoding="utf-8"))
 if payload.get("summary", {}).get("anchor_freshness") != mode:
-    raise SystemExit(f"missing anchor_freshness={mode}")
+    raise SystemExit(f"anchor_freshness mismatch for mode={mode}")
 if payload.get("status") not in {"pass", "warn"}:
     raise SystemExit(f"memory status was {payload.get('status')}")
 print(f"{mode}: pass={payload.get('status')}")
-PY "$REPORT"
+PY "$REPORT" "$mode"
+          done
+
+          for mode in "${MODES[@]}"; do
+            REPORT="${BASE_DIR}/memory-anchor-${mode}.json"
+            if [ ! -f "$REPORT" ] || [ ! -s "$REPORT" ]; then
+              echo "missing expected report: $REPORT"
+              exit 1
+            fi
           done
 ```
 
