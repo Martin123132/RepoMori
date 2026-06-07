@@ -56,13 +56,16 @@ jobs:
             OUT_DIR="${MODE_DIR}/packs"
             mkdir -p "$OUT_DIR"
             REPORT="${BASE_DIR}/memory-anchor-${mode}.json"
-            python -m repomori memory "$REPO" \
+            if ! python -m repomori memory "$REPO" \
               --out-dir "$OUT_DIR" \
               --no-handoff \
               --anchor-out "${MODE_DIR}/timeline-anchor.json" \
               --anchor-freshness "$mode" \
               --anchor-verify \
-              --json > "$REPORT"
+              --json > "$REPORT"; then
+              echo "::error::memory-anchor-smoke: repomori memory failed for mode '${mode}'."
+              exit 1
+            fi
 
             if [ ! -s "$REPORT" ]; then
               echo "::error::memory-anchor-smoke: missing or empty report for mode '$mode' at '$REPORT'."
@@ -74,23 +77,7 @@ jobs:
               exit 1
             fi
 
-            python - <<'PY' "$REPORT" "$mode"
-            import json
-            import sys
-            from pathlib import Path
-
-            report = Path(sys.argv[1])
-            mode = sys.argv[2]
-            payload = json.loads(report.read_text(encoding="utf-8"))
-            summary = payload.get("summary", {})
-            anchor = summary.get("anchor_freshness")
-            status = payload.get("status")
-            if anchor != mode:
-                raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {anchor}")
-            if status not in {"pass", "warn"}:
-                raise SystemExit(f"memory status not acceptable for mode={mode}: {status}")
-            print(f"mode={mode} status={status}")
-            PY
+            REPORT_PATH="$REPORT" MODE="$mode" python -c "import json, os; from pathlib import Path; report=Path(os.environ['REPORT_PATH']); mode=os.environ['MODE']; payload=json.loads(report.read_text(encoding='utf-8')); summary=payload.get('summary', {}); anchor=summary.get('anchor_freshness'); status=payload.get('status'); assert anchor == mode, f'anchor_freshness mismatch for mode={mode}: {anchor}'; assert status in {'pass','warn'}, f'memory status not acceptable for mode={mode}: {status}'; print(f'mode={mode} status={status}')"
           done
 
           for mode in "${MODES[@]}"; do
