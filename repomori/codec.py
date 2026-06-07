@@ -888,6 +888,7 @@ def _release_check_scan_failure_reasons(scan_report: dict[str, Any]) -> list[str
     findings = scan_report.get("findings", [])
     generated_directories = [item for item in findings if item.get("code") == "generated_artifact_dir"]
     generated_pack_files = [item for item in findings if item.get("code") == "repomori_pack_artifact"]
+    noise_directories = [item for item in findings if item.get("code") == "dependency_or_build_noise"]
     reasons: list[str] = []
     if generated_directories:
         paths = sorted({str(item.get("path", "")) for item in generated_directories})
@@ -906,6 +907,15 @@ def _release_check_scan_failure_reasons(scan_report: dict[str, Any]) -> list[str
         reasons.append(
             f"Scan detected .repomori pack artifact(s): {sample}; move generated pack"
             " outputs to a dedicated hidden path."
+        )
+    if noise_directories:
+        paths = sorted({str(item.get("path", "")) for item in noise_directories})
+        sample = ", ".join(paths[:3])
+        if len(paths) > 3:
+            sample = f"{sample}, +{len(paths)-3} more"
+        reasons.append(
+            "Scan detected build/dependency cache noise: "
+            f"{sample}; avoid running release-check on a dirty working tree."
         )
     return reasons
 

@@ -4142,6 +4142,37 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(any("workspace:" in row for row in payload["failure_reasons"]))
             self.assertTrue(any("packs" in row.lower() or ".repomori" in row.lower() for row in payload["failure_reasons"]))
 
+    def test_cli_release_check_reports_scan_failure_reason_for_build_noise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-check-cli-scan-noise"
+            self._public_ready_repo(repo)
+            noise = repo / ".pytest_cache"
+            noise.mkdir()
+            (noise / "cache_file.txt").write_text("noop", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-check",
+                    str(repo),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "fail")
+            self.assertEqual(payload["checks"]["scan"]["status"], "fail")
+            self.assertTrue(any("scan:" in row and ".pytest_cache" in row for row in payload["failure_reasons"]))
+
     def test_cli_release_check_allows_hidden_workspace_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release-check-cli-clean"

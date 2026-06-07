@@ -39,6 +39,11 @@ GitHub Actions now runs a preflight workspace check for top-level RepoMori artif
 before the heavier checks, so root-level `packs/` and top-level `.repomori` files
 fail early with explicit guidance.
 
+When release-check fails during `scan` on workspace noise, the JSON output includes a
+`failure_reasons` section with short scan hints, so you can quickly tell if a dirty
+working tree (for example `.pytest_cache` or other temporary build directories) caused
+the gate to fail.
+
 Release-check reports an explicit `checks.scan.drift_warnings` section:
 
 - `strict_count`, `semi_strict_count`, `fallback_count`, `ignored_total`
