@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import repomori.cli as cli
 import repomori.codec as codec
 
 from repomori.codec import (
@@ -3459,11 +3460,89 @@ class RepoMoriCodecTests(unittest.TestCase):
                     )
                 )
 
-                self.assertEqual(payload["schema_version"], "repomori.memory.v1")
-                self.assertEqual(payload["status"], "pass")
-                self.assertEqual(payload["summary"]["anchor_freshness"], mode)
-                self.assertIsNotNone(payload["anchor_verification"])
-                self.assertEqual(payload["anchor_verification"]["status"], "pass")
+            self.assertEqual(payload["schema_version"], "repomori.memory.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["summary"]["anchor_freshness"], mode)
+            self.assertIsNotNone(payload["anchor_verification"])
+            self.assertEqual(payload["anchor_verification"]["status"], "pass")
+
+    def test_cli_memory_anchor_freshness_profiles_map_to_cycle_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-anchor-profile-cli-flags"
+            anchor = Path(tmp) / "memory-anchor.json"
+            calls: list[tuple[str, str, dict[str, object]]] = []
+
+            def fake_run_memory_cycle(
+                repo_path,
+                out_dir,
+                **kwargs: object,
+            ) -> dict[str, object]:
+                normalized: dict[str, object] = dict(kwargs)
+                freshness = normalized.get("anchor_freshness")
+                anchor_verify = bool(normalized.get("anchor_verify", False))
+                allow_unverified_anchor = bool(normalized.get("allow_unverified_anchor", False))
+                if isinstance(freshness, str):
+                    if freshness == "strict":
+                        anchor_verify = True
+                        allow_unverified_anchor = False
+                    elif freshness in {"safe", "legacy"}:
+                        anchor_verify = True
+                        allow_unverified_anchor = True
+                normalized["anchor_verify"] = anchor_verify
+                normalized["allow_unverified_anchor"] = allow_unverified_anchor
+                calls.append((str(Path(repo_path).resolve()), str(Path(out_dir).resolve()), dict(normalized)))
+
+                return {
+                    "schema_version": "repomori.memory.v1",
+                    "status": "pass",
+                    "repo_path": str(Path(repo_path).resolve()),
+                    "out_dir": str(Path(out_dir).resolve()),
+                    "summary": {
+                        "anchor_freshness": kwargs.get("anchor_freshness"),
+                        "anchor_verification_status": "pass",
+                        "pack_path": str(Path(out_dir).resolve() / "pass.repomori"),
+                        "handoff_dir": None,
+                    },
+                    "settings": {
+                        "anchor_out": kwargs.get("anchor_out"),
+                        "anchor_verify": kwargs.get("anchor_verify"),
+                        "allow_unverified_anchor": kwargs.get("allow_unverified_anchor"),
+                    },
+                    "timeline": {"status": "pass", "returned_count": 1},
+                    "failure_reasons": [],
+                    "artifacts": {},
+                }
+
+            with patch.object(cli, "run_memory_cycle", side_effect=fake_run_memory_cycle):
+                for idx, mode in enumerate(("strict", "safe", "legacy"), start=1):
+                    rc = cli.main(
+                        [
+                            "memory",
+                            str(repo),
+                            "--out-dir",
+                            str(out),
+                            "--no-handoff",
+                            "--anchor-out",
+                            str(anchor),
+                            "--anchor-freshness",
+                            mode,
+                            "--json",
+                        ]
+                    )
+                    self.assertEqual(rc, 0)
+                    self.assertEqual(len(calls), idx)
+
+                    _repo_arg, _out_arg, kwargs = calls[-1]
+                    self.assertEqual(kwargs["anchor_out"], str(anchor.resolve()))
+                    self.assertEqual(kwargs["anchor_freshness"], mode)
+                    self.assertTrue(kwargs["anchor_verify"], f"{mode} should imply anchor verification")
+                    if mode == "strict":
+                        self.assertFalse(kwargs["allow_unverified_anchor"], f"{mode} should not allow unverified anchor by default")
+                    else:
+                        self.assertTrue(kwargs["allow_unverified_anchor"], f"{mode} should allow unverified anchor by default")
+
+            self.assertEqual(len(calls), 3)
 
     def test_cli_memory_anchor_verify_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,64 @@
+name: memory-anchor-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Repository root to snapshot."
+        required: false
+        default: "."
+        type: string
+      out_dir:
+        description: "Output directory for snapshot and anchor smoke artifacts."
+        required: false
+        default: ".repomori-smoke"
+        type: string
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run memory anchor profile smoke matrix
+        shell: bash
+        run: |
+          REPO="${{ inputs.repo }}"
+          BASE="${{ inputs.out_dir }}"
+          OUT_DIR="${BASE}/packs"
+          mkdir -p "$OUT_DIR"
+
+          for mode in strict safe legacy; do
+            REPORT="$BASE/memory-anchor-${mode}.json"
+            python -m repomori memory "$REPO" \
+              --out-dir "$OUT_DIR" \
+              --no-handoff \
+              --anchor-out "$OUT_DIR/timeline-anchor.json" \
+              --anchor-freshness "$mode" \
+              --anchor-verify \
+              --json > "$REPORT"
+
+            python - <<'PY' "$REPORT" "$mode"
+import json
+import sys
+from pathlib import Path
+
+report_path = Path(sys.argv[1])
+mode = sys.argv[2]
+payload = json.loads(report_path.read_text(encoding="utf-8"))
+if payload.get("summary", {}).get("anchor_freshness") != mode:
+    raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {payload.get('summary', {}).get('anchor_freshness')}")
+if payload.get("status") not in {"pass", "warn"}:
+    raise SystemExit(f"memory status not acceptable for mode={mode}: {payload.get('status')}")
+print(f"mode={mode} status={payload.get('status')}")
+PY
+          done
+
+      - name: Archive anchor smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repomori-memory-anchor-smoke
+          path: ${{ inputs.out_dir }}/*.json

@@ -42,9 +42,73 @@ jobs:
 - Writes a timeline anchor artifact in the snapshot directory
 - Verifies anchor chain state immediately
 - Supports:
-- `strict`: fail on mismatch
+  - `strict`: fail on mismatch
   - `safe`: continue on mismatch; anchor verification is allowed to report warn
   - `legacy`: check only the anchor proof hash (no full chain head comparison)
+
+### CI smoke check
+
+Use this workflow pattern if you want a repeatable smoke run in repo CI:
+
+```yaml
+name: repomori-memory-anchor-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        default: "."
+        required: false
+      out_dir:
+        default: ".repomori-smoke"
+        required: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run memory anchor profiles
+        shell: bash
+        run: |
+          REPO="${{ inputs.repo || '.' }}"
+          OUT_DIR="${{ inputs.out_dir || '.repomori-smoke' }}/packs"
+          mkdir -p "$OUT_DIR"
+
+          for mode in strict safe legacy; do
+            REPORT="${OUT_DIR}/memory-anchor-${mode}.json"
+            python -m repomori memory "$REPO" \
+              --out-dir "$OUT_DIR" \
+              --no-handoff \
+              --anchor-out "${OUT_DIR}/timeline-anchor.json" \
+              --anchor-freshness "$mode" \
+              --anchor-verify \
+              --json > "$REPORT"
+
+            python - <<'PY'
+import json
+import sys
+from pathlib import Path
+
+mode = Path(sys.argv[1]).name.split("-")[-1].replace(".json", "")
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+if payload.get("summary", {}).get("anchor_freshness") != mode:
+    raise SystemExit(f"missing anchor_freshness={mode}")
+if payload.get("status") not in {"pass", "warn"}:
+    raise SystemExit(f"memory status was {payload.get('status')}")
+print(f"{mode}: pass={payload.get('status')}")
+PY "$REPORT"
+          done
+```
+
+The smoke command keeps runs explicit and reproducible:
+- `safe` is still non-blocking on anchor drift.
+- `strict` is the hard-fail mode for CI-quality enforcement.
+- `legacy` is hash-only compare mode for migration-safe checks.
 
 ### Permissions and setup
 
