@@ -98,6 +98,7 @@ jobs:
           PY
       - id: workflow_self_check
         name: Run workflow command contract smoke
+        shell: bash
         run: |
           set -euo pipefail
           BASE_DIR="${RUNNER_TEMP}/repomori-workflow-smoke"
@@ -136,33 +137,7 @@ jobs:
               echo "::error::workflow self-check: anchor not emitted for mode $mode."
               exit 1
             fi
-            REPORT_PATH="$REPORT"
-            ANCHOR_PATH="$MODE_ANCHOR"
-            MODE="$mode"
-            python - <<'PYVERIFY'
-            import json
-            import os
-            from pathlib import Path
-
-            report = Path(os.environ["REPORT_PATH"])
-            anchor_path = Path(os.environ["ANCHOR_PATH"])
-            mode = os.environ["MODE"]
-            payload = json.loads(report.read_text(encoding="utf-8"))
-            anchor = payload.get("summary", {}).get("anchor_freshness")
-            status = payload.get("status")
-            anchor_verification = payload.get("summary", {}).get("anchor_verification_status")
-            if anchor != mode:
-                raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {anchor}")
-            if status not in {"pass", "warn"}:
-                raise SystemExit(f"memory status was {status} for mode={mode}")
-            if not anchor_path.is_file():
-                raise SystemExit(f"anchor file was not found for mode={mode}")
-            anchor_exists = "yes" if anchor_path.exists() else "no"
-            print(
-                f"mode={mode} status={status} anchor_verification_status={anchor_verification} "
-                f"anchor_exists={anchor_exists} report_bytes={report.stat().st_size}"
-            )
-            PYVERIFY
+            REPORT_PATH="$REPORT" ANCHOR_PATH="$MODE_ANCHOR" MODE="$mode" python -c "import json, os; from pathlib import Path; report=Path(os.environ['REPORT_PATH']); anchor_path=Path(os.environ['ANCHOR_PATH']); mode=os.environ['MODE']; payload=json.loads(report.read_text(encoding='utf-8')); anchor=payload.get('summary', {}).get('anchor_freshness'); status=payload.get('status'); anchor_verification=payload.get('summary', {}).get('anchor_verification_status'); assert anchor == mode, f'anchor_freshness mismatch for mode={mode}: {anchor}'; assert status in {'pass','warn'}, f'memory status was {status} for mode={mode}'; assert anchor_path.is_file(), f'anchor file was not found for mode={mode}'; anchor_exists = 'yes' if anchor_path.exists() else 'no'; print(f'mode={mode} status={status} anchor_verification_status={anchor_verification} anchor_exists={anchor_exists} report_bytes={report.stat().st_size}')"
             echo "  mode ${mode} validation complete"
           done
 
@@ -202,21 +177,7 @@ jobs:
             exit 1
           fi
 
-          RELEASE_HEALTH_PATH="$HEALTH_OUT/release-health.json"
-          python - <<'PYCHECK'
-          import os
-          from pathlib import Path
-          import json
-
-          payload = json.loads(Path(os.environ["RELEASE_HEALTH_PATH"]).read_text(encoding="utf-8"))
-          if payload.get("schema_version") != "repomori.health.v1":
-              raise SystemExit("release-health schema_version was unexpected")
-          if "checks" not in payload:
-              raise SystemExit("release-health payload is missing checks")
-          if payload.get("artifacts", {}).get("json") is None:
-              raise SystemExit("release-health artifacts.json path missing")
-          print("release-health contract smoke passed")
-          PYCHECK
+          RELEASE_HEALTH_PATH="$HEALTH_OUT/release-health.json" python -c "import json, os; from pathlib import Path; payload=json.loads(Path(os.environ['RELEASE_HEALTH_PATH']).read_text(encoding='utf-8')); assert payload.get('schema_version') == 'repomori.health.v1', 'release-health schema_version was unexpected'; assert 'checks' in payload, 'release-health payload is missing checks'; assert payload.get('artifacts', {}).get('json') is not None, 'release-health artifacts.json path missing'; print('release-health contract smoke passed')"
       - name: Archive workflow self-check artifacts
         if: always()
         uses: actions/upload-artifact@v4
