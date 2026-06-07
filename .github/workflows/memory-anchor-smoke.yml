@@ -29,8 +29,14 @@ jobs:
         run: |
           set -euo pipefail
           WORKSPACE_DIR="${GITHUB_WORKSPACE:-$(pwd)}"
-          REPO="${{ github.event.inputs.repo || '.' }}"
-          BASE_DIR_NAME="${{ github.event.inputs.out_dir || '.repomori-smoke' }}"
+          REPO="${{ github.event.inputs.repo }}"
+          BASE_DIR_NAME="${{ github.event.inputs.out_dir }}"
+          if [ -z "$REPO" ]; then
+            REPO="."
+          fi
+          if [ -z "$BASE_DIR_NAME" ]; then
+            BASE_DIR_NAME=".repomori-smoke"
+          fi
           BASE_DIR="${WORKSPACE_DIR}/${BASE_DIR_NAME}"
           MODES=(strict safe legacy)
           mkdir -p "$BASE_DIR"
