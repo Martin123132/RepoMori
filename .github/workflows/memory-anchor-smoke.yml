@@ -16,6 +16,7 @@ on:
 
 jobs:
   smoke:
+    name: matrix
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,8 +26,8 @@ jobs:
       - name: Run memory anchor profile smoke matrix
         shell: bash
         run: |
-          REPO="${{ inputs.repo }}"
-          BASE="${{ inputs.out_dir }}"
+          REPO="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.repo || '.' }}"
+          BASE="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.out_dir || '.repomori-smoke' }}"
           OUT_DIR="${BASE}/packs"
           mkdir -p "$OUT_DIR"
 
@@ -61,4 +62,4 @@ PY
         uses: actions/upload-artifact@v4
         with:
           name: repomori-memory-anchor-smoke
-          path: ${{ inputs.out_dir }}/*.json
+          path: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.out_dir || '.repomori-smoke' }}/*.json
