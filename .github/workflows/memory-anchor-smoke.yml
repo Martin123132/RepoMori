@@ -26,11 +26,11 @@ jobs:
       - name: Run memory anchor profile smoke matrix
         shell: bash
         run: |
+          WORKSPACE_DIR="${GITHUB_WORKSPACE:-$(pwd)}"
           REPO="${{ github.event.inputs.repo || '.' }}"
-          BASE="${{ github.event.inputs.out_dir || '.repomori-smoke' }}"
+          BASE="${WORKSPACE_DIR}/${{ github.event.inputs.out_dir || '.repomori-smoke' }}"
           OUT_DIR="${BASE}/packs"
           mkdir -p "$OUT_DIR"
-          echo "SMOKE_OUT=$BASE" >> "$GITHUB_ENV"
 
           for mode in strict safe legacy; do
             REPORT="$BASE/memory-anchor-${mode}.json"
@@ -50,4 +50,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: repomori-memory-anchor-smoke
-          path: ${{ env.SMOKE_OUT || '.repomori-smoke' }}/*.json
+          path: ${{ github.workspace }}/${{ github.event.inputs.out_dir || '.repomori-smoke' }}
