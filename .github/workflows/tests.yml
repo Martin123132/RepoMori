@@ -29,6 +29,7 @@ jobs:
         run: |
           python - <<'PY'
           import importlib.util
+          from typing import Any
           import sys
           from pathlib import Path
 
@@ -38,6 +39,12 @@ jobs:
               print(f"workflow self-check failed: {prefix}{message}")
               raise SystemExit(1)
 
+          def has_trigger(payload: dict[str, Any], *, path: str | None = None) -> None:
+              if "on" in payload:
+                  return
+              if True in payload:
+                  return
+              fail("workflow is missing parsed trigger declaration", path=path)
 
           workflow_dir = Path(".github/workflows")
           workflow_paths = [
@@ -81,7 +88,8 @@ jobs:
                   payload = yaml.safe_load(text)
                   if not isinstance(payload, dict):
                       fail("workflow content did not parse as mapping", path=str(path))
-                  if "on" not in payload or "jobs" not in payload:
+                  has_trigger(payload, path=str(path))
+                  if "jobs" not in payload:
                       fail("workflow is missing required keys", path=str(path))
                   if not isinstance(payload.get("jobs"), dict):
                       fail("workflow jobs block is not a mapping", path=str(path))
@@ -105,11 +113,14 @@ jobs:
 
           for mode in strict safe legacy; do
             REPORT="${BASE_DIR}/memory-anchor-${mode}.json"
+            MODE_ANCHOR="${SMOKE_PACKS}/timeline-anchor.json"
             echo "Running memory smoke mode=${mode}"
+            echo "  report target=${REPORT}"
+            echo "  anchor target=${MODE_ANCHOR}"
             python -m repomori memory . \
               --out-dir "$SMOKE_PACKS" \
               --no-handoff \
-              --anchor-out "$SMOKE_PACKS/timeline-anchor.json" \
+              --anchor-out "$MODE_ANCHOR" \
               --anchor-freshness "$mode" \
               --anchor-verify \
               --json > "$REPORT"
@@ -117,26 +128,38 @@ jobs:
               echo "::error::workflow self-check: missing memory smoke report for mode $mode."
               exit 1
             fi
-            if [ ! -s "$SMOKE_PACKS/timeline-anchor.json" ]; then
+            if [ ! -f "$REPORT" ]; then
+              echo "::error::workflow self-check: report file was not created for mode $mode."
+              exit 1
+            fi
+            if [ ! -s "$MODE_ANCHOR" ]; then
               echo "::error::workflow self-check: anchor not emitted for mode $mode."
               exit 1
             fi
-            python - "$REPORT" "$mode" <<'PY'
+            python - "$REPORT" "$MODE_ANCHOR" "$mode" <<'PY'
             import json
             import sys
             from pathlib import Path
 
             report = Path(sys.argv[1])
-            mode = sys.argv[2]
+            anchor_path = Path(sys.argv[2])
+            mode = sys.argv[3]
             payload = json.loads(report.read_text(encoding="utf-8"))
             anchor = payload.get("summary", {}).get("anchor_freshness")
             status = payload.get("status")
+            anchor_verification = payload.get("summary", {}).get("anchor_verification_status")
             if anchor != mode:
                 raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {anchor}")
             if status not in {"pass", "warn"}:
                 raise SystemExit(f"memory status was {status} for mode={mode}")
-            print(f"mode={mode} status={status}")
+            if not anchor_path.is_file():
+                raise SystemExit(f"anchor file was not found for mode={mode}")
+            print(
+                f"mode={mode} status={status} anchor_verification_status={anchor_verification} "
+                f"anchor_exists={'yes' if anchor_path.exists() else 'no'} report_bytes={report.stat().st_size}"
+            )
             PY
+            echo "  mode ${mode} validation complete"
           done
 
           for mode in strict safe legacy; do
