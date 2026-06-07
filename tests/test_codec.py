@@ -771,6 +771,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["checks"]["workspace"]["status"], "fail")
             self.assertGreaterEqual(report["checks"]["workspace"]["count"], 3)
             self.assertTrue(any("workspace:" in row for row in report["failure_reasons"]))
+            self.assertTrue(any("packs" in row.lower() for row in report["failure_reasons"]))
 
     def test_run_release_check_allows_hidden_workspace_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4063,6 +4064,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("workspace", payload["summary"]["failed_checks"])
             self.assertFalse(payload["checks"]["workspace"]["ok"])
             self.assertTrue(any("workspace:" in row for row in payload["failure_reasons"]))
+            self.assertTrue(any("packs" in row.lower() or ".repomori" in row.lower() for row in payload["failure_reasons"]))
 
     def test_cli_release_check_allows_hidden_workspace_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
