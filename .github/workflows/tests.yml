@@ -139,30 +139,30 @@ jobs:
             REPORT_PATH="$REPORT"
             ANCHOR_PATH="$MODE_ANCHOR"
             MODE="$mode"
-            python - <<'PY'
-            import json
-            import os
-            from pathlib import Path
+            python - <<'PYVERIFY'
+              import json
+              import os
+              from pathlib import Path
 
-            report = Path(os.environ["REPORT_PATH"])
-            anchor_path = Path(os.environ["ANCHOR_PATH"])
-            mode = os.environ["MODE"]
-            payload = json.loads(report.read_text(encoding="utf-8"))
-            anchor = payload.get("summary", {}).get("anchor_freshness")
-            status = payload.get("status")
-            anchor_verification = payload.get("summary", {}).get("anchor_verification_status")
-            if anchor != mode:
-                raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {anchor}")
-            if status not in {"pass", "warn"}:
-                raise SystemExit(f"memory status was {status} for mode={mode}")
-            if not anchor_path.is_file():
-                raise SystemExit(f"anchor file was not found for mode={mode}")
-            anchor_exists = "yes" if anchor_path.exists() else "no"
-            print(
-                f"mode={mode} status={status} anchor_verification_status={anchor_verification} "
-                f"anchor_exists={anchor_exists} report_bytes={report.stat().st_size}"
-            )
-            PY
+              report = Path(os.environ["REPORT_PATH"])
+              anchor_path = Path(os.environ["ANCHOR_PATH"])
+              mode = os.environ["MODE"]
+              payload = json.loads(report.read_text(encoding="utf-8"))
+              anchor = payload.get("summary", {}).get("anchor_freshness")
+              status = payload.get("status")
+              anchor_verification = payload.get("summary", {}).get("anchor_verification_status")
+              if anchor != mode:
+                  raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {anchor}")
+              if status not in {"pass", "warn"}:
+                  raise SystemExit(f"memory status was {status} for mode={mode}")
+              if not anchor_path.is_file():
+                  raise SystemExit(f"anchor file was not found for mode={mode}")
+              anchor_exists = "yes" if anchor_path.exists() else "no"
+              print(
+                  f"mode={mode} status={status} anchor_verification_status={anchor_verification} "
+                  f"anchor_exists={anchor_exists} report_bytes={report.stat().st_size}"
+              )
+          PYVERIFY
             echo "  mode ${mode} validation complete"
           done
 
@@ -203,7 +203,7 @@ jobs:
           fi
 
           RELEASE_HEALTH_PATH="$HEALTH_OUT/release-health.json"
-          python - <<'PY'
+          python - <<'PYCHECK'
           import os
           from pathlib import Path
           import json
@@ -216,7 +216,7 @@ jobs:
           if payload.get("artifacts", {}).get("json") is None:
               raise SystemExit("release-health artifacts.json path missing")
           print("release-health contract smoke passed")
-          PY
+          PYCHECK
       - name: Archive workflow self-check artifacts
         if: always()
         uses: actions/upload-artifact@v4
