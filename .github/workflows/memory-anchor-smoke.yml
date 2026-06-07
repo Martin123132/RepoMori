@@ -59,22 +59,22 @@ jobs:
             fi
 
             python - <<'PY' "$REPORT" "$mode"
-import json
-import sys
-from pathlib import Path
+            import json
+            import sys
+            from pathlib import Path
 
-report = Path(sys.argv[1])
-mode = sys.argv[2]
-payload = json.loads(report.read_text(encoding="utf-8"))
-summary = payload.get("summary", {})
-anchor = summary.get("anchor_freshness")
-status = payload.get("status")
-if anchor != mode:
-    raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {anchor}")
-if status not in {"pass", "warn"}:
-    raise SystemExit(f"memory status not acceptable for mode={mode}: {status}")
-print(f"mode={mode} status={status}")
-PY
+            report = Path(sys.argv[1])
+            mode = sys.argv[2]
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            summary = payload.get("summary", {})
+            anchor = summary.get("anchor_freshness")
+            status = payload.get("status")
+            if anchor != mode:
+                raise SystemExit(f"anchor_freshness mismatch for mode={mode}: {anchor}")
+            if status not in {"pass", "warn"}:
+                raise SystemExit(f"memory status not acceptable for mode={mode}: {status}")
+            print(f"mode={mode} status={status}")
+            PY
           done
 
           for mode in "${MODES[@]}"; do

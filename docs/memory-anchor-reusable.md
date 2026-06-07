@@ -120,6 +120,11 @@ The smoke command keeps runs explicit and reproducible:
 - `safe` is still non-blocking on anchor drift.
 - `strict` is the hard-fail mode for CI-quality enforcement.
 - `legacy` is hash-only compare mode for migration-safe checks.
+- On each run this workflow emits these stable outputs in `out_dir`:
+  - `memory-anchor-strict.json`
+  - `memory-anchor-safe.json`
+  - `memory-anchor-legacy.json`
+- `timeline-anchor.json` is written for each mode under the same `out_dir/packs`.
 
 ### Permissions and setup
 

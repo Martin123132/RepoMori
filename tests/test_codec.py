@@ -832,6 +832,61 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(drift["status"], "warn")
             self.assertIn("line-based strict baseline matches were downgraded to semi-strict by line drift", drift["warnings"])
 
+    def test_workflow_contracts_for_memory_anchor_smoke(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        workflow = (repo_root / ".github/workflows/memory-anchor-smoke.yml").read_text(encoding="utf-8")
+        docs_snippet = (repo_root / "docs/memory-anchor-reusable.md").read_text(encoding="utf-8")
+
+        for mode in ("strict", "safe", "legacy"):
+            self.assertIn(f"memory-anchor-${{mode}}.json", workflow)
+            self.assertIn(f"memory-anchor-${{mode}}.json", docs_snippet)
+
+        self.assertIn("MODES=(strict safe legacy)", workflow)
+        self.assertIn('for mode in "${MODES[@]}"', workflow)
+        self.assertIn("timeline-anchor.json", workflow)
+        self.assertIn("if: always()", workflow)
+        self.assertIn(
+            "${{ steps.run.outputs.artifact_dir }}/memory-anchor-strict.json",
+            workflow,
+        )
+        self.assertIn(
+            "${{ steps.run.outputs.artifact_dir }}/memory-anchor-safe.json",
+            workflow,
+        )
+        self.assertIn(
+            "${{ steps.run.outputs.artifact_dir }}/memory-anchor-legacy.json",
+            workflow,
+        )
+
+        self.assertIn('echo "artifact_dir=$BASE_DIR" >> "$GITHUB_OUTPUT"', workflow)
+        self.assertIn('if [ ! -s "$OUT_DIR/timeline-anchor.json" ]', workflow)
+
+    def test_workflow_contracts_for_release_health(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/release-health.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("required_artifacts=(", workflow)
+        self.assertIn("release-health.json", workflow)
+        self.assertIn("release-health.md", workflow)
+        self.assertIn("--drift-log", workflow)
+        self.assertIn("\"$DRIFT_LOG\"", workflow)
+        self.assertIn("${{ steps.run.outputs.drift_log }}", workflow)
+        self.assertIn("${{ steps.run.outputs.artifacts_dir }}/release-health.json", workflow)
+        self.assertIn("${{ steps.run.outputs.artifacts_dir }}/release-health.md", workflow)
+        self.assertIn("if [ -n \"$DRIFT_LOG\" ] && [ ! -f \"$DRIFT_LOG\" ]", workflow)
+
+    def test_workflow_contracts_for_tests_preflight(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+
+        self.assertIn('generated_dirs = {', workflow)
+        self.assertIn("release-check preflight blocked by visible top-level artifacts:", workflow)
+        self.assertIn("Move generated outputs under hidden directories for this repo, for example:", workflow)
+        self.assertIn("  - .repomori-packs", workflow)
+        self.assertIn("  - .repomori-release-check", workflow)
+        self.assertIn("  - .repomori-release-health", workflow)
+        self.assertIn("  - .repomori-health", workflow)
+
     def test_run_release_health_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release-health"
