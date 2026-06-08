@@ -1442,6 +1442,61 @@ def run_release_health(
     doctor = doctor_snapshot_dir(snapshot_path, verify_packs=doctor_verify_packs)
     chain = verify_snapshot_chain(snapshot_path)
     timeline = read_snapshot_timeline(snapshot_path, limit=timeline_limit)
+
+    snapshot_path_check = ""
+    if not snapshot_path.exists():
+        snapshot_path_check = "Snapshot directory does not exist."
+    elif not snapshot_path.is_dir():
+        snapshot_path_check = "Snapshot path is not a directory."
+    elif not (snapshot_path / "snapshots.json").exists():
+        snapshot_path_check = "snapshots.json was not found."
+
+    if snapshot_path_check:
+        # A release-health run on a newly bootstrapped repo is expected to have no
+        # snapshots yet. Treat missing timeline artifacts as warnings in this path so
+        # the check remains visible-but-not-red until history exists.
+        doctor_warnings = list(doctor.get("warnings", []))
+        if not any(
+            isinstance(item, dict) and item.get("path") == str(snapshot_path)
+            and item.get("message") == snapshot_path_check
+            for item in doctor_warnings
+        ):
+            doctor_warnings.append({"path": str(snapshot_path), "message": snapshot_path_check})
+        doctor = {
+            **doctor,
+            "status": "warn",
+            "errors": [],
+            "warnings": doctor_warnings,
+            "error_count": 0,
+            "warning_count": len(doctor_warnings),
+        }
+
+        chain_warnings = list(chain.get("warnings", []))
+        if not any(
+            isinstance(item, dict) and item.get("path") == str(snapshot_path)
+            and item.get("message") == snapshot_path_check
+            for item in chain_warnings
+        ):
+            chain_warnings.append({"path": str(snapshot_path), "message": snapshot_path_check})
+        chain = {
+            **chain,
+            "status": "warn",
+            "errors": [],
+            "warnings": chain_warnings,
+        }
+
+        timeline_summary = dict(timeline.get("summary", {}))
+        timeline_summary["chain_status"] = "warn"
+        timeline_summary["chain_head_hash"] = chain.get("summary", {}).get("head_chain_hash")
+        timeline = {
+            **timeline,
+            "status": "warn",
+            "summary": timeline_summary,
+            "warnings": [
+                {"path": str(snapshot_path), "message": snapshot_path_check},
+            ],
+        }
+
     timeline_status = (
         chain.get("status")
         or (timeline.get("summary", {}).get("chain_status"))

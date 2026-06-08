@@ -957,6 +957,23 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["status"], "warn")
             self.assertTrue(drift_log.exists())
 
+    def test_run_release_health_without_snapshot_history_warns_not_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-health-no-snap"
+            self._public_ready_repo(repo)
+
+            report = run_release_health(
+                repo,
+                run_tests=False,
+                run_demo_smoke=False,
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.health.v1")
+            self.assertEqual(report["status"], "warn")
+            self.assertEqual(report["checks"]["doctor"]["status"], "warn")
+            self.assertEqual(report["checks"]["chain"]["status"], "warn")
+            self.assertEqual(report["checks"]["timeline"]["status"], "warn")
+
     def test_run_release_health_policy_can_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release-health-policy-fail"
@@ -4454,6 +4471,35 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("drift_summary", payload["checks"])
             self.assertEqual(payload["checks"]["release_check"]["schema_version"], "repomori.release_check.v1")
             self.assertEqual(payload["status"], "pass")
+
+    def test_cli_release_health_no_snapshot_dir_is_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "release-health-cli-nosnap"
+            self._public_ready_repo(repo)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-health",
+                    str(repo),
+                    "--skip-tests",
+                    "--skip-demo",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.health.v1")
+            self.assertEqual(payload["status"], "warn")
+            self.assertEqual(payload["checks"]["doctor"]["status"], "warn")
+            self.assertEqual(payload["checks"]["chain"]["status"], "warn")
 
     def test_cli_release_health_artifacts_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
