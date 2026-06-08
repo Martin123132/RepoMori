@@ -55,6 +55,8 @@ jobs:
         name: Run release-health bundle
         shell: bash
         run: |
+          set -euo pipefail
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             REPO="${{ github.event.inputs.repo }}"
             SNAPSHOT_DIR="${{ github.event.inputs.snapshot_dir }}"
@@ -114,7 +116,15 @@ jobs:
             ARGS+=("--drift-policy" "$DRIFT_POLICY_INPUT")
           fi
 
+          RELEASE_HEALTH_RC=0
+          set +e
           "${ARGS[@]}"
+          RELEASE_HEALTH_RC=$?
+          set -e
+
+          if [ "$RELEASE_HEALTH_RC" -ne 0 ]; then
+            echo "::warning::release-health command returned non-zero status $RELEASE_HEALTH_RC"
+          fi
 
           required_artifacts=(
             "$ARTIFACTS_DIR/release-health.json"
@@ -123,18 +133,20 @@ jobs:
           for artifact in "${required_artifacts[@]}"; do
             if [ ! -f "$artifact" ] || [ ! -s "$artifact" ]; then
               echo "::error::release-health command did not produce required artifact: $artifact"
-              exit 1
+              RELEASE_HEALTH_RC=1
             fi
           done
 
           if [ -n "$DRIFT_LOG" ] && [ ! -f "$DRIFT_LOG" ]; then
             echo "::error::release-health command did not produce expected drift log: $DRIFT_LOG"
-            exit 1
+            RELEASE_HEALTH_RC=1
           fi
 
           echo "artifacts_dir=$ARTIFACTS_DIR" >> "$GITHUB_OUTPUT"
           echo "drift_log=$DRIFT_LOG" >> "$GITHUB_OUTPUT"
           echo "release_health_json=$ARTIFACTS_DIR/release-health.json" >> "$GITHUB_OUTPUT"
+          echo "release_health_rc=$RELEASE_HEALTH_RC" >> "$GITHUB_OUTPUT"
+          exit "$RELEASE_HEALTH_RC"
 
       - name: Upload release-health artifacts
         if: always()
@@ -145,3 +157,4 @@ jobs:
             ${{ steps.run.outputs.artifacts_dir }}/release-health.json
             ${{ steps.run.outputs.artifacts_dir }}/release-health.md
             ${{ steps.run.outputs.drift_log }}
+          include-hidden-files: true
