@@ -1,6 +1,6 @@
 name: memory-anchor-reusable
 
-"on":
+on:
   workflow_call:
     inputs:
       repo:
