@@ -14,6 +14,7 @@ Inspect the output:
 
 ```powershell
 python -m repomori query D:\Temp\repomori-demo\demo.repomori "sqlite connect Store" --json
+python -m repomori inspect D:\Temp\repomori-demo\demo.repomori --verify --out D:\Temp\repomori-demo\inspect.md
 python -m repomori context D:\Temp\repomori-demo\demo.repomori "sqlite connect Store" --out D:\Temp\repomori-demo\context.md
 python -m repomori timeline D:\Temp\repomori-demo\.repomori-packs --format json
 ```
@@ -32,6 +33,7 @@ python -m repomori brief D:\Dev\YourRepo\.repomori-packs --out D:\Dev\YourRepo\a
 python -m repomori chain D:\Dev\YourRepo\.repomori-packs --json
 python -m repomori stats D:\Dev\YourRepo\.repomori-packs --format json
 python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\.repomori-packs\next.repomori --base D:\Dev\YourRepo\.repomori-packs\latest.repomori --force --json
+python -m repomori inspect D:\Dev\YourRepo\.repomori-packs\latest.repomori --verify --out D:\Dev\YourRepo\pack-inspect.md
 python -m repomori diff-context D:\Dev\YourRepo\.repomori-packs\previous.repomori D:\Dev\YourRepo\.repomori-packs\latest.repomori "what changed?" --out D:\Dev\YourRepo\diff-context.md
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json

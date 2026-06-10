@@ -58,6 +58,7 @@ python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-pack
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
 python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --prune-apply --json
 python -m repomori build D:\Dev\RepoMori D:\Dev\RepoMori\.repomori-packs\next.repomori --base D:\Dev\RepoMori\.repomori-packs\latest.repomori --force --json
+python -m repomori inspect D:\Dev\RepoMori\.repomori-packs\latest.repomori --verify --out D:\Dev\RepoMori\pack-inspect.md
 python -m repomori agent --config D:\Dev\RepoMori\repomori.toml
 python -m repomori mcp --config D:\Dev\RepoMori\repomori.toml
 python -m repomori schema --json
@@ -127,6 +128,7 @@ repomori stats <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
 repomori prune <snapshot-dir> [--keep n] [--apply] [--json]
 repomori info <pack>
+repomori inspect <pack> [--format markdown|json] [--verify] [--out file]
 repomori tree <pack>
 repomori query <pack> <text>
 repomori diagnose <pack> <question> [--json] [--max-files n] [--max-bytes n]
@@ -146,6 +148,10 @@ repomori get <pack> <path> [--out file]
 `anchor` and `verify-anchor` expect an existing snapshot directory. If this is your first
 run for a repository, start with `memory` (for example with `--anchor-out ... --anchor-verify`)
 so the snapshot timeline exists before exporting or verifying an anchor.
+
+`inspect` builds a richer pack report than `info`: pack identity, pack hash,
+storage and compression details, language counts, key/largest files, vocabulary,
+source manifest entries, and optional full verification via `--verify`.
 
 `context` creates an offline, source-backed bundle for AI agents. It ranks
 matching files, restores exact text from compressed chunks, adds line-numbered

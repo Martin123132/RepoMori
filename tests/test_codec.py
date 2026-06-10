@@ -35,6 +35,7 @@ from repomori.codec import (
     format_brief_markdown,
     format_compare_markdown,
     format_eval_markdown,
+    format_pack_inspect_markdown,
     format_context_markdown,
     format_diff_context_markdown,
     format_snapshot_anchor_markdown,
@@ -49,6 +50,7 @@ from repomori.codec import (
     handle_mcp_request,
     init_config,
     info_pack,
+    inspect_pack,
     load_memory_config,
     query_pack,
     prune_snapshots,
@@ -100,6 +102,32 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             tree = tree_pack(pack)
             self.assertEqual([row["path"] for row in tree], ["README.md", "app.py", "blob.bin"])
+
+    def test_pack_inspector_report_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            report = inspect_pack(pack, max_files=2, top_terms=5, top_symbols=5, verify=True)
+            self.assertEqual(report["schema_version"], "repomori.inspect.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["pack"]["schema_version"], "repomori.pack.v1")
+            self.assertEqual(report["summary"]["file_count"], 3)
+            self.assertEqual(report["summary"]["text_files"], 2)
+            self.assertEqual(report["summary"]["binary_files"], 1)
+            self.assertEqual(report["verification"]["status"], "pass")
+            self.assertTrue(report["verification"]["verified"])
+            self.assertTrue(report["languages"])
+            self.assertTrue(report["storage"]["chunks"]["count"])
+            self.assertLessEqual(len(report["files"]["largest"]), 2)
+            self.assertTrue(any(item["path"] == "app.py" for item in report["files"]["key"]))
+            self.assertTrue(any(item["path"] == "blob.bin" for item in report["files"]["binary"]))
+            self.assertTrue(all("sha256" in item for item in report["source_manifest"]))
+
+            markdown = format_pack_inspect_markdown(report)
+            self.assertIn("# RepoMori Pack Inspector", markdown)
+            self.assertIn("Pack SHA-256", markdown)
+            self.assertIn("## Storage", markdown)
+            self.assertIn("app.py", markdown)
 
     def test_build_with_base_reuses_unchanged_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2071,6 +2099,14 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(context_response["result"]["schema_version"], "repomori.context.v1")
             self.assertEqual(context_response["result"]["sources"][0]["path"], "app.py")
 
+            inspect_response = handle_agent_request(
+                {"id": "inspect", "method": "inspect.build", "params": {"max_files": 2, "verify": True}},
+                config_path=config,
+            )
+            self.assertTrue(inspect_response["ok"])
+            self.assertEqual(inspect_response["result"]["schema_version"], "repomori.inspect.v1")
+            self.assertEqual(inspect_response["result"]["verification"]["status"], "pass")
+
             file_response = handle_agent_request(
                 {"id": 4, "method": "file.get", "params": {"path": "app.py"}},
                 config_path=config,
@@ -2197,6 +2233,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_anchor_build", first_names)
         self.assertIn("repomori_anchor_verify", first_names)
         self.assertIn("repomori_diff_context_build", first_names)
+        self.assertIn("repomori_pack_inspect", first_names)
         self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
         memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
@@ -2264,6 +2301,23 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(query_response["result"]["structuredContent"]["schema_version"], "repomori.agent.query.v1")
             self.assertEqual(query_response["result"]["structuredContent"]["results"][0]["path"], "app.py")
             self.assertIn("app.py", query_response["result"]["content"][0]["text"])
+
+            inspect_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "inspect",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "repomori_pack_inspect",
+                        "arguments": {"max_files": 2, "verify": True},
+                    },
+                },
+                config_path=config,
+            )
+            self.assertFalse(inspect_response["result"]["isError"])
+            self.assertEqual(inspect_response["result"]["structuredContent"]["schema_version"], "repomori.inspect.v1")
+            self.assertEqual(inspect_response["result"]["structuredContent"]["verification"]["status"], "pass")
+            self.assertIn("files:", inspect_response["result"]["content"][0]["text"])
 
             context_response = handle_mcp_request(
                 {
@@ -2425,6 +2479,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
         self.assertIn("repomori.brief.v1", schema_versions)
+        self.assertIn("repomori.inspect.v1", schema_versions)
         self.assertIn("repomori.snapshot_chain.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.verify.v1", schema_versions)
@@ -2436,6 +2491,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("chain.verify", catalog["agent_methods"])
         self.assertIn("context.build", catalog["agent_methods"])
         self.assertIn("diff_context.build", catalog["agent_methods"])
+        self.assertIn("inspect.build", catalog["agent_methods"])
         self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
         self.assertIn("repomori_anchor_build", catalog["mcp_tools"])
@@ -2443,6 +2499,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_brief_build", catalog["mcp_tools"])
         self.assertIn("repomori_chain_verify", catalog["mcp_tools"])
         self.assertIn("repomori_diff_context_build", catalog["mcp_tools"])
+        self.assertIn("repomori_pack_inspect", catalog["mcp_tools"])
         self.assertIn("repomori_stats_read", catalog["mcp_tools"])
         self.assertIn("repomori_schema_list", catalog["mcp_tools"])
 
@@ -2458,6 +2515,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         diff_context = schema_catalog("repomori.diff_context.v1")
         self.assertEqual(diff_context["selected"], "repomori.diff_context.v1")
         self.assertEqual(diff_context["schema"]["producer"], "build_diff_context_bundle")
+
+        inspect_schema = schema_catalog("repomori.inspect.v1")
+        self.assertEqual(inspect_schema["selected"], "repomori.inspect.v1")
+        self.assertEqual(inspect_schema["schema"]["producer"], "inspect_pack")
 
         agent_brief = schema_catalog("repomori.agent_brief.v1")
         self.assertEqual(agent_brief["selected"], "repomori.agent_brief.v1")
@@ -2483,6 +2544,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             memory_dir = root / "memory"
 
             context = build_context_bundle(pack, "sqlite Store", limit=1, max_bytes=200)
+            inspect_report = inspect_pack(pack, max_files=2, top_terms=5, top_symbols=5)
             capsule = build_capsule(pack, max_files=2)
             handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
@@ -2505,6 +2567,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     capsule,
                     "repomori.capsule.v1",
                     {"schema_version", "key", "pack", "selection", "files", "dictionary", "manifest"},
+                ),
+                "inspect": (
+                    inspect_report,
+                    "repomori.inspect.v1",
+                    {"schema_version", "status", "pack", "summary", "storage", "files", "vocabulary"},
                 ),
                 "handoff": (
                     handoff,
@@ -2569,6 +2636,34 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(stats["snapshot_count"], 1)
             self.assertEqual(scan["status"], "warn")
             self.assertIn("memory.run", agent_help["result"]["methods"])
+
+    def test_cli_inspect_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "inspect",
+                    str(pack),
+                    "--json",
+                    "--max-files",
+                    "2",
+                    "--top-terms",
+                    "5",
+                    "--verify",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.inspect.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["summary"]["file_count"], 3)
+            self.assertEqual(payload["verification"]["status"], "pass")
+            self.assertTrue(payload["source_manifest"])
 
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

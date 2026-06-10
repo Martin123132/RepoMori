@@ -29,6 +29,7 @@ from .codec import (
     format_context_markdown,
     format_diff_context_markdown,
     format_eval_markdown,
+    format_pack_inspect_markdown,
     format_snapshot_chain_markdown,
     format_snapshot_anchor_markdown,
     format_snapshot_anchor_verification_markdown,
@@ -38,6 +39,7 @@ from .codec import (
     get_file_bytes,
     init_config,
     info_pack,
+    inspect_pack,
     load_memory_config,
     query_pack,
     read_snapshot_stats,
@@ -331,6 +333,16 @@ def main(argv: list[str] | None = None) -> int:
     info = sub.add_parser("info", help="Show pack metadata.")
     info.add_argument("pack", type=Path)
     info.add_argument("--json", action="store_true")
+
+    inspect = sub.add_parser("inspect", help="Inspect pack contents, storage, indexes, and vocabulary.")
+    inspect.add_argument("pack", type=Path)
+    inspect.add_argument("--max-files", type=int, default=20)
+    inspect.add_argument("--top-terms", type=int, default=30)
+    inspect.add_argument("--top-symbols", type=int, default=30)
+    inspect.add_argument("--verify", action="store_true", help="Run full pack verification during inspection.")
+    inspect.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    inspect.add_argument("--out", type=Path, help="Write the inspection report to this file.")
+    inspect.add_argument("--json", action="store_true", help="Alias for --format json.")
 
     tree = sub.add_parser("tree", help="List files stored in a pack.")
     tree.add_argument("pack", type=Path)
@@ -810,6 +822,26 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "info":
         _print(info_pack(args.pack), args.json)
+        return 0
+    if args.command == "inspect":
+        report = inspect_pack(
+            args.pack,
+            max_files=args.max_files,
+            top_terms=args.top_terms,
+            top_symbols=args.top_symbols,
+            verify=args.verify,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_pack_inspect_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
         return 0
     if args.command == "tree":
         _print(tree_pack(args.pack, limit=args.limit), args.json)

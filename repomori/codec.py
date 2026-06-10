@@ -59,6 +59,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "repo_path", "pack_path", "chunk_size"],
     },
     {
+        "schema_version": "repomori.inspect.v1",
+        "kind": "report",
+        "title": "RepoMori pack inspector report",
+        "producer": "inspect_pack",
+        "required_fields": ["schema_version", "status", "pack", "summary", "storage", "files", "vocabulary"],
+    },
+    {
         "schema_version": "repomori.context.v1",
         "kind": "report",
         "title": "Source-backed agent context bundle",
@@ -1907,6 +1914,360 @@ def tree_pack(pack: Path | str, limit: int = 200) -> list[dict[str, Any]]:
             (limit,),
         ).fetchall()
     return [_row_dict(row) for row in rows]
+
+
+def inspect_pack(
+    pack: Path | str,
+    *,
+    max_files: int = 20,
+    top_terms: int = 30,
+    top_symbols: int = 30,
+    verify: bool = False,
+) -> dict[str, Any]:
+    """Build a structured inspection report for a RepoMori pack."""
+
+    if max_files <= 0:
+        raise ValueError("max_files must be greater than zero")
+    if top_terms < 0:
+        raise ValueError("top_terms must be zero or greater")
+    if top_symbols < 0:
+        raise ValueError("top_symbols must be zero or greater")
+
+    started = time.time()
+    pack_path = Path(pack)
+    pack_info = info_pack(pack_path)
+    pack_status = "pass" if pack_info.get("schema_version") == SCHEMA_VERSION else "warn"
+
+    with closing(_open_pack(pack_path)) as conn:
+        language_rows = conn.execute(
+            """
+            SELECT
+                COALESCE(language, 'unknown') AS language,
+                COUNT(*) AS file_count,
+                COALESCE(SUM(size), 0) AS bytes,
+                COALESCE(SUM(is_text), 0) AS text_files,
+                COALESCE(SUM(1 - is_text), 0) AS binary_files,
+                COALESCE(SUM(line_count), 0) AS lines,
+                COALESCE(SUM(token_count), 0) AS tokens
+            FROM files
+            GROUP BY COALESCE(language, 'unknown')
+            ORDER BY file_count DESC, bytes DESC, language
+            """
+        ).fetchall()
+        compressor_rows = conn.execute(
+            """
+            SELECT
+                compressor,
+                COUNT(*) AS chunk_count,
+                COALESCE(SUM(raw_size), 0) AS raw_bytes,
+                COALESCE(SUM(compressed_size), 0) AS compressed_bytes
+            FROM chunks
+            GROUP BY compressor
+            ORDER BY chunk_count DESC, compressor
+            """
+        ).fetchall()
+        index_rows = conn.execute(
+            """
+            SELECT field, COUNT(*) AS row_count
+            FROM search_index
+            GROUP BY field
+            ORDER BY row_count DESC, field
+            """
+        ).fetchall()
+        file_rows = conn.execute(
+            """
+            SELECT path, language, size, sha256, is_text, line_count, token_count, chunk_count, summary_json
+            FROM files
+            ORDER BY path
+            """
+        ).fetchall()
+        chunk_links = int(conn.execute("SELECT COUNT(*) FROM file_chunks").fetchone()[0])
+        top_term_rows = conn.execute(
+            """
+            SELECT value, COUNT(*) AS count
+            FROM search_index
+            WHERE field='term'
+            GROUP BY value
+            ORDER BY count DESC, value
+            LIMIT ?
+            """,
+            (top_terms,),
+        ).fetchall()
+        top_heading_rows = conn.execute(
+            """
+            SELECT value, COUNT(*) AS count
+            FROM search_index
+            WHERE field='heading'
+            GROUP BY value
+            ORDER BY count DESC, value
+            LIMIT ?
+            """,
+            (top_terms,),
+        ).fetchall()
+        top_import_rows = conn.execute(
+            """
+            SELECT target, COUNT(*) AS count
+            FROM imports
+            GROUP BY target
+            ORDER BY count DESC, target
+            LIMIT ?
+            """,
+            (top_terms,),
+        ).fetchall()
+        top_symbol_rows = conn.execute(
+            """
+            SELECT kind, name, COUNT(*) AS count, MIN(line) AS first_line
+            FROM symbols
+            GROUP BY kind, name
+            ORDER BY count DESC, name
+            LIMIT ?
+            """,
+            (top_symbols,),
+        ).fetchall()
+
+    files = [_inspect_file_record(row) for row in file_rows]
+    largest_files = sorted(files, key=lambda item: (-int(item.get("size") or 0), item["path"]))[:max_files]
+    key_files = sorted(
+        files,
+        key=lambda item: (
+            -_brief_file_score({**item, "_summary": item.get("_summary", {})}),
+            -int(item.get("token_count") or 0),
+            item["path"],
+        ),
+    )[:max_files]
+    binary_files = sorted(
+        [item for item in files if not item.get("is_text")],
+        key=lambda item: (-int(item.get("size") or 0), item["path"]),
+    )[:max_files]
+    text_heavy_files = sorted(
+        [item for item in files if item.get("is_text")],
+        key=lambda item: (-int(item.get("token_count") or 0), item["path"]),
+    )[:max_files]
+
+    verification: dict[str, Any]
+    if verify:
+        verify_report = verify_pack(pack_path)
+        verification = {
+            "status": "pass" if verify_report.get("verified") else "fail",
+            "verified": verify_report.get("verified"),
+            "error_count": verify_report.get("error_count", 0),
+            "checked_files": verify_report.get("checked_files", 0),
+            "checked_chunks": verify_report.get("checked_chunks", 0),
+            "elapsed_seconds": verify_report.get("elapsed_seconds"),
+            "errors": verify_report.get("errors", []),
+        }
+        if not verify_report.get("verified"):
+            pack_status = "fail"
+    else:
+        verification = {"status": "skipped", "verified": None, "error_count": None}
+
+    chunk_raw = int(pack_info.get("unique_chunk_raw_bytes") or 0)
+    chunk_compressed = int(pack_info.get("compressed_chunk_bytes") or 0)
+    logical_bytes = int(pack_info.get("logical_bytes") or 0)
+    pack_bytes = int(pack_info.get("pack_bytes") or 0)
+    source_manifest = _inspect_source_manifest(largest_files + key_files, limit=max_files)
+
+    return {
+        "schema_version": "repomori.inspect.v1",
+        "status": pack_status,
+        "pack": {
+            **_pack_identity(pack_info),
+            "sha256": _path_sha256(pack_path),
+            "text_files": pack_info.get("text_files"),
+            "binary_files": pack_info.get("binary_files"),
+            "logical_to_pack_ratio": pack_info.get("logical_to_pack_ratio"),
+            "dedupe_ratio": pack_info.get("dedupe_ratio"),
+        },
+        "settings": {
+            "max_files": max_files,
+            "top_terms": top_terms,
+            "top_symbols": top_symbols,
+            "verify": verify,
+        },
+        "summary": {
+            "file_count": pack_info.get("counts", {}).get("files", 0),
+            "text_files": pack_info.get("text_files", 0),
+            "binary_files": pack_info.get("binary_files", 0),
+            "logical_bytes": logical_bytes,
+            "pack_bytes": pack_bytes,
+            "unique_chunk_raw_bytes": chunk_raw,
+            "compressed_chunk_bytes": chunk_compressed,
+            "pack_overhead_bytes": max(0, pack_bytes - chunk_compressed),
+            "compression_savings_bytes": max(0, chunk_raw - chunk_compressed),
+            "dedupe_savings_bytes": max(0, logical_bytes - chunk_raw),
+            "logical_to_pack_ratio": pack_info.get("logical_to_pack_ratio"),
+            "dedupe_ratio": pack_info.get("dedupe_ratio"),
+            "top_language": language_rows[0]["language"] if language_rows else None,
+            "elapsed_seconds": round(time.time() - started, 4),
+        },
+        "storage": {
+            "chunks": {
+                "count": pack_info.get("counts", {}).get("chunks", 0),
+                "raw_bytes": chunk_raw,
+                "compressed_bytes": chunk_compressed,
+                "compression_ratio": _ratio(chunk_raw, chunk_compressed),
+                "compressed_to_raw_ratio": _ratio(chunk_compressed, chunk_raw),
+                "savings_bytes": max(0, chunk_raw - chunk_compressed),
+                "compressors": [
+                    {
+                        "compressor": row["compressor"],
+                        "chunk_count": row["chunk_count"],
+                        "raw_bytes": row["raw_bytes"],
+                        "compressed_bytes": row["compressed_bytes"],
+                        "compressed_to_raw_ratio": _ratio(row["compressed_bytes"], row["raw_bytes"]),
+                    }
+                    for row in compressor_rows
+                ],
+            },
+            "file_chunks": {
+                "links": chunk_links,
+                "unique_chunks": pack_info.get("counts", {}).get("chunks", 0),
+                "duplicate_chunk_links": max(0, chunk_links - int(pack_info.get("counts", {}).get("chunks", 0) or 0)),
+            },
+            "index_rows": [
+                {"field": row["field"], "row_count": row["row_count"]}
+                for row in index_rows
+            ],
+        },
+        "languages": [
+            {
+                "language": row["language"],
+                "file_count": row["file_count"],
+                "bytes": row["bytes"],
+                "text_files": row["text_files"],
+                "binary_files": row["binary_files"],
+                "lines": row["lines"],
+                "tokens": row["tokens"],
+            }
+            for row in language_rows
+        ],
+        "files": {
+            "largest": [_visible_inspect_file(item) for item in largest_files],
+            "key": [_visible_inspect_file(item) for item in key_files],
+            "text_heavy": [_visible_inspect_file(item) for item in text_heavy_files],
+            "binary": [_visible_inspect_file(item) for item in binary_files],
+        },
+        "vocabulary": {
+            "top_terms": [[row["value"], row["count"]] for row in top_term_rows],
+            "top_symbols": [
+                {
+                    "kind": row["kind"],
+                    "name": row["name"],
+                    "count": row["count"],
+                    "first_line": row["first_line"],
+                }
+                for row in top_symbol_rows
+            ],
+            "top_imports": [[row["target"], row["count"]] for row in top_import_rows],
+            "top_headings": [[row["value"], row["count"]] for row in top_heading_rows],
+        },
+        "verification": verification,
+        "source_manifest": source_manifest,
+    }
+
+
+def format_pack_inspect_markdown(report: dict[str, Any]) -> str:
+    """Render a pack inspection report as Markdown."""
+
+    pack = report.get("pack", {})
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Pack Inspector",
+        "",
+        f"Status: `{report.get('status')}`",
+        f"Pack: `{pack.get('pack_path')}`",
+        f"Repository: `{pack.get('repo_path')}`",
+        f"Pack SHA-256: `{pack.get('sha256')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Schema: `{pack.get('schema_version')}`",
+        f"- Files: `{summary.get('file_count', 0)}`",
+        f"- Text files: `{summary.get('text_files', 0)}`",
+        f"- Binary files: `{summary.get('binary_files', 0)}`",
+        f"- Logical bytes: `{summary.get('logical_bytes', 0)}`",
+        f"- Pack bytes: `{summary.get('pack_bytes', 0)}`",
+        f"- Unique chunk raw bytes: `{summary.get('unique_chunk_raw_bytes', 0)}`",
+        f"- Compressed chunk bytes: `{summary.get('compressed_chunk_bytes', 0)}`",
+        f"- Compression savings bytes: `{summary.get('compression_savings_bytes', 0)}`",
+        f"- Dedupe savings bytes: `{summary.get('dedupe_savings_bytes', 0)}`",
+        f"- Logical-to-pack ratio: `{summary.get('logical_to_pack_ratio')}`",
+        f"- Top language: `{summary.get('top_language') or 'unknown'}`",
+        "",
+    ]
+
+    verification = report.get("verification", {})
+    lines.extend(
+        [
+            "## Verification",
+            "",
+            f"- Status: `{verification.get('status')}`",
+            f"- Verified: `{verification.get('verified')}`",
+            f"- Errors: `{verification.get('error_count')}`",
+            "",
+        ]
+    )
+
+    languages = report.get("languages", [])
+    lines.extend(["## Languages", ""])
+    if not languages:
+        lines.extend(["No language data found.", ""])
+    else:
+        for item in languages:
+            lines.append(
+                f"- `{item.get('language')}` files=`{item.get('file_count')}` "
+                f"bytes=`{item.get('bytes')}` tokens=`{item.get('tokens')}`"
+            )
+        lines.append("")
+
+    storage = report.get("storage", {})
+    chunks = storage.get("chunks", {})
+    lines.extend(
+        [
+            "## Storage",
+            "",
+            f"- Chunks: `{chunks.get('count', 0)}`",
+            f"- Compression ratio: `{chunks.get('compression_ratio')}`",
+            f"- File chunk links: `{storage.get('file_chunks', {}).get('links', 0)}`",
+            f"- Duplicate chunk links: `{storage.get('file_chunks', {}).get('duplicate_chunk_links', 0)}`",
+            "",
+        ]
+    )
+
+    _append_inspect_file_section(lines, "Key Files", report.get("files", {}).get("key", []))
+    _append_inspect_file_section(lines, "Largest Files", report.get("files", {}).get("largest", []))
+
+    vocabulary = report.get("vocabulary", {})
+    lines.extend(["## Vocabulary", ""])
+    terms = vocabulary.get("top_terms", [])
+    symbols = vocabulary.get("top_symbols", [])
+    imports = vocabulary.get("top_imports", [])
+    if terms:
+        lines.append("Top terms: " + ", ".join(f"`{term}`({count})" for term, count in terms[:20]))
+    if symbols:
+        lines.append(
+            "Top symbols: "
+            + ", ".join(
+                f"`{item.get('kind')}:{item.get('name')}`({item.get('count')})"
+                for item in symbols[:20]
+            )
+        )
+    if imports:
+        lines.append("Top imports: " + ", ".join(f"`{target}`({count})" for target, count in imports[:20]))
+    if not terms and not symbols and not imports:
+        lines.append("No vocabulary extracted.")
+    lines.append("")
+
+    manifest = report.get("source_manifest", [])
+    lines.extend(["## Source Manifest", ""])
+    if not manifest:
+        lines.extend(["No manifest entries.", ""])
+    else:
+        for item in manifest:
+            lines.append(f"- `{item.get('path')}` sha256=`{item.get('sha256')}` size=`{item.get('size')}`")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def verify_pack(pack: Path | str) -> dict[str, Any]:
@@ -6794,6 +7155,65 @@ def _visible_file_record(record: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in record.items() if not key.startswith("_")}
 
 
+def _inspect_file_record(row: sqlite3.Row) -> dict[str, Any]:
+    summary = _safe_json(row["summary_json"], {})
+    return {
+        "path": row["path"],
+        "language": row["language"],
+        "size": row["size"],
+        "sha256": row["sha256"],
+        "is_text": bool(row["is_text"]),
+        "line_count": row["line_count"],
+        "token_count": row["token_count"],
+        "chunk_count": row["chunk_count"],
+        "summary": _compact_summary(summary),
+        "_summary": summary,
+    }
+
+
+def _visible_inspect_file(record: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in record.items() if not key.startswith("_")}
+
+
+def _inspect_source_manifest(records: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    seen = set()
+    manifest = []
+    for record in records:
+        path = record.get("path")
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        manifest.append(
+            {
+                "path": path,
+                "sha256": record.get("sha256"),
+                "size": record.get("size"),
+                "is_text": record.get("is_text"),
+                "language": record.get("language"),
+            }
+        )
+        if len(manifest) >= limit:
+            break
+    return manifest
+
+
+def _append_inspect_file_section(lines: list[str], title: str, files: list[dict[str, Any]]) -> None:
+    lines.extend([f"## {title}", ""])
+    if not files:
+        lines.extend([f"No {title.lower()}.", ""])
+        return
+    for item in files:
+        lines.append(
+            f"- `{item.get('path')}` [{item.get('language') or 'unknown'}] "
+            f"size=`{item.get('size')}` sha256=`{item.get('sha256')}`"
+        )
+        summary = item.get("summary") or {}
+        terms = summary.get("top_terms") or []
+        if terms:
+            lines.append("  - terms: " + ", ".join(f"`{term}`" for term in terms[:8]))
+    lines.append("")
+
+
 def _compare_record_reasons(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
     reasons = []
     for key in ("sha256", "size", "language", "is_text", "line_count", "token_count"):
@@ -7962,6 +8382,7 @@ AGENT_METHODS = (
     "timeline.read",
     "stats.read",
     "doctor.run",
+    "inspect.build",
     "query.run",
     "context.build",
     "diff_context.build",
@@ -8110,6 +8531,25 @@ MCP_TOOLS = (
         "inputSchema": {
             "type": "object",
             "properties": {"out_dir": {"type": "string"}, "verify_packs": {"type": "boolean"}},
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_pack_inspect",
+        "title": "RepoMori Pack Inspect",
+        "description": "Inspect a pack's contents, storage, indexes, vocabulary, and optional verification status.",
+        "agent_method": "inspect.build",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pack": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "max_files": {"type": "integer"},
+                "top_terms": {"type": "integer"},
+                "top_symbols": {"type": "integer"},
+                "verify": {"type": "boolean"},
+            },
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -8324,6 +8764,14 @@ def _agent_dispatch(
         return doctor_snapshot_dir(
             _agent_out_dir(params, settings),
             verify_packs=bool(params.get("verify_packs", settings.get("verify_packs", False))),
+        )
+    if method == "inspect.build":
+        return inspect_pack(
+            _agent_pack(params, settings),
+            max_files=_agent_int(params, "max_files", 20),
+            top_terms=_agent_int(params, "top_terms", 30),
+            top_symbols=_agent_int(params, "top_symbols", 30),
+            verify=bool(params.get("verify", False)),
         )
     if method == "query.run":
         return {
@@ -8666,6 +9114,15 @@ def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
         lines.append(f"path: {payload.get('path')}")
         lines.append(f"size: {payload.get('size')}")
         lines.append(f"sha256: {payload.get('sha256')}")
+    elif name == "repomori_pack_inspect":
+        summary = payload.get("summary", {})
+        lines.append(f"status: {payload.get('status')}")
+        lines.append(f"files: {summary.get('file_count')}")
+        lines.append(f"text_files: {summary.get('text_files')}")
+        lines.append(f"binary_files: {summary.get('binary_files')}")
+        lines.append(f"logical_bytes: {summary.get('logical_bytes')}")
+        lines.append(f"pack_bytes: {summary.get('pack_bytes')}")
+        lines.append(f"verification: {payload.get('verification', {}).get('status')}")
     elif name == "repomori_stats_read":
         summary = payload.get("summary", {})
         lines.append(f"snapshots: {payload.get('snapshot_count')}")
