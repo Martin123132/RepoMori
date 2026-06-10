@@ -91,6 +91,15 @@ python -m repomori release-check D:\Dev\RepoMori `
 `drift-summary` reads the JSONL telemetry, reports semi_strict/fallback deltas
 across the newest rows, and flags runs that carried drift warnings.
 
+When drift is expected, such as after moving docs or examples, refresh the
+baseline from a clean unbaselined scan and confirm the next release-check reports
+`semi_strict_count: 0` and `fallback_count: 0`:
+
+```powershell
+python -m repomori scan D:\Dev\RepoMori --public-release --write-baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --fail-on low --json
+```
+
 ## Fast Variants
 
 Skip the slower pieces when iterating on scan or schema work:

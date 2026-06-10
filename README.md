@@ -183,6 +183,9 @@ working tree or baseline intentional artifacts explicitly.
 `--drift-policy` is optional and non-blocking by default: it can flag warn or
 investigation conditions without changing the existing `--fail-on` behavior.
 Use `--artifacts-dir` when you want report/telemetry in a predictable folder.
+After intentional doc or example movement, refresh `.repomori-scan-baseline.json`
+with `scan --public-release --write-baseline` and confirm release-check drift
+returns to strict-only matches.
 
 `release-health` runs the release-check bundle plus snapshot health, timeline tail,
 chain verification, and drift summary in one report (`repomori.health.v1`). Use

@@ -93,6 +93,19 @@ If semi-strict or fallback matching grows over time, treat it as a signal:
 - prefer tighter baseline entries where practical
 - track trend rows with `drift-summary` and watch for sustained rises in deltas
 
+To refresh a drifted baseline after intentional documentation or code movement,
+write it from an unbaselined public-release scan, then verify the new baseline
+returns strict-only ignores:
+
+```powershell
+python -m repomori scan D:\Dev\RepoMori --public-release --write-baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --fail-on low --json
+```
+
+In the release-check JSON, `checks.scan.summary.baseline_match_counts` should
+prefer `strict` matches, with `semi_strict` and `fallback` at `0` after a clean
+refresh.
+
 This observability is non-blocking by default. We keep the existing `--fail-on`
 threshold behavior unchanged.
 
