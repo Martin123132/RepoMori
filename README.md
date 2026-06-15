@@ -150,6 +150,7 @@ repomori handoff-triage <score-or-handoff> [--limit n] [--format markdown|json] 
 repomori handoff-quality <score-or-handoff> [--profile safe|ci|strict] [--target-score n] [--format markdown|json] [--out file] [--json]
 repomori improve-handoff <pack> <question> --out <dir> [--target-score n] [--quality-profile safe|ci|strict] [--max-attempts n] [--force] [--json]
 repomori archive-handoff <dir> [--out handoff.zip] [--force] [--json]
+repomori handoff-health <dir> [--profile safe|ci|strict] [--improve-pack pack] [--archive] [--artifacts-dir dir] [--json]
 repomori bench <repo> --out <dir> [--force] [--json]
 repomori get <pack> <path> [--out file]
 ```
@@ -409,6 +410,16 @@ handoff, while the default memory behavior remains unchanged.
 until it reaches the target score or exhausts attempts, then writes before/after
 score, triage, and quality reports. `archive-handoff` writes a portable zip for
 a verified handoff directory.
+
+`handoff-health` is the operational wrapper for CI or a receiving agent. It runs
+check, score, triage, and quality together, can improve a non-pass handoff from a
+source pack, can archive the active handoff, and can write `handoff-health.json`
+and `handoff-health.md` for review:
+
+```powershell
+python -m repomori handoff-health D:\handoffs\repo --profile ci --artifacts-dir D:\handoffs\repo-health --json
+python -m repomori handoff-health D:\handoffs\repo --profile strict --improve-pack D:\Dev\RepoMori\.repomori-packs\latest.repomori --question "continue this repo" --archive --json
+```
 
 `bench` runs the full local proof loop for a repository: build, verify, brief,
 eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.

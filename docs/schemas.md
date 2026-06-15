@@ -28,6 +28,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.handoff_quality.v1`: safe/ci/strict handoff quality gate report.
 - `repomori.handoff_improvement.v1`: before/after handoff improvement run report.
 - `repomori.handoff_archive.v1`: portable handoff zip archive report.
+- `repomori.handoff_health.v1`: operational handoff check/score/triage/quality wrapper with optional improvement and archive details.
 - `repomori.memory.v1`: full memory-cycle report.
 - `repomori.doctor.v1`: snapshot directory health report.
 - `repomori.prune.v1`: safe prune dry-run or applied result.

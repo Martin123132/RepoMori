@@ -61,6 +61,8 @@ manifests.
 Call `repomori_timeline_search` to ask when a path, symbol, or concept appeared
 across snapshot packs. Call the handoff score/triage/quality/improve/archive
 tools when a receiving agent needs a stronger handoff package or a portable zip.
+Use `repomori_handoff_health` when you want one operational report that combines
+those handoff checks with optional local improvement and archive output.
 
 ## Tools
 
@@ -85,6 +87,7 @@ tools when a receiving agent needs a stronger handoff package or a portable zip.
 - `repomori_handoff_quality`
 - `repomori_handoff_improve`
 - `repomori_handoff_archive`
+- `repomori_handoff_health`
 - `repomori_capsule_build`
 - `repomori_file_get`
 - `repomori_schema_list`

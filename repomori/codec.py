@@ -179,6 +179,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "handoff_dir", "archive", "summary", "artifacts"],
     },
     {
+        "schema_version": "repomori.handoff_health.v1",
+        "kind": "report",
+        "title": "Operational handoff health report",
+        "producer": "build_handoff_health_report",
+        "required_fields": ["schema_version", "status", "handoff_dir", "profile", "summary", "check", "score", "triage", "quality"],
+    },
+    {
         "schema_version": "repomori.memory.v1",
         "kind": "report",
         "title": "Snapshot memory cycle report",
@@ -5472,6 +5479,236 @@ def format_handoff_archive_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def build_handoff_health_report(
+    handoff_dir: Path | str,
+    *,
+    profile: str = "safe",
+    target_score: float | None = None,
+    improve_pack: Path | str | None = None,
+    question: str | None = None,
+    improve_out: Path | str | None = None,
+    base_pack: Path | str | None = None,
+    force: bool = False,
+    copy_pack: bool = False,
+    allow_unverified: bool = False,
+    archive: bool = False,
+    archive_out: Path | str | None = None,
+    max_attempts: int = 3,
+    max_files: int = 8,
+    max_bytes: int | None = 4096,
+    snippet_lines: int = 12,
+    snippets_per_file: int = 2,
+    capsule_max_files: int | None = None,
+    top_terms: int = 128,
+    eval_questions: Iterable[str] | None = None,
+    artifacts_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """Run deterministic handoff health checks with optional local repair/archive."""
+
+    started = time.time()
+    root = Path(handoff_dir).resolve()
+    profile_name = _normalize_handoff_quality_profile(profile)
+    eval_question_list = list(eval_questions or [])
+    check = check_handoff_package(root)
+    score = score_handoff_package(root)
+    triage = triage_handoff_score(score)
+    quality = evaluate_handoff_quality(score, profile=profile_name, target_score=target_score)
+    quality_summary = quality.get("summary", {})
+    quality_thresholds = quality.get("thresholds", {})
+    target = float(quality_thresholds.get("target_score") or 0.0)
+    artifacts: dict[str, Any] = {}
+    improvement = None
+    archive_report = None
+    improvement_skipped_reason = None
+    active_handoff_dir = root
+    active_quality = quality
+
+    if improve_pack is not None:
+        if quality.get("status") == "pass":
+            improvement_skipped_reason = "quality_passed"
+        else:
+            improve_question = question or _handoff_health_manifest_question(root)
+            if not improve_question:
+                raise ValueError("question is required when improve_pack is supplied and the handoff needs improvement")
+            improve_path = Path(improve_out).resolve() if improve_out is not None else root.with_name(f"{root.name}-improved")
+            improvement = improve_handoff_package(
+                improve_pack,
+                improve_question,
+                improve_path,
+                base_pack=base_pack,
+                force=force,
+                copy_pack=copy_pack,
+                allow_unverified=allow_unverified,
+                target_score=target,
+                quality_profile=profile_name,
+                max_attempts=max_attempts,
+                max_files=max_files,
+                max_bytes=max_bytes,
+                snippet_lines=snippet_lines,
+                snippets_per_file=snippets_per_file,
+                capsule_max_files=capsule_max_files,
+                top_terms=top_terms,
+                eval_questions=eval_question_list,
+            )
+            active_handoff_dir = Path(str(improvement.get("out_dir"))).resolve()
+            active_quality = improvement.get("quality", quality)
+            artifacts["improvement_dir"] = _directory_artifact_record(active_handoff_dir, "handoff_improvement_dir")
+            for label, path in (improvement.get("artifacts") or {}).items():
+                _add_handoff_health_artifact(artifacts, f"improvement_{label}", path)
+
+    if archive:
+        archive_report = archive_handoff_package(
+            active_handoff_dir,
+            archive_out,
+            force=force,
+            quality_profile=profile_name,
+        )
+        archive_info = archive_report.get("archive", {})
+        if archive_info.get("path"):
+            _add_handoff_health_artifact(artifacts, "archive", archive_info.get("path"))
+
+    base_status = str(active_quality.get("status") or quality.get("status") or "fail")
+    status = _worst_status(base_status, archive_report.get("status") if isinstance(archive_report, dict) else None)
+    score_summary = score.get("summary", {})
+    triage_summary = triage.get("summary", {})
+    active_summary = active_quality.get("summary", {}) if isinstance(active_quality, dict) else {}
+    archive_info = archive_report.get("archive", {}) if isinstance(archive_report, dict) else {}
+    summary = {
+        "valid": bool(check.get("valid")),
+        "score_status": score.get("status"),
+        "score_percent": score_summary.get("score_percent"),
+        "triage_status": triage.get("status"),
+        "triage_action_count": triage_summary.get("action_count"),
+        "triage_high_priority_count": triage_summary.get("high_priority_count"),
+        "quality_status": quality.get("status"),
+        "quality_target_met": quality_summary.get("target_met"),
+        "final_quality_status": active_quality.get("status") if isinstance(active_quality, dict) else None,
+        "final_score_percent": active_summary.get("score_percent"),
+        "final_target_met": active_summary.get("target_met"),
+        "active_handoff_dir": str(active_handoff_dir),
+        "improved": improvement is not None,
+        "improvement_status": improvement.get("status") if isinstance(improvement, dict) else None,
+        "improvement_path": improvement.get("out_dir") if isinstance(improvement, dict) else None,
+        "improvement_skipped_reason": improvement_skipped_reason,
+        "archived": archive_report is not None,
+        "archive_path": archive_info.get("path"),
+        "archive_sha256": archive_info.get("sha256"),
+        "elapsed_seconds": round(time.time() - started, 4),
+    }
+    report = {
+        "schema_version": "repomori.handoff_health.v1",
+        "status": status,
+        "handoff_dir": str(root),
+        "active_handoff_dir": str(active_handoff_dir),
+        "profile": profile_name,
+        "target_score": target,
+        "created_at": int(started),
+        "settings": {
+            "target_score": target,
+            "improve_pack": str(Path(improve_pack).resolve()) if improve_pack is not None else None,
+            "question": question,
+            "improve_out": str(Path(improve_out).resolve()) if improve_out is not None else None,
+            "base_pack": str(Path(base_pack).resolve()) if base_pack is not None else None,
+            "force": force,
+            "copy_pack": copy_pack,
+            "allow_unverified": allow_unverified,
+            "archive": archive,
+            "archive_out": str(Path(archive_out).resolve()) if archive_out is not None else None,
+            "max_attempts": max_attempts,
+            "max_files": max_files,
+            "max_bytes": max_bytes,
+            "snippet_lines": snippet_lines,
+            "snippets_per_file": snippets_per_file,
+            "capsule_max_files": capsule_max_files,
+            "top_terms": top_terms,
+            "eval_questions": eval_question_list,
+        },
+        "summary": summary,
+        "artifacts": artifacts,
+        "check": check,
+        "score": score,
+        "triage": triage,
+        "quality": quality,
+        "improvement": improvement,
+        "archive": archive_report,
+    }
+    if artifacts_dir is not None:
+        _write_handoff_health_artifacts(report, Path(artifacts_dir).resolve())
+    return report
+
+
+def format_handoff_health_markdown(report: dict[str, Any]) -> str:
+    """Render an operational handoff health report as Markdown."""
+
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Handoff Health",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Handoff: `{report.get('handoff_dir')}`",
+        f"- Active handoff: `{report.get('active_handoff_dir')}`",
+        f"- Profile: `{report.get('profile')}`",
+        f"- Target score: `{report.get('target_score')}`",
+        f"- Valid: `{summary.get('valid')}`",
+        f"- Score: `{summary.get('score_status')}` `{summary.get('score_percent')}`%",
+        f"- Triage: `{summary.get('triage_status')}` actions=`{summary.get('triage_action_count')}` high=`{summary.get('triage_high_priority_count')}`",
+        f"- Quality: `{summary.get('quality_status')}` target_met=`{summary.get('quality_target_met')}`",
+        f"- Final quality: `{summary.get('final_quality_status')}` target_met=`{summary.get('final_target_met')}`",
+        f"- Improved: `{summary.get('improved')}`",
+        f"- Archived: `{summary.get('archived')}`",
+        "",
+    ]
+    if summary.get("improvement_skipped_reason"):
+        lines.extend(["## Improvement", "", f"- Skipped: `{summary.get('improvement_skipped_reason')}`", ""])
+    elif summary.get("improved"):
+        lines.extend(
+            [
+                "## Improvement",
+                "",
+                f"- Status: `{summary.get('improvement_status')}`",
+                f"- Path: `{summary.get('improvement_path')}`",
+                "",
+            ]
+        )
+    if summary.get("archived"):
+        lines.extend(
+            [
+                "## Archive",
+                "",
+                f"- Path: `{summary.get('archive_path')}`",
+                f"- SHA-256: `{summary.get('archive_sha256')}`",
+                "",
+            ]
+        )
+    failures = report.get("quality", {}).get("failures", [])
+    warnings = report.get("quality", {}).get("warnings", [])
+    if failures:
+        lines.extend(["## Failures", ""])
+        for item in failures:
+            lines.append(f"- `{item.get('code')}` {item.get('message')}")
+        lines.append("")
+    if warnings:
+        lines.extend(["## Warnings", ""])
+        for item in warnings:
+            lines.append(f"- `{item.get('code')}` {item.get('message')}")
+        lines.append("")
+    actions = report.get("triage", {}).get("actions", [])
+    if actions:
+        lines.extend(["## Triage Actions", ""])
+        for action in actions[:8]:
+            lines.append(f"- [P{action.get('priority')}] `{action.get('id')}` {action.get('title')}")
+        lines.append("")
+    artifacts = report.get("artifacts", {})
+    if artifacts:
+        lines.extend(["## Artifacts", ""])
+        for label, artifact in artifacts.items():
+            if isinstance(artifact, dict):
+                suffix = f" sha=`{artifact.get('sha256')}`" if artifact.get("sha256") else ""
+                lines.append(f"- {label}: `{artifact.get('path')}` size=`{artifact.get('size')}`{suffix}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def benchmark_repo(
     repo: Path | str,
     out_dir: Path | str,
@@ -8392,6 +8629,78 @@ def _artifact_record_any_path(root: Path, path: Path, kind: str) -> dict[str, An
     }
 
 
+def _directory_artifact_record(path: Path, kind: str) -> dict[str, Any]:
+    files = sorted(item for item in path.rglob("*") if item.is_file()) if path.exists() else []
+    return {
+        "path": str(path),
+        "kind": kind,
+        "exists": path.is_dir(),
+        "file_count": len(files),
+        "size": sum(item.stat().st_size for item in files),
+    }
+
+
+def _add_handoff_health_artifact(artifacts: dict[str, Any], label: str, path_value: Any) -> None:
+    if not isinstance(path_value, str) or not path_value:
+        return
+    path = Path(path_value).resolve()
+    if path.is_file():
+        artifacts[label] = {
+            "path": str(path),
+            "kind": label,
+            "size": path.stat().st_size,
+            "sha256": _path_sha256(path),
+        }
+    elif path.is_dir():
+        artifacts[label] = _directory_artifact_record(path, label)
+
+
+def _write_handoff_health_artifacts(report: dict[str, Any], artifacts_dir: Path) -> None:
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    health_json = artifacts_dir / "handoff-health.json"
+    health_md = artifacts_dir / "handoff-health.md"
+    report.setdefault("artifacts", {})["health_json"] = {
+        "path": str(health_json),
+        "kind": "handoff_health_json",
+        "note": "self hash omitted because this file contains the artifact list",
+    }
+    report["artifacts"]["health_markdown"] = {
+        "path": str(health_md),
+        "kind": "handoff_health_markdown",
+        "note": "hash written after markdown render",
+    }
+    health_md.write_text(format_handoff_health_markdown(report), encoding="utf-8")
+    report["artifacts"]["health_markdown"] = {
+        "path": str(health_md),
+        "kind": "handoff_health_markdown",
+        "size": health_md.stat().st_size,
+        "sha256": _path_sha256(health_md),
+    }
+    _write_json(health_json, report)
+
+
+def _handoff_health_manifest_question(root: Path) -> str | None:
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    question = payload.get("question") if isinstance(payload, dict) else None
+    return question if isinstance(question, str) and question.strip() else None
+
+
+def _worst_status(*statuses: Any) -> str:
+    order = {"pass": 0, "warn": 1, "fail": 2}
+    worst = "pass"
+    for status in statuses:
+        value = str(status or "pass")
+        if order.get(value, 2) > order[worst]:
+            worst = value if value in order else "fail"
+    return worst
+
+
 def append_anchor_log(
     anchor_json_path_or_dict: Path | str | dict[str, Any],
     log_path: Path | str,
@@ -10615,6 +10924,7 @@ AGENT_METHODS = (
     "handoff.quality",
     "handoff.improve",
     "handoff.archive",
+    "handoff.health",
     "capsule.build",
     "file.get",
     "schema.list",
@@ -11009,6 +11319,41 @@ MCP_TOOLS = (
         "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
     },
     {
+        "name": "repomori_handoff_health",
+        "title": "RepoMori Handoff Health",
+        "description": "Run handoff check, score, triage, quality, and optional repair/archive.",
+        "agent_method": "handoff.health",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "handoff_dir": {"type": "string"},
+                "profile": {"type": "string", "enum": ["safe", "ci", "strict"]},
+                "target_score": {"type": ["number", "null"]},
+                "improve_pack": {"type": "string"},
+                "question": {"type": "string"},
+                "improve_out": {"type": "string"},
+                "base_pack": {"type": "string"},
+                "force": {"type": "boolean"},
+                "copy_pack": {"type": "boolean"},
+                "allow_unverified": {"type": "boolean"},
+                "archive": {"type": "boolean"},
+                "archive_out": {"type": "string"},
+                "max_attempts": {"type": "integer"},
+                "max_files": {"type": "integer"},
+                "max_bytes": {"type": ["integer", "null"]},
+                "snippet_lines": {"type": "integer"},
+                "snippets_per_file": {"type": "integer"},
+                "capsule_max_files": {"type": ["integer", "null"]},
+                "top_terms": {"type": "integer"},
+                "eval_questions": {"type": "array", "items": {"type": "string"}},
+                "artifacts_dir": {"type": "string"},
+            },
+            "required": ["handoff_dir"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    },
+    {
         "name": "repomori_capsule_build",
         "title": "RepoMori Capsule Build",
         "description": "Export a dense machine-readable capsule for a pack.",
@@ -11248,6 +11593,30 @@ def _agent_dispatch(
             params.get("out"),
             force=bool(params.get("force", False)),
             quality_profile=str(params.get("quality_profile", "safe")),
+        )
+    if method == "handoff.health":
+        return build_handoff_health_report(
+            _agent_required_str(params, "handoff_dir"),
+            profile=str(params.get("profile", "safe")),
+            target_score=_agent_optional_number(params, "target_score", None),
+            improve_pack=params.get("improve_pack"),
+            question=params.get("question"),
+            improve_out=params.get("improve_out") or params.get("out"),
+            base_pack=params.get("base_pack"),
+            force=bool(params.get("force", False)),
+            copy_pack=bool(params.get("copy_pack", False)),
+            allow_unverified=bool(params.get("allow_unverified", False)),
+            archive=bool(params.get("archive", False)),
+            archive_out=params.get("archive_out"),
+            max_attempts=_agent_int(params, "max_attempts", 3),
+            max_files=_agent_int(params, "max_files", 8),
+            max_bytes=_agent_optional_int(params, "max_bytes", 4096),
+            snippet_lines=_agent_int(params, "snippet_lines", 12),
+            snippets_per_file=_agent_int(params, "snippets_per_file", 2),
+            capsule_max_files=_agent_optional_int(params, "capsule_max_files", None),
+            top_terms=_agent_int(params, "top_terms", 128),
+            eval_questions=params.get("eval_questions"),
+            artifacts_dir=params.get("artifacts_dir"),
         )
     if method == "capsule.build":
         return build_capsule(

@@ -17,6 +17,7 @@ from .codec import (
     build_capsule,
     build_context_bundle,
     build_diff_context_bundle,
+    build_handoff_health_report,
     build_handoff_package,
     build_pack,
     check_handoff_package,
@@ -36,6 +37,7 @@ from .codec import (
     format_handoff_quality_markdown,
     format_handoff_improvement_markdown,
     format_handoff_archive_markdown,
+    format_handoff_health_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_snapshot_chain_markdown,
@@ -541,6 +543,33 @@ def main(argv: list[str] | None = None) -> int:
     archive_handoff.add_argument("--format", choices=["markdown", "json"], default="markdown")
     archive_handoff.add_argument("--report-out", type=Path, help="Write the archive report to a file.")
     archive_handoff.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    handoff_health = sub.add_parser("handoff-health", help="Run handoff check, score, triage, quality, and optional repair/archive.")
+    handoff_health.add_argument("handoff_dir", type=Path)
+    handoff_health.add_argument("--profile", choices=("safe", "ci", "strict"), default="safe")
+    handoff_health.add_argument("--target-score", type=float, help="Override the profile target score.")
+    handoff_health.add_argument("--improve-pack", type=Path, help="Pack to use when the handoff needs a local improvement pass.")
+    handoff_health.add_argument("--question", help="Question for improvement; defaults to manifest question when available.")
+    handoff_health.add_argument("--improve-out", type=Path, help="Directory for an improved handoff; defaults beside the input handoff.")
+    handoff_health.add_argument("--base-pack", type=Path, help="Previous pack to compare against during improvement.")
+    handoff_health.add_argument("--force", action="store_true", help="Overwrite generated improvement or archive outputs.")
+    handoff_health.add_argument("--copy-pack", action="store_true", help="Copy the pack into improved handoffs.")
+    handoff_health.add_argument("--allow-unverified", action="store_true", help="Continue improvement when pack verification fails.")
+    handoff_health.add_argument("--archive", action="store_true", help="Archive the active handoff after health evaluation.")
+    handoff_health.add_argument("--archive-out", type=Path, help="Archive path; defaults to active handoff sibling .zip.")
+    handoff_health.add_argument("--max-attempts", type=int, default=3)
+    handoff_health.add_argument("--max-files", type=int, default=8)
+    handoff_health.add_argument("--max-bytes", type=int, default=4096)
+    handoff_health.add_argument("--snippet-lines", type=int, default=12)
+    handoff_health.add_argument("--snippets-per-file", type=int, default=2)
+    handoff_health.add_argument("--capsule-max-files", type=int)
+    handoff_health.add_argument("--top-terms", type=int, default=128)
+    handoff_health.add_argument("--eval-question", action="append", help="Extra eval question for improvement; repeat for more.")
+    handoff_health.add_argument("--questions-file", type=Path, help="Read extra improvement eval questions, one per line.")
+    handoff_health.add_argument("--artifacts-dir", type=Path, help="Write handoff-health.json and handoff-health.md to this directory.")
+    handoff_health.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    handoff_health.add_argument("--out", type=Path, help="Write the selected health report format to a file.")
+    handoff_health.add_argument("--json", action="store_true", help="Print JSON output.")
 
     bench = sub.add_parser("bench", help="Run an end-to-end repository benchmark.")
     bench.add_argument("repo", type=Path)
@@ -1241,6 +1270,43 @@ def main(argv: list[str] | None = None) -> int:
         if args.report_out:
             args.report_out.parent.mkdir(parents=True, exist_ok=True)
             args.report_out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
+    if args.command == "handoff-health":
+        extra_questions = _eval_questions(args.eval_question, args.questions_file)
+        report = build_handoff_health_report(
+            args.handoff_dir,
+            profile=args.profile,
+            target_score=args.target_score,
+            improve_pack=args.improve_pack,
+            question=args.question,
+            improve_out=args.improve_out,
+            base_pack=args.base_pack,
+            force=args.force,
+            copy_pack=args.copy_pack,
+            allow_unverified=args.allow_unverified,
+            archive=args.archive,
+            archive_out=args.archive_out,
+            max_attempts=args.max_attempts,
+            max_files=args.max_files,
+            max_bytes=args.max_bytes,
+            snippet_lines=args.snippet_lines,
+            snippets_per_file=args.snippets_per_file,
+            capsule_max_files=args.capsule_max_files,
+            top_terms=args.top_terms,
+            eval_questions=extra_questions,
+            artifacts_dir=args.artifacts_dir,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_handoff_health_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
         else:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0 if report["status"] != "fail" else 1

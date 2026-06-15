@@ -23,6 +23,7 @@ from repomori.codec import (
     build_capsule,
     build_context_bundle,
     build_diff_context_bundle,
+    build_handoff_health_report,
     build_handoff_package,
     build_pack,
     check_handoff_package,
@@ -42,6 +43,7 @@ from repomori.codec import (
     format_handoff_quality_markdown,
     format_handoff_improvement_markdown,
     format_handoff_archive_markdown,
+    format_handoff_health_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_context_markdown,
@@ -799,6 +801,74 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["archive"]["sha256"], hashlib.sha256(archive_path.read_bytes()).hexdigest())
             markdown = format_handoff_archive_markdown(report)
             self.assertIn("# RepoMori Handoff Archive", markdown)
+
+    def test_handoff_health_report_wraps_quality_and_writes_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            handoff_dir = Path(tmp) / "handoff-health"
+            artifacts_dir = Path(tmp) / "health-artifacts"
+            build_handoff_package(pack, "sqlite Store", handoff_dir)
+
+            report = build_handoff_health_report(
+                handoff_dir,
+                profile="safe",
+                artifacts_dir=artifacts_dir,
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.handoff_health.v1")
+            self.assertIn(report["status"], {"pass", "warn"})
+            self.assertEqual(report["summary"]["active_handoff_dir"], str(handoff_dir.resolve()))
+            self.assertEqual(report["score"]["schema_version"], "repomori.handoff_score.v1")
+            self.assertEqual(report["triage"]["schema_version"], "repomori.handoff_triage.v1")
+            self.assertEqual(report["quality"]["schema_version"], "repomori.handoff_quality.v1")
+            self.assertTrue((artifacts_dir / "handoff-health.json").exists())
+            self.assertTrue((artifacts_dir / "handoff-health.md").exists())
+            markdown = format_handoff_health_markdown(report)
+            self.assertIn("# RepoMori Handoff Health", markdown)
+            self.assertIn("Score", markdown)
+
+    def test_handoff_health_strict_fails_weak_memory_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            memory_dir = Path(tmp) / "memory"
+            memory = run_memory_cycle(repo, memory_dir)
+            handoff_dir = Path(memory["summary"]["handoff_dir"])
+
+            report = build_handoff_health_report(handoff_dir, profile="strict")
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["summary"]["quality_status"], "fail")
+            self.assertGreaterEqual(report["summary"]["triage_high_priority_count"], 1)
+
+    def test_handoff_health_can_improve_and_archive_active_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            memory_dir = Path(tmp) / "memory"
+            memory = run_memory_cycle(repo, memory_dir)
+            handoff_dir = Path(memory["summary"]["handoff_dir"])
+            improved_dir = Path(tmp) / "handoff-improved"
+            archive_path = Path(tmp) / "handoff-health.zip"
+
+            report = build_handoff_health_report(
+                handoff_dir,
+                profile="safe",
+                target_score=90,
+                improve_pack=memory["summary"]["pack_path"],
+                question="continue this repo",
+                improve_out=improved_dir,
+                archive=True,
+                archive_out=archive_path,
+                max_attempts=2,
+                force=True,
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.handoff_health.v1")
+            self.assertTrue(report["summary"]["improved"])
+            self.assertTrue((improved_dir / "manifest.json").exists())
+            self.assertTrue(report["summary"]["archived"])
+            self.assertTrue(archive_path.exists())
+            self.assertEqual(report["summary"]["archive_sha256"], hashlib.sha256(archive_path.read_bytes()).hexdigest())
+            self.assertEqual(report["archive"]["schema_version"], "repomori.handoff_archive.v1")
 
     def test_benchmark_repo_outputs_reports_and_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2556,6 +2626,17 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(quality_response["ok"])
             self.assertEqual(quality_response["result"]["schema_version"], "repomori.handoff_quality.v1")
 
+            health_response = handle_agent_request(
+                {
+                    "id": "health",
+                    "method": "handoff.health",
+                    "params": {"handoff_dir": str(handoff_dir), "profile": "safe"},
+                },
+                config_path=config,
+            )
+            self.assertTrue(health_response["ok"])
+            self.assertEqual(health_response["result"]["schema_version"], "repomori.handoff_health.v1")
+
             search_response = handle_agent_request(
                 {"id": "search", "method": "timeline.search", "params": {"text": "sqlite", "limit": 1}},
                 config_path=config,
@@ -2579,6 +2660,21 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(archive_response["result"]["isError"])
             self.assertEqual(archive_response["result"]["structuredContent"]["schema_version"], "repomori.handoff_archive.v1")
             self.assertTrue(archive_path.exists())
+
+            health_mcp_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "health",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "repomori_handoff_health",
+                        "arguments": {"handoff_dir": str(handoff_dir), "profile": "safe"},
+                    },
+                },
+                config_path=config,
+            )
+            self.assertFalse(health_mcp_response["result"]["isError"])
+            self.assertEqual(health_mcp_response["result"]["structuredContent"]["schema_version"], "repomori.handoff_health.v1")
 
     def test_mcp_bridge_initialize_tools_and_errors(self) -> None:
         init_response = handle_mcp_request(
@@ -2620,6 +2716,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_handoff_quality", first_names)
         self.assertIn("repomori_handoff_improve", first_names)
         self.assertIn("repomori_handoff_archive", first_names)
+        self.assertIn("repomori_handoff_health", first_names)
         self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
         memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
@@ -2888,6 +2985,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.handoff_quality.v1", schema_versions)
         self.assertIn("repomori.handoff_improvement.v1", schema_versions)
         self.assertIn("repomori.handoff_archive.v1", schema_versions)
+        self.assertIn("repomori.handoff_health.v1", schema_versions)
         self.assertIn("repomori.timeline_search.v1", schema_versions)
         self.assertIn("repomori.inspect.v1", schema_versions)
         self.assertIn("repomori.compare.v1", schema_versions)
@@ -2910,6 +3008,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("handoff.quality", catalog["agent_methods"])
         self.assertIn("handoff.improve", catalog["agent_methods"])
         self.assertIn("handoff.archive", catalog["agent_methods"])
+        self.assertIn("handoff.health", catalog["agent_methods"])
         self.assertIn("timeline.search", catalog["agent_methods"])
         self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
@@ -2923,6 +3022,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_handoff_quality", catalog["mcp_tools"])
         self.assertIn("repomori_handoff_improve", catalog["mcp_tools"])
         self.assertIn("repomori_handoff_archive", catalog["mcp_tools"])
+        self.assertIn("repomori_handoff_health", catalog["mcp_tools"])
         self.assertIn("repomori_timeline_search", catalog["mcp_tools"])
         self.assertIn("repomori_stats_read", catalog["mcp_tools"])
         self.assertIn("repomori_schema_list", catalog["mcp_tools"])
@@ -2976,6 +3076,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(handoff_quality_schema["selected"], "repomori.handoff_quality.v1")
         self.assertEqual(handoff_quality_schema["schema"]["producer"], "evaluate_handoff_quality")
 
+        handoff_health_schema = schema_catalog("repomori.handoff_health.v1")
+        self.assertEqual(handoff_health_schema["selected"], "repomori.handoff_health.v1")
+        self.assertEqual(handoff_health_schema["schema"]["producer"], "build_handoff_health_report")
+
         timeline_search_schema = schema_catalog("repomori.timeline_search.v1")
         self.assertEqual(timeline_search_schema["selected"], "repomori.timeline_search.v1")
         self.assertEqual(timeline_search_schema["schema"]["producer"], "search_snapshot_timeline")
@@ -2993,6 +3097,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
             handoff_score = score_handoff_package(handoff_dir)
             handoff_triage = triage_handoff_score(handoff_score)
+            handoff_health = build_handoff_health_report(handoff_dir)
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
             inspect_diff = inspect_pack_diff(pack, memory["summary"]["pack_path"], max_files=2)
             diff_context = build_diff_context_bundle(pack, memory["summary"]["pack_path"])
@@ -3039,6 +3144,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     handoff_triage,
                     "repomori.handoff_triage.v1",
                     {"schema_version", "status", "source", "summary", "actions"},
+                ),
+                "handoff_health": (
+                    handoff_health,
+                    "repomori.handoff_health.v1",
+                    {"schema_version", "status", "handoff_dir", "profile", "summary", "check", "score", "triage", "quality"},
                 ),
                 "diff_context": (
                     diff_context,
@@ -3627,6 +3737,28 @@ class RepoMoriCodecTests(unittest.TestCase):
             )
             quality = json.loads(quality_output)
             self.assertEqual(quality["schema_version"], "repomori.handoff_quality.v1")
+
+            health_artifacts = Path(tmp) / "handoff-health-artifacts"
+            health_output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "handoff-health",
+                    str(handoff_dir),
+                    "--profile",
+                    "safe",
+                    "--artifacts-dir",
+                    str(health_artifacts),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+            health = json.loads(health_output)
+            self.assertEqual(health["schema_version"], "repomori.handoff_health.v1")
+            self.assertTrue((health_artifacts / "handoff-health.json").exists())
+            self.assertTrue((health_artifacts / "handoff-health.md").exists())
 
             improve_output = subprocess.check_output(
                 [
