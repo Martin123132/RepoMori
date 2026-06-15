@@ -53,6 +53,7 @@ jobs:
           workflow_paths = [
               workflow_dir / "memory-anchor-smoke.yml",
               workflow_dir / "release-health.yml",
+              workflow_dir / "handoff-health.yml",
               workflow_dir / "memory-anchor.yml",
               workflow_dir / "memory-anchor-reusable.yml",
           ]
@@ -80,6 +81,13 @@ jobs:
                       fail("release-health command contract missing --drift-log", path=str(path))
                   if "release-health.json" not in text or "release-health.md" not in text:
                       fail("release-health required artifacts are not declared", path=str(path))
+              if path.name == "handoff-health.yml":
+                  if "workflow_dispatch" not in text or "workflow_call" not in text:
+                      fail("handoff-health workflow trigger contract changed", path=str(path))
+                  if "handoff-health" not in text or "--health-log" not in text:
+                      fail("handoff-health command contract missing", path=str(path))
+                  if "handoff-health.json" not in text or "handoff-health.md" not in text:
+                      fail("handoff-health required artifacts are not declared", path=str(path))
               if path.name == "memory-anchor.yml":
                   if "inputs.anchor_mode" not in text:
                       fail("memory-anchor reusable dispatcher contract changed", path=str(path))

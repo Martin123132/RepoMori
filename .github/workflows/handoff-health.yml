@@ -1,0 +1,210 @@
+name: handoff-health
+
+on:
+  workflow_dispatch:
+    inputs:
+      handoff_dir:
+        description: "Handoff directory to evaluate."
+        required: true
+        type: string
+      profile:
+        description: "Quality profile: safe, ci, or strict."
+        required: false
+        default: "ci"
+        type: string
+      target_score:
+        description: "Optional target score override."
+        required: false
+        default: ""
+        type: string
+      improve_pack:
+        description: "Optional pack path for local handoff improvement."
+        required: false
+        default: ""
+        type: string
+      question:
+        description: "Optional improvement question."
+        required: false
+        default: ""
+        type: string
+      archive:
+        description: "Archive the active handoff."
+        required: false
+        default: false
+        type: boolean
+      archive_out:
+        description: "Optional archive output path."
+        required: false
+        default: ""
+        type: string
+      artifacts_dir:
+        description: "Directory for handoff-health artifacts."
+        required: false
+        default: ".repomori-handoff-health"
+        type: string
+      health_log:
+        description: "Optional handoff-health JSONL log path."
+        required: false
+        default: ""
+        type: string
+      force:
+        description: "Overwrite generated improvement/archive outputs."
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      handoff_dir:
+        description: "Handoff directory to evaluate."
+        required: true
+        type: string
+      profile:
+        description: "Quality profile: safe, ci, or strict."
+        required: false
+        default: "ci"
+        type: string
+      target_score:
+        description: "Optional target score override."
+        required: false
+        default: ""
+        type: string
+      improve_pack:
+        description: "Optional pack path for local handoff improvement."
+        required: false
+        default: ""
+        type: string
+      question:
+        description: "Optional improvement question."
+        required: false
+        default: ""
+        type: string
+      archive:
+        description: "Archive the active handoff."
+        required: false
+        default: false
+        type: boolean
+      archive_out:
+        description: "Optional archive output path."
+        required: false
+        default: ""
+        type: string
+      artifacts_dir:
+        description: "Directory for handoff-health artifacts."
+        required: false
+        default: ".repomori-handoff-health"
+        type: string
+      health_log:
+        description: "Optional handoff-health JSONL log path."
+        required: false
+        default: ""
+        type: string
+      force:
+        description: "Overwrite generated improvement/archive outputs."
+        required: false
+        default: false
+        type: boolean
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  run_handoff_health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - id: run
+        name: Run handoff-health
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          HANDOFF_DIR="${{ github.event.inputs.handoff_dir || inputs.handoff_dir }}"
+          PROFILE="${{ github.event.inputs.profile || inputs.profile || 'ci' }}"
+          TARGET_SCORE="${{ github.event.inputs.target_score || inputs.target_score || '' }}"
+          IMPROVE_PACK="${{ github.event.inputs.improve_pack || inputs.improve_pack || '' }}"
+          QUESTION="${{ github.event.inputs.question || inputs.question || '' }}"
+          ARCHIVE="${{ github.event.inputs.archive || inputs.archive || false }}"
+          ARCHIVE_OUT="${{ github.event.inputs.archive_out || inputs.archive_out || '' }}"
+          ARTIFACTS_DIR="${{ github.event.inputs.artifacts_dir || inputs.artifacts_dir || '.repomori-handoff-health' }}"
+          HEALTH_LOG="${{ github.event.inputs.health_log || inputs.health_log || '' }}"
+          FORCE="${{ github.event.inputs.force || inputs.force || false }}"
+
+          if [ -z "$HANDOFF_DIR" ]; then
+            echo "::error::handoff-health workflow requires handoff_dir."
+            exit 1
+          fi
+          if [ -z "$ARTIFACTS_DIR" ]; then
+            ARTIFACTS_DIR=".repomori-handoff-health"
+          fi
+          mkdir -p "$ARTIFACTS_DIR"
+          if [ -z "$HEALTH_LOG" ]; then
+            HEALTH_LOG="$ARTIFACTS_DIR/handoff-health.jsonl"
+          fi
+          mkdir -p "$(dirname "$HEALTH_LOG")"
+
+          ARGS=(
+            "python" "-m" "repomori"
+            "handoff-health" "$HANDOFF_DIR"
+            "--profile" "$PROFILE"
+            "--artifacts-dir" "$ARTIFACTS_DIR"
+            "--health-log" "$HEALTH_LOG"
+            "--json"
+          )
+
+          if [ -n "$TARGET_SCORE" ]; then
+            ARGS+=("--target-score" "$TARGET_SCORE")
+          fi
+          if [ -n "$IMPROVE_PACK" ]; then
+            ARGS+=("--improve-pack" "$IMPROVE_PACK")
+          fi
+          if [ -n "$QUESTION" ]; then
+            ARGS+=("--question" "$QUESTION")
+          fi
+          if [ "$ARCHIVE" = "true" ]; then
+            ARGS+=("--archive")
+          fi
+          if [ -n "$ARCHIVE_OUT" ]; then
+            ARGS+=("--archive-out" "$ARCHIVE_OUT")
+          fi
+          if [ "$FORCE" = "true" ]; then
+            ARGS+=("--force")
+          fi
+
+          HANDOFF_HEALTH_RC=0
+          set +e
+          "${ARGS[@]}" > "$ARTIFACTS_DIR/handoff-health.stdout.json"
+          HANDOFF_HEALTH_RC=$?
+          set -e
+
+          required_artifacts=(
+            "$ARTIFACTS_DIR/handoff-health.json"
+            "$ARTIFACTS_DIR/handoff-health.md"
+            "$ARTIFACTS_DIR/handoff-health.stdout.json"
+            "$HEALTH_LOG"
+          )
+          for artifact in "${required_artifacts[@]}"; do
+            if [ ! -f "$artifact" ] || [ ! -s "$artifact" ]; then
+              echo "::error::handoff-health did not produce required artifact: $artifact"
+              HANDOFF_HEALTH_RC=1
+            fi
+          done
+
+          echo "artifacts_dir=$ARTIFACTS_DIR" >> "$GITHUB_OUTPUT"
+          echo "health_log=$HEALTH_LOG" >> "$GITHUB_OUTPUT"
+          exit "$HANDOFF_HEALTH_RC"
+
+      - name: Upload handoff-health artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: repomori-handoff-health
+          path: |
+            ${{ steps.run.outputs.artifacts_dir }}/handoff-health.json
+            ${{ steps.run.outputs.artifacts_dir }}/handoff-health.md
+            ${{ steps.run.outputs.artifacts_dir }}/handoff-health.stdout.json
+            ${{ steps.run.outputs.health_log }}
+          include-hidden-files: true

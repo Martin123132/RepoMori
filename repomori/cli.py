@@ -38,6 +38,7 @@ from .codec import (
     format_handoff_improvement_markdown,
     format_handoff_archive_markdown,
     format_handoff_health_markdown,
+    format_handoff_health_summary_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_snapshot_chain_markdown,
@@ -64,6 +65,7 @@ from .codec import (
     run_release_check,
     run_release_health,
     summarize_baseline_drift_log,
+    summarize_handoff_health_log,
     run_mcp_bridge,
     run_memory_cycle,
     schema_catalog,
@@ -247,6 +249,13 @@ def main(argv: list[str] | None = None) -> int:
     drift_summary.add_argument("log", type=Path, help="Path to a baseline-drift JSONL log.")
     drift_summary.add_argument("--limit", type=int, default=20, help="Only analyze the newest N rows.")
     drift_summary.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    handoff_health_summary = sub.add_parser("handoff-health-summary", help="Summarize handoff-health telemetry from a JSONL log.")
+    handoff_health_summary.add_argument("log", type=Path, help="Path to a handoff-health JSONL log.")
+    handoff_health_summary.add_argument("--limit", type=int, default=20, help="Only analyze the newest N rows.")
+    handoff_health_summary.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    handoff_health_summary.add_argument("--out", type=Path, help="Write the summary report to a file.")
+    handoff_health_summary.add_argument("--json", action="store_true", help="Print JSON output.")
 
     stats = sub.add_parser("stats", help="Read snapshot reuse and storage statistics.")
     stats.add_argument("out_dir", type=Path)
@@ -567,6 +576,7 @@ def main(argv: list[str] | None = None) -> int:
     handoff_health.add_argument("--eval-question", action="append", help="Extra eval question for improvement; repeat for more.")
     handoff_health.add_argument("--questions-file", type=Path, help="Read extra improvement eval questions, one per line.")
     handoff_health.add_argument("--artifacts-dir", type=Path, help="Write handoff-health.json and handoff-health.md to this directory.")
+    handoff_health.add_argument("--health-log", type=Path, help="Append one compact handoff-health trend row to this JSONL log.")
     handoff_health.add_argument("--format", choices=["markdown", "json"], default="markdown")
     handoff_health.add_argument("--out", type=Path, help="Write the selected health report format to a file.")
     handoff_health.add_argument("--json", action="store_true", help="Print JSON output.")
@@ -802,6 +812,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"max non-strict ratio: {summary.get('max_non_strict_ratio', 0.0):.2f}")
             print(f"avg non-strict ratio: {summary.get('avg_non_strict_ratio', 0.0):.2f}")
             print(f"ordered: {summary.get('ordered')}")
+        return 0 if summary["status"] != "fail" else 1
+    if args.command == "handoff-health-summary":
+        summary = summarize_handoff_health_log(args.log, limit=args.limit)
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(summary, indent=2)
+            if output_format == "json"
+            else format_handoff_health_summary_markdown(summary)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
         return 0 if summary["status"] != "fail" else 1
     if args.command == "stats":
         report = read_snapshot_stats(args.out_dir, limit=args.limit)
@@ -1296,6 +1320,7 @@ def main(argv: list[str] | None = None) -> int:
             capsule_max_files=args.capsule_max_files,
             top_terms=args.top_terms,
             eval_questions=extra_questions,
+            health_log=args.health_log,
             artifacts_dir=args.artifacts_dir,
         )
         output_format = "json" if args.json else args.format

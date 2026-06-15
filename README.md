@@ -53,6 +53,7 @@ python -m repomori scan D:\Dev\RepoMori --public-release --baseline D:\Dev\RepoM
 python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
 python -m repomori drift-summary D:\Temp\repomori-drift.log --limit 20 --json
+python -m repomori handoff-health-summary D:\handoffs\handoff-health.jsonl --limit 20 --json
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
@@ -116,6 +117,7 @@ repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [
 repomori release-check [repo] [--baseline file] [--fail-on low] [--drift-policy file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--drift-log file] [--json]
 repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
 repomori drift-summary <log> [--limit n] [--json]
+repomori handoff-health-summary <log> [--limit n] [--format markdown|json] [--out file] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
 repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--handoff-quality-profile safe|ci|strict] [--anchor-out file] [--anchor-verify] [--allow-unverified-anchor] [--anchor-log file] [--no-incremental] [--diff-context] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
@@ -150,7 +152,7 @@ repomori handoff-triage <score-or-handoff> [--limit n] [--format markdown|json] 
 repomori handoff-quality <score-or-handoff> [--profile safe|ci|strict] [--target-score n] [--format markdown|json] [--out file] [--json]
 repomori improve-handoff <pack> <question> --out <dir> [--target-score n] [--quality-profile safe|ci|strict] [--max-attempts n] [--force] [--json]
 repomori archive-handoff <dir> [--out handoff.zip] [--force] [--json]
-repomori handoff-health <dir> [--profile safe|ci|strict] [--improve-pack pack] [--archive] [--artifacts-dir dir] [--json]
+repomori handoff-health <dir> [--profile safe|ci|strict] [--improve-pack pack] [--archive] [--artifacts-dir dir] [--health-log file] [--json]
 repomori bench <repo> --out <dir> [--force] [--json]
 repomori get <pack> <path> [--out file]
 ```
@@ -414,11 +416,14 @@ a verified handoff directory.
 `handoff-health` is the operational wrapper for CI or a receiving agent. It runs
 check, score, triage, and quality together, can improve a non-pass handoff from a
 source pack, can archive the active handoff, and can write `handoff-health.json`
-and `handoff-health.md` for review:
+and `handoff-health.md` for review. Add `--health-log` to append one compact
+JSONL trend row per run, then use `handoff-health-summary` to review the last N
+rows:
 
 ```powershell
-python -m repomori handoff-health D:\handoffs\repo --profile ci --artifacts-dir D:\handoffs\repo-health --json
-python -m repomori handoff-health D:\handoffs\repo --profile strict --improve-pack D:\Dev\RepoMori\.repomori-packs\latest.repomori --question "continue this repo" --archive --json
+python -m repomori handoff-health D:\handoffs\repo --profile ci --artifacts-dir D:\handoffs\repo-health --health-log D:\handoffs\handoff-health.jsonl --json
+python -m repomori handoff-health D:\handoffs\repo --profile strict --improve-pack D:\Dev\RepoMori\.repomori-packs\latest.repomori --question "continue this repo" --archive --health-log D:\handoffs\handoff-health.jsonl --json
+python -m repomori handoff-health-summary D:\handoffs\handoff-health.jsonl --limit 20 --json
 ```
 
 `bench` runs the full local proof loop for a repository: build, verify, brief,

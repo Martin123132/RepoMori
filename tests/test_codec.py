@@ -15,6 +15,7 @@ import repomori.codec as codec
 
 from repomori.codec import (
     BuildOptions,
+    append_handoff_health_log,
     benchmark_repo,
     build_agent_brief,
     build_baseline_drift_report,
@@ -24,6 +25,7 @@ from repomori.codec import (
     build_context_bundle,
     build_diff_context_bundle,
     build_handoff_health_report,
+    build_handoff_health_record,
     build_handoff_package,
     build_pack,
     check_handoff_package,
@@ -44,6 +46,7 @@ from repomori.codec import (
     format_handoff_improvement_markdown,
     format_handoff_archive_markdown,
     format_handoff_health_markdown,
+    format_handoff_health_summary_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_context_markdown,
@@ -77,6 +80,7 @@ from repomori.codec import (
     run_release_health,
     append_baseline_drift_log,
     summarize_baseline_drift_log,
+    summarize_handoff_health_log,
     schema_catalog,
     scan_baseline_from_report,
     scan_repository,
@@ -870,6 +874,71 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["summary"]["archive_sha256"], hashlib.sha256(archive_path.read_bytes()).hexdigest())
             self.assertEqual(report["archive"]["schema_version"], "repomori.handoff_archive.v1")
 
+    def test_handoff_health_log_appends_and_summarizes_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            handoff_dir = Path(tmp) / "handoff-health-log"
+            log_path = Path(tmp) / "logs" / "handoff-health.jsonl"
+            build_handoff_package(pack, "sqlite Store", handoff_dir)
+            base_report = build_handoff_health_report(handoff_dir, profile="safe")
+            first = json.loads(json.dumps(base_report))
+            second = json.loads(json.dumps(base_report))
+            first["status"] = "pass"
+            first["summary"]["final_score_percent"] = 94.0
+            first["summary"]["triage_action_count"] = 0
+            first["summary"]["triage_high_priority_count"] = 0
+            second["status"] = "warn"
+            second["summary"]["final_score_percent"] = 82.0
+            second["summary"]["triage_action_count"] = 3
+            second["summary"]["triage_high_priority_count"] = 1
+            second["summary"]["improved"] = True
+            second["summary"]["archived"] = True
+            second["summary"]["archive_sha256"] = "abc123"
+
+            record = build_handoff_health_record(first, run_meta={"run_ts": 10, "run_id": "a"})
+            self.assertEqual(record["schema_version"], "repomori.handoff_health_record.v1")
+            self.assertEqual(record["score_percent"], first["summary"]["score_percent"])
+            append_handoff_health_log(first, log_path, run_meta={"run_ts": 10, "run_id": "a"})
+            append_handoff_health_log(second, log_path, run_meta={"run_ts": 11, "run_id": "b"})
+
+            rows = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[1]["schema_version"], "repomori.handoff_health_record.v1")
+            self.assertEqual(rows[1]["archive_sha256"], "abc123")
+            summary = summarize_handoff_health_log(log_path, limit=2)
+            self.assertEqual(summary["schema_version"], "repomori.handoff_health_summary.v1")
+            self.assertEqual(summary["count"], 2)
+            self.assertEqual(summary["warn_count"], 1)
+            self.assertEqual(summary["improvement_count"], 1)
+            self.assertEqual(summary["archive_count"], 1)
+            self.assertEqual(summary["trend"]["score_percent_delta"], -12.0)
+            self.assertEqual(summary["trend"]["triage_action_delta"], 3)
+            markdown = format_handoff_health_summary_markdown(summary)
+            self.assertIn("# RepoMori Handoff Health Summary", markdown)
+
+    def test_handoff_health_report_can_append_health_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            handoff_dir = Path(tmp) / "handoff-health-log-builder"
+            log_path = Path(tmp) / "handoff-health.jsonl"
+            artifacts_dir = Path(tmp) / "health-artifacts"
+            build_handoff_package(pack, "sqlite Store", handoff_dir)
+
+            report = build_handoff_health_report(
+                handoff_dir,
+                profile="safe",
+                health_log=log_path,
+                run_meta={"run_ts": 100, "run_id": "builder"},
+                artifacts_dir=artifacts_dir,
+            )
+
+            self.assertEqual(report["health_log"]["status"], "appended")
+            rows = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["run_id"], "builder")
+            artifact_payload = json.loads((artifacts_dir / "handoff-health.json").read_text(encoding="utf-8"))
+            self.assertIn("health_log", artifact_payload)
+
     def test_benchmark_repo_outputs_reports_and_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -1229,6 +1298,20 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("${{ steps.run.outputs.artifacts_dir }}/release-health.json", workflow)
         self.assertIn("${{ steps.run.outputs.artifacts_dir }}/release-health.md", workflow)
         self.assertIn("if [ -n \"$DRIFT_LOG\" ] && [ ! -f \"$DRIFT_LOG\" ]", workflow)
+
+    def test_workflow_contracts_for_handoff_health(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/handoff-health.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("workflow_dispatch", workflow)
+        self.assertIn("workflow_call", workflow)
+        self.assertIn("handoff-health", workflow)
+        self.assertIn("--health-log", workflow)
+        self.assertIn("handoff-health.json", workflow)
+        self.assertIn("handoff-health.md", workflow)
+        self.assertIn("handoff-health.jsonl", workflow)
+        self.assertIn("include-hidden-files: true", workflow)
 
     def test_workflow_contracts_for_tests_preflight(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/tests.yml").read_text(encoding="utf-8")
@@ -2986,6 +3069,8 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.handoff_improvement.v1", schema_versions)
         self.assertIn("repomori.handoff_archive.v1", schema_versions)
         self.assertIn("repomori.handoff_health.v1", schema_versions)
+        self.assertIn("repomori.handoff_health_record.v1", schema_versions)
+        self.assertIn("repomori.handoff_health_summary.v1", schema_versions)
         self.assertIn("repomori.timeline_search.v1", schema_versions)
         self.assertIn("repomori.inspect.v1", schema_versions)
         self.assertIn("repomori.compare.v1", schema_versions)
@@ -3079,6 +3164,14 @@ class RepoMoriCodecTests(unittest.TestCase):
         handoff_health_schema = schema_catalog("repomori.handoff_health.v1")
         self.assertEqual(handoff_health_schema["selected"], "repomori.handoff_health.v1")
         self.assertEqual(handoff_health_schema["schema"]["producer"], "build_handoff_health_report")
+
+        handoff_health_record_schema = schema_catalog("repomori.handoff_health_record.v1")
+        self.assertEqual(handoff_health_record_schema["selected"], "repomori.handoff_health_record.v1")
+        self.assertEqual(handoff_health_record_schema["schema"]["producer"], "append_handoff_health_log")
+
+        handoff_health_summary_schema = schema_catalog("repomori.handoff_health_summary.v1")
+        self.assertEqual(handoff_health_summary_schema["selected"], "repomori.handoff_health_summary.v1")
+        self.assertEqual(handoff_health_summary_schema["schema"]["producer"], "summarize_handoff_health_log")
 
         timeline_search_schema = schema_catalog("repomori.timeline_search.v1")
         self.assertEqual(timeline_search_schema["selected"], "repomori.timeline_search.v1")
@@ -3739,6 +3832,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(quality["schema_version"], "repomori.handoff_quality.v1")
 
             health_artifacts = Path(tmp) / "handoff-health-artifacts"
+            health_log = Path(tmp) / "handoff-health.jsonl"
             health_output = subprocess.check_output(
                 [
                     sys.executable,
@@ -3750,6 +3844,8 @@ class RepoMoriCodecTests(unittest.TestCase):
                     "safe",
                     "--artifacts-dir",
                     str(health_artifacts),
+                    "--health-log",
+                    str(health_log),
                     "--json",
                 ],
                 cwd=Path(__file__).resolve().parents[1],
@@ -3759,6 +3855,23 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(health["schema_version"], "repomori.handoff_health.v1")
             self.assertTrue((health_artifacts / "handoff-health.json").exists())
             self.assertTrue((health_artifacts / "handoff-health.md").exists())
+            self.assertTrue(health_log.exists())
+
+            health_summary_output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "handoff-health-summary",
+                    str(health_log),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+            health_summary = json.loads(health_summary_output)
+            self.assertEqual(health_summary["schema_version"], "repomori.handoff_health_summary.v1")
+            self.assertEqual(health_summary["count"], 1)
 
             improve_output = subprocess.check_output(
                 [

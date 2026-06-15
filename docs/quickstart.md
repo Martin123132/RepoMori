@@ -41,7 +41,8 @@ python -m repomori handoff-triage D:\handoffs\repo --out D:\handoffs\repo\triage
 python -m repomori handoff-quality D:\handoffs\repo --profile ci --json
 python -m repomori improve-handoff D:\Dev\YourRepo\.repomori-packs\latest.repomori "continue this repo" --out D:\handoffs\repo-improved --target-score 90 --json
 python -m repomori archive-handoff D:\handoffs\repo-improved --out D:\handoffs\repo-improved.zip --json
-python -m repomori handoff-health D:\handoffs\repo --profile ci --improve-pack D:\Dev\YourRepo\.repomori-packs\latest.repomori --question "continue this repo" --archive --artifacts-dir D:\handoffs\repo-health --json
+python -m repomori handoff-health D:\handoffs\repo --profile ci --improve-pack D:\Dev\YourRepo\.repomori-packs\latest.repomori --question "continue this repo" --archive --artifacts-dir D:\handoffs\repo-health --health-log D:\handoffs\handoff-health.jsonl --json
+python -m repomori handoff-health-summary D:\handoffs\handoff-health.jsonl --limit 20 --json
 python -m repomori timeline-search D:\Dev\YourRepo\.repomori-packs "sqlite Store" --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
@@ -74,6 +75,8 @@ pass/warn/fail decision. Use `improve-handoff` when you want RepoMori to retry a
 handoff locally with more files, snippets, and source bytes before handing it off.
 Use `handoff-health` when you want one operational report that combines check,
 score, triage, quality, optional local improvement, and optional archive output.
+Add `--health-log` to keep a JSONL trend history and read it back with
+`handoff-health-summary`.
 Use `archive-handoff` to create a portable zip, and `timeline-search` to ask when
 a path, symbol, or concept started appearing across snapshot packs.
 

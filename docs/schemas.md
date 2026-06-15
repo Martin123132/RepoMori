@@ -29,6 +29,8 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.handoff_improvement.v1`: before/after handoff improvement run report.
 - `repomori.handoff_archive.v1`: portable handoff zip archive report.
 - `repomori.handoff_health.v1`: operational handoff check/score/triage/quality wrapper with optional improvement and archive details.
+- `repomori.handoff_health_record.v1`: one JSONL handoff-health trend row.
+- `repomori.handoff_health_summary.v1`: summarized handoff-health trend report.
 - `repomori.memory.v1`: full memory-cycle report.
 - `repomori.doctor.v1`: snapshot directory health report.
 - `repomori.prune.v1`: safe prune dry-run or applied result.

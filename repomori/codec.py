@@ -186,6 +186,20 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "handoff_dir", "profile", "summary", "check", "score", "triage", "quality"],
     },
     {
+        "schema_version": "repomori.handoff_health_record.v1",
+        "kind": "record",
+        "title": "Handoff health trend log row",
+        "producer": "append_handoff_health_log",
+        "required_fields": ["schema_version", "run_ts", "status", "handoff_dir", "score_percent", "quality_status", "triage_action_count"],
+    },
+    {
+        "schema_version": "repomori.handoff_health_summary.v1",
+        "kind": "report",
+        "title": "Handoff health trend summary",
+        "producer": "summarize_handoff_health_log",
+        "required_fields": ["schema_version", "status", "log_path", "count", "pass_count", "warn_count", "fail_count", "trend"],
+    },
+    {
         "schema_version": "repomori.memory.v1",
         "kind": "report",
         "title": "Snapshot memory cycle report",
@@ -5501,6 +5515,8 @@ def build_handoff_health_report(
     capsule_max_files: int | None = None,
     top_terms: int = 128,
     eval_questions: Iterable[str] | None = None,
+    health_log: Path | str | None = None,
+    run_meta: dict[str, Any] | None = None,
     artifacts_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Run deterministic handoff health checks with optional local repair/archive."""
@@ -5632,6 +5648,8 @@ def build_handoff_health_report(
         "improvement": improvement,
         "archive": archive_report,
     }
+    if health_log is not None:
+        report["health_log"] = append_handoff_health_log(report, health_log, run_meta=run_meta)
     if artifacts_dir is not None:
         _write_handoff_health_artifacts(report, Path(artifacts_dir).resolve())
     return report
@@ -5706,6 +5724,211 @@ def format_handoff_health_markdown(report: dict[str, Any]) -> str:
                 suffix = f" sha=`{artifact.get('sha256')}`" if artifact.get("sha256") else ""
                 lines.append(f"- {label}: `{artifact.get('path')}` size=`{artifact.get('size')}`{suffix}")
         lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_handoff_health_record(
+    health_report: dict[str, Any],
+    *,
+    run_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build one compact JSONL-ready handoff health trend row."""
+
+    if not isinstance(health_report, dict):
+        raise TypeError("health_report must be a JSON report object.")
+    if health_report.get("schema_version") != "repomori.handoff_health.v1":
+        raise ValueError("health_report must use schema repomori.handoff_health.v1")
+
+    summary = health_report.get("summary", {}) if isinstance(health_report.get("summary"), dict) else {}
+    improvement = health_report.get("improvement") if isinstance(health_report.get("improvement"), dict) else None
+    improvement_summary = improvement.get("summary", {}) if improvement else {}
+    run_meta_dict = dict(run_meta or {})
+    return {
+        "schema_version": "repomori.handoff_health_record.v1",
+        "run_ts": run_meta_dict.get("run_ts", int(time.time())),
+        "run_id": run_meta_dict.get("run_id"),
+        "status": health_report.get("status"),
+        "handoff_dir": health_report.get("handoff_dir"),
+        "active_handoff_dir": health_report.get("active_handoff_dir"),
+        "profile": health_report.get("profile"),
+        "target_score": health_report.get("target_score"),
+        "valid": bool(summary.get("valid")),
+        "score_status": summary.get("score_status"),
+        "score_percent": _optional_float(summary.get("score_percent")),
+        "triage_status": summary.get("triage_status"),
+        "triage_action_count": _optional_int_value(summary.get("triage_action_count"), 0),
+        "triage_high_priority_count": _optional_int_value(summary.get("triage_high_priority_count"), 0),
+        "quality_status": summary.get("quality_status"),
+        "quality_target_met": summary.get("quality_target_met"),
+        "final_quality_status": summary.get("final_quality_status"),
+        "final_score_percent": _optional_float(summary.get("final_score_percent")),
+        "final_target_met": summary.get("final_target_met"),
+        "improved": bool(summary.get("improved")),
+        "improvement_status": summary.get("improvement_status"),
+        "improvement_score_delta": _optional_float(improvement_summary.get("score_delta")),
+        "archived": bool(summary.get("archived")),
+        "archive_path": summary.get("archive_path"),
+        "archive_sha256": summary.get("archive_sha256"),
+    }
+
+
+def append_handoff_health_log(
+    health_report: dict[str, Any],
+    log_path: Path | str,
+    *,
+    run_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append one handoff-health trend row to a JSONL log and return metadata."""
+
+    row = build_handoff_health_record(health_report, run_meta=run_meta)
+    log_file = Path(log_path).resolve()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with log_file.open("a", encoding="utf-8") as out:
+        out.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return {
+        "status": "appended",
+        "log_path": str(log_file),
+        "entry": row,
+    }
+
+
+def summarize_handoff_health_log(
+    log_path: Path | str,
+    *,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Summarize recent handoff-health JSONL trend rows."""
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    log_file = Path(log_path).resolve()
+    if not log_file.exists():
+        raise FileNotFoundError(f"Handoff health log not found: {log_file}")
+
+    rows: list[dict[str, Any]] = []
+    for line in log_file.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if parsed.get("schema_version") != "repomori.handoff_health_record.v1":
+            continue
+        rows.append(parsed)
+
+    selected = rows[-limit:] if rows else []
+    count = len(selected)
+    if not selected:
+        return {
+            "schema_version": "repomori.handoff_health_summary.v1",
+            "status": "pass",
+            "log_path": str(log_file),
+            "limit": limit,
+            "count": 0,
+            "pass_count": 0,
+            "warn_count": 0,
+            "fail_count": 0,
+            "max_score_percent": 0.0,
+            "avg_score_percent": 0.0,
+            "max_triage_action_count": 0,
+            "improvement_count": 0,
+            "archive_count": 0,
+            "latest": None,
+            "trend": {
+                "score_percent_delta": 0.0,
+                "triage_action_delta": 0,
+                "triage_high_priority_delta": 0,
+            },
+            "rows": [],
+        }
+
+    pass_count = sum(1 for row in selected if row.get("status") == "pass")
+    warn_count = sum(1 for row in selected if row.get("status") == "warn")
+    fail_count = sum(1 for row in selected if row.get("status") == "fail")
+    scores = [_optional_float(row.get("final_score_percent")) for row in selected]
+    scores = [score for score in scores if score is not None]
+    max_score = round(max(scores), 2) if scores else 0.0
+    avg_score = round(sum(scores) / len(scores), 2) if scores else 0.0
+    first = selected[0]
+    last = selected[-1]
+    score_delta = round(
+        (_optional_float(last.get("final_score_percent")) or 0.0)
+        - (_optional_float(first.get("final_score_percent")) or 0.0),
+        2,
+    )
+    triage_delta = _optional_int_value(last.get("triage_action_count"), 0) - _optional_int_value(first.get("triage_action_count"), 0)
+    high_delta = _optional_int_value(last.get("triage_high_priority_count"), 0) - _optional_int_value(first.get("triage_high_priority_count"), 0)
+    status = "fail" if fail_count else "warn" if warn_count else "pass"
+    return {
+        "schema_version": "repomori.handoff_health_summary.v1",
+        "status": status,
+        "log_path": str(log_file),
+        "limit": limit,
+        "count": count,
+        "pass_count": pass_count,
+        "warn_count": warn_count,
+        "fail_count": fail_count,
+        "max_score_percent": max_score,
+        "avg_score_percent": avg_score,
+        "max_triage_action_count": max(_optional_int_value(row.get("triage_action_count"), 0) for row in selected),
+        "improvement_count": sum(1 for row in selected if row.get("improved")),
+        "archive_count": sum(1 for row in selected if row.get("archived")),
+        "latest": {
+            "run_ts": last.get("run_ts"),
+            "status": last.get("status"),
+            "handoff_dir": last.get("handoff_dir"),
+            "active_handoff_dir": last.get("active_handoff_dir"),
+            "final_score_percent": last.get("final_score_percent"),
+            "final_quality_status": last.get("final_quality_status"),
+            "archive_sha256": last.get("archive_sha256"),
+        },
+        "trend": {
+            "score_percent_delta": score_delta,
+            "triage_action_delta": triage_delta,
+            "triage_high_priority_delta": high_delta,
+        },
+        "rows": selected,
+    }
+
+
+def format_handoff_health_summary_markdown(report: dict[str, Any]) -> str:
+    """Render a handoff-health trend summary as Markdown."""
+
+    latest = report.get("latest") or {}
+    trend = report.get("trend", {})
+    lines = [
+        "# RepoMori Handoff Health Summary",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Log: `{report.get('log_path')}`",
+        f"- Rows: `{report.get('count')}`",
+        f"- Pass/warn/fail: `{report.get('pass_count')}` / `{report.get('warn_count')}` / `{report.get('fail_count')}`",
+        f"- Max score: `{report.get('max_score_percent')}`%",
+        f"- Average score: `{report.get('avg_score_percent')}`%",
+        f"- Max triage actions: `{report.get('max_triage_action_count')}`",
+        f"- Improvement runs: `{report.get('improvement_count')}`",
+        f"- Archives: `{report.get('archive_count')}`",
+        f"- Score delta: `{trend.get('score_percent_delta')}`",
+        f"- Triage action delta: `{trend.get('triage_action_delta')}`",
+        "",
+    ]
+    if latest:
+        lines.extend(
+            [
+                "## Latest",
+                "",
+                f"- Status: `{latest.get('status')}`",
+                f"- Active handoff: `{latest.get('active_handoff_dir')}`",
+                f"- Final score: `{latest.get('final_score_percent')}`%",
+                f"- Final quality: `{latest.get('final_quality_status')}`",
+                f"- Archive SHA-256: `{latest.get('archive_sha256')}`",
+                "",
+            ]
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -8701,6 +8924,32 @@ def _worst_status(*statuses: Any) -> str:
     return worst
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int_value(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def append_anchor_log(
     anchor_json_path_or_dict: Path | str | dict[str, Any],
     log_path: Path | str,
@@ -11346,6 +11595,7 @@ MCP_TOOLS = (
                 "capsule_max_files": {"type": ["integer", "null"]},
                 "top_terms": {"type": "integer"},
                 "eval_questions": {"type": "array", "items": {"type": "string"}},
+                "health_log": {"type": "string"},
                 "artifacts_dir": {"type": "string"},
             },
             "required": ["handoff_dir"],
@@ -11616,6 +11866,7 @@ def _agent_dispatch(
             capsule_max_files=_agent_optional_int(params, "capsule_max_files", None),
             top_terms=_agent_int(params, "top_terms", 128),
             eval_questions=params.get("eval_questions"),
+            health_log=params.get("health_log"),
             artifacts_dir=params.get("artifacts_dir"),
         )
     if method == "capsule.build":

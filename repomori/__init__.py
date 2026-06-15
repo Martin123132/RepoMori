@@ -2,6 +2,7 @@
 
 from .codec import (
     SCHEMA_VERSION,
+    append_handoff_health_log,
     benchmark_repo,
     build_agent_brief,
     build_capsule,
@@ -9,6 +10,7 @@ from .codec import (
     build_diff_context_bundle,
     build_baseline_drift_report,
     build_handoff_health_report,
+    build_handoff_health_record,
     build_handoff_package,
     build_pack,
     build_repo_brief,
@@ -33,6 +35,7 @@ from .codec import (
     format_handoff_improvement_markdown,
     format_handoff_archive_markdown,
     format_handoff_health_markdown,
+    format_handoff_health_summary_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_snapshot_chain_markdown,
@@ -67,6 +70,7 @@ from .codec import (
     scan_baseline_from_report,
     scan_repository,
     summarize_baseline_drift_log,
+    summarize_handoff_health_log,
     score_handoff_package,
     snapshot_repo,
     triage_handoff_score,
@@ -78,6 +82,7 @@ from .codec import (
 
 __all__ = [
     "SCHEMA_VERSION",
+    "append_handoff_health_log",
     "benchmark_repo",
     "build_agent_brief",
     "build_capsule",
@@ -85,6 +90,7 @@ __all__ = [
     "build_diff_context_bundle",
     "build_baseline_drift_report",
     "build_handoff_health_report",
+    "build_handoff_health_record",
     "build_handoff_package",
     "build_pack",
     "build_repo_brief",
@@ -109,6 +115,7 @@ __all__ = [
     "format_handoff_improvement_markdown",
     "format_handoff_archive_markdown",
     "format_handoff_health_markdown",
+    "format_handoff_health_summary_markdown",
     "format_pack_inspect_diff_markdown",
     "format_pack_inspect_markdown",
     "format_snapshot_chain_markdown",
@@ -140,6 +147,7 @@ __all__ = [
     "run_release_check",
     "run_release_health",
     "summarize_baseline_drift_log",
+    "summarize_handoff_health_log",
     "score_handoff_package",
     "schema_catalog",
     "scan_baseline_from_report",
