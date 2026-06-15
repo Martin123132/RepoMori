@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .codec import (
     BuildOptions,
+    archive_handoff_package,
     benchmark_repo,
     build_agent_brief,
     build_repo_brief,
@@ -22,6 +23,7 @@ from .codec import (
     compare_packs,
     diagnose_query,
     doctor_snapshot_dir,
+    evaluate_handoff_quality,
     evaluate_pack,
     format_agent_brief_markdown,
     format_brief_markdown,
@@ -31,6 +33,9 @@ from .codec import (
     format_eval_markdown,
     format_handoff_score_markdown,
     format_handoff_triage_markdown,
+    format_handoff_quality_markdown,
+    format_handoff_improvement_markdown,
+    format_handoff_archive_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_snapshot_chain_markdown,
@@ -39,15 +44,18 @@ from .codec import (
     format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
+    format_timeline_search_markdown,
     get_file_bytes,
     init_config,
     info_pack,
+    improve_handoff_package,
     inspect_pack_diff,
     inspect_pack,
     load_memory_config,
     query_pack,
     read_snapshot_stats,
     read_snapshot_timeline,
+    search_snapshot_timeline,
     prune_snapshots,
     run_agent_bridge,
     run_demo,
@@ -224,6 +232,15 @@ def main(argv: list[str] | None = None) -> int:
     timeline.add_argument("--format", choices=("markdown", "json"), default="markdown")
     timeline.add_argument("--out", type=Path, help="Write the timeline report to this file.")
 
+    timeline_search = sub.add_parser("timeline-search", help="Query indexed snapshot packs for a path, symbol, or concept.")
+    timeline_search.add_argument("out_dir", type=Path)
+    timeline_search.add_argument("text")
+    timeline_search.add_argument("--limit", type=int, default=10, help="Maximum matching snapshots to return.")
+    timeline_search.add_argument("--per-snapshot-limit", type=int, default=3, help="Maximum query hits per snapshot.")
+    timeline_search.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    timeline_search.add_argument("--out", type=Path, help="Write the timeline search report to this file.")
+    timeline_search.add_argument("--json", action="store_true", help="Print JSON output.")
+
     drift_summary = sub.add_parser("drift-summary", help="Summarize baseline drift telemetry from a JSONL log.")
     drift_summary.add_argument("log", type=Path, help="Path to a baseline-drift JSONL log.")
     drift_summary.add_argument("--limit", type=int, default=20, help="Only analyze the newest N rows.")
@@ -295,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
     handoff_group = memory.add_mutually_exclusive_group()
     handoff_group.add_argument("--no-handoff", dest="no_handoff", action="store_true", default=None, help="Skip the default snapshot handoff package.")
     handoff_group.add_argument("--with-handoff", dest="no_handoff", action="store_false", help="Force handoff even if config disables it.")
+    memory.add_argument("--handoff-quality-profile", choices=("safe", "ci", "strict"), help="Evaluate generated handoff quality and warn/fail by profile.")
+    memory.add_argument("--handoff-quality-target", type=float, help="Override the selected handoff quality target score.")
     memory.add_argument("--keep", type=int, help="Newest snapshots to keep in addition to latest.")
     prune_group = memory.add_mutually_exclusive_group()
     prune_group.add_argument("--prune-apply", dest="prune_apply", action="store_true", default=None, help="Apply safe prune after the snapshot.")
@@ -483,6 +502,45 @@ def main(argv: list[str] | None = None) -> int:
     handoff_triage.add_argument("--format", choices=["markdown", "json"], default="markdown")
     handoff_triage.add_argument("--out", type=Path, help="Write the triage report to a file.")
     handoff_triage.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    handoff_quality = sub.add_parser("handoff-quality", help="Apply a safe/ci/strict quality gate to a handoff score.")
+    handoff_quality.add_argument("score_or_handoff", type=Path, help="handoff-score.json or a handoff directory.")
+    handoff_quality.add_argument("--profile", choices=("safe", "ci", "strict"), default="safe")
+    handoff_quality.add_argument("--target-score", type=float, help="Override the profile target score.")
+    handoff_quality.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    handoff_quality.add_argument("--out", type=Path, help="Write the quality report to a file.")
+    handoff_quality.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    improve_handoff = sub.add_parser("improve-handoff", help="Build, score, triage, and retry a handoff with richer local settings.")
+    improve_handoff.add_argument("pack", type=Path)
+    improve_handoff.add_argument("question")
+    improve_handoff.add_argument("--out", type=Path, required=True, help="Directory to write the improved handoff.")
+    improve_handoff.add_argument("--base-pack", type=Path, help="Previous pack to compare against.")
+    improve_handoff.add_argument("--force", action="store_true", help="Overwrite an existing improved handoff directory.")
+    improve_handoff.add_argument("--copy-pack", action="store_true", help="Copy the .repomori pack into the final handoff.")
+    improve_handoff.add_argument("--allow-unverified", action="store_true", help="Continue when pack verification fails.")
+    improve_handoff.add_argument("--target-score", type=float, default=90.0)
+    improve_handoff.add_argument("--quality-profile", choices=("safe", "ci", "strict"), default="ci")
+    improve_handoff.add_argument("--max-attempts", type=int, default=3)
+    improve_handoff.add_argument("--max-files", type=int, default=8)
+    improve_handoff.add_argument("--max-bytes", type=int, default=4096)
+    improve_handoff.add_argument("--snippet-lines", type=int, default=12)
+    improve_handoff.add_argument("--snippets-per-file", type=int, default=2)
+    improve_handoff.add_argument("--capsule-max-files", type=int)
+    improve_handoff.add_argument("--top-terms", type=int, default=128)
+    improve_handoff.add_argument("--eval-question", action="append", help="Extra eval question; repeat for more.")
+    improve_handoff.add_argument("--questions-file", type=Path, help="Read extra eval questions, one per line.")
+    improve_handoff.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    improve_handoff.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    archive_handoff = sub.add_parser("archive-handoff", help="Write a portable zip archive for a handoff directory.")
+    archive_handoff.add_argument("handoff_dir", type=Path)
+    archive_handoff.add_argument("--out", type=Path, help="Archive path; defaults to sibling .zip.")
+    archive_handoff.add_argument("--force", action="store_true", help="Overwrite an existing archive.")
+    archive_handoff.add_argument("--quality-profile", choices=("safe", "ci", "strict"), default="safe")
+    archive_handoff.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    archive_handoff.add_argument("--report-out", type=Path, help="Write the archive report to a file.")
+    archive_handoff.add_argument("--json", action="store_true", help="Print JSON output.")
 
     bench = sub.add_parser("bench", help="Run an end-to-end repository benchmark.")
     bench.add_argument("repo", type=Path)
@@ -675,6 +733,25 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0 if status != "fail" else 1
+    if args.command == "timeline-search":
+        report = search_snapshot_timeline(
+            args.out_dir,
+            args.text,
+            limit=args.limit,
+            per_snapshot_limit=args.per_snapshot_limit,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_timeline_search_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
     if args.command == "drift-summary":
         summary = summarize_baseline_drift_log(args.log, limit=args.limit)
         if args.json:
@@ -799,6 +876,8 @@ def main(argv: list[str] | None = None) -> int:
             diff_context_snippets_per_file=settings["diff_context_snippets_per_file"],
             diff_context_max_bytes=settings["diff_context_max_bytes"],
             diff_context_include_source=settings["diff_context_include_source"],
+            handoff_quality_profile=settings["handoff_quality_profile"],
+            handoff_quality_target=settings["handoff_quality_target"],
         )
         if args.json:
             print(json.dumps(report, indent=2))
@@ -1099,6 +1178,72 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0
+    if args.command == "handoff-quality":
+        report = evaluate_handoff_quality(
+            args.score_or_handoff,
+            profile=args.profile,
+            target_score=args.target_score,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_handoff_quality_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
+    if args.command == "improve-handoff":
+        extra_questions = _eval_questions(args.eval_question, args.questions_file)
+        report = improve_handoff_package(
+            args.pack,
+            args.question,
+            args.out,
+            base_pack=args.base_pack,
+            force=args.force,
+            copy_pack=args.copy_pack,
+            allow_unverified=args.allow_unverified,
+            target_score=args.target_score,
+            quality_profile=args.quality_profile,
+            max_attempts=args.max_attempts,
+            max_files=args.max_files,
+            max_bytes=args.max_bytes,
+            snippet_lines=args.snippet_lines,
+            snippets_per_file=args.snippets_per_file,
+            capsule_max_files=args.capsule_max_files,
+            top_terms=args.top_terms,
+            eval_questions=extra_questions,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_handoff_improvement_markdown(report)
+        )
+        print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
+    if args.command == "archive-handoff":
+        report = archive_handoff_package(
+            args.handoff_dir,
+            args.out,
+            force=args.force,
+            quality_profile=args.quality_profile,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_handoff_archive_markdown(report)
+        )
+        if args.report_out:
+            args.report_out.parent.mkdir(parents=True, exist_ok=True)
+            args.report_out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
     if args.command == "bench":
         extra_questions = _eval_questions(args.eval_question, args.questions_file)
         report = benchmark_repo(
@@ -1291,6 +1436,8 @@ def _memory_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         "anchor_verify": _setting(args.anchor_verify, settings, "anchor_verify", False),
         "allow_unverified_anchor": _setting(args.allow_unverified_anchor, settings, "allow_unverified_anchor", False),
         "no_handoff": _setting(args.no_handoff, settings, "no_handoff", False),
+        "handoff_quality_profile": _setting(args.handoff_quality_profile, settings, "handoff_quality_profile", None),
+        "handoff_quality_target": _setting(args.handoff_quality_target, settings, "handoff_quality_target", None),
         "keep": _setting(args.keep, settings, "keep", 20),
         "prune_apply": _setting(args.prune_apply, settings, "prune_apply", False),
         "verify_packs": _setting(args.verify_packs, settings, "verify_packs", False),

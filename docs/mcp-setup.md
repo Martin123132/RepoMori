@@ -42,6 +42,8 @@ context artifacts beside the new snapshot reports.
 `repomori_memory_run` also accepts:
 `anchor_out` (export a timeline anchor), `anchor_verify` (validate it immediately),
 and `allow_unverified_anchor` (continue with a warning instead of failing the call).
+It can also accept `handoff_quality_profile` (`safe`, `ci`, or `strict`) to make
+generated handoff quality visible as a memory run status.
 Call `repomori_brief_build` when an agent needs one concise start point for the
 latest timeline state.
 Call `repomori_chain_verify` to check that the snapshot timeline hash chain has
@@ -56,6 +58,9 @@ query or retrieve.
 Call `repomori_pack_inspect_diff` when an agent needs structural movement
 between two packs, including storage, language, vocabulary, and changed-file
 manifests.
+Call `repomori_timeline_search` to ask when a path, symbol, or concept appeared
+across snapshot packs. Call the handoff score/triage/quality/improve/archive
+tools when a receiving agent needs a stronger handoff package or a portable zip.
 
 ## Tools
 
@@ -66,6 +71,7 @@ manifests.
 - `repomori_anchor_build`
 - `repomori_anchor_verify`
 - `repomori_timeline_read`
+- `repomori_timeline_search`
 - `repomori_stats_read`
 - `repomori_doctor_run`
 - `repomori_pack_inspect`
@@ -74,6 +80,11 @@ manifests.
 - `repomori_context_build`
 - `repomori_diff_context_build`
 - `repomori_handoff_build`
+- `repomori_handoff_score`
+- `repomori_handoff_triage`
+- `repomori_handoff_quality`
+- `repomori_handoff_improve`
+- `repomori_handoff_archive`
 - `repomori_capsule_build`
 - `repomori_file_get`
 - `repomori_schema_list`

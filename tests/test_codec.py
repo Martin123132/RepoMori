@@ -26,9 +26,11 @@ from repomori.codec import (
     build_handoff_package,
     build_pack,
     check_handoff_package,
+    archive_handoff_package,
     compare_packs,
     diagnose_query,
     doctor_snapshot_dir,
+    evaluate_handoff_quality,
     evaluate_pack,
     format_agent_brief_markdown,
     format_benchmark_markdown,
@@ -37,6 +39,9 @@ from repomori.codec import (
     format_eval_markdown,
     format_handoff_score_markdown,
     format_handoff_triage_markdown,
+    format_handoff_quality_markdown,
+    format_handoff_improvement_markdown,
+    format_handoff_archive_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_context_markdown,
@@ -47,12 +52,14 @@ from repomori.codec import (
     format_stats_markdown,
     format_snapshot_markdown,
     format_timeline_markdown,
+    format_timeline_search_markdown,
     append_anchor_log,
     get_file_bytes,
     handle_agent_request,
     handle_mcp_request,
     init_config,
     info_pack,
+    improve_handoff_package,
     inspect_pack_diff,
     inspect_pack,
     load_memory_config,
@@ -60,6 +67,7 @@ from repomori.codec import (
     prune_snapshots,
     read_snapshot_stats,
     read_snapshot_timeline,
+    search_snapshot_timeline,
     run_mcp_bridge,
     run_demo,
     run_memory_cycle,
@@ -733,6 +741,65 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["actions"][0]["id"], "fix-integrity")
             self.assertIn("check-handoff", report["actions"][0]["command"])
 
+    def test_handoff_quality_profiles_warn_and_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            memory_dir = Path(tmp) / "memory"
+            memory = run_memory_cycle(repo, memory_dir)
+            handoff_dir = Path(memory["summary"]["handoff_dir"])
+
+            safe = evaluate_handoff_quality(handoff_dir, profile="safe")
+            strict = evaluate_handoff_quality(handoff_dir, profile="strict")
+
+            self.assertEqual(safe["schema_version"], "repomori.handoff_quality.v1")
+            self.assertEqual(safe["status"], "warn")
+            self.assertEqual(strict["status"], "fail")
+            self.assertTrue(strict["failures"])
+            markdown = format_handoff_quality_markdown(strict)
+            self.assertIn("# RepoMori Handoff Quality", markdown)
+            self.assertIn("Profile", markdown)
+
+    def test_improve_handoff_package_writes_quality_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "improved-handoff"
+
+            report = improve_handoff_package(
+                pack,
+                "sqlite Store",
+                out,
+                target_score=90,
+                max_attempts=2,
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.handoff_improvement.v1")
+            self.assertIn(report["status"], {"pass", "warn"})
+            self.assertTrue((out / "manifest.json").exists())
+            self.assertTrue((out / "handoff-improvement.json").exists())
+            self.assertTrue((out / "handoff-improvement.md").exists())
+            self.assertTrue((out / "handoff-score-before.json").exists())
+            self.assertTrue((out / "handoff-score-after.json").exists())
+            self.assertTrue((out / "handoff-quality.json").exists())
+            self.assertGreaterEqual(report["summary"]["final_score_percent"], 90)
+            markdown = format_handoff_improvement_markdown(report)
+            self.assertIn("# RepoMori Handoff Improvement", markdown)
+
+    def test_archive_handoff_package_writes_zip_and_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            handoff_dir = Path(tmp) / "handoff"
+            archive_path = Path(tmp) / "handoff-portable.zip"
+            build_handoff_package(pack, "sqlite Store", handoff_dir)
+
+            report = archive_handoff_package(handoff_dir, archive_path)
+
+            self.assertEqual(report["schema_version"], "repomori.handoff_archive.v1")
+            self.assertTrue(archive_path.exists())
+            self.assertGreater(report["archive"]["size"], 0)
+            self.assertEqual(report["archive"]["sha256"], hashlib.sha256(archive_path.read_bytes()).hexdigest())
+            markdown = format_handoff_archive_markdown(report)
+            self.assertIn("# RepoMori Handoff Archive", markdown)
+
     def test_benchmark_repo_outputs_reports_and_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -1330,6 +1397,16 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("# RepoMori Snapshot Timeline", timeline_markdown)
             self.assertIn("Recent Snapshots", timeline_markdown)
 
+            timeline_search = search_snapshot_timeline(out, "sqlite", limit=2)
+            self.assertEqual(timeline_search["schema_version"], "repomori.timeline_search.v1")
+            self.assertEqual(timeline_search["status"], "pass")
+            self.assertEqual(timeline_search["summary"]["matched_snapshot_count"], 2)
+            self.assertGreaterEqual(timeline_search["summary"]["matched_file_count"], 1)
+            self.assertEqual(timeline_search["matches"][0]["pack_path"], second["summary"]["pack_path"])
+            timeline_search_markdown = format_timeline_search_markdown(timeline_search)
+            self.assertIn("# RepoMori Timeline Search", timeline_search_markdown)
+            self.assertIn("File History", timeline_search_markdown)
+
             markdown = format_snapshot_markdown(second)
             self.assertIn("# RepoMori Snapshot", markdown)
             self.assertIn("Incremental", markdown)
@@ -1795,6 +1872,20 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIsNone(report["snapshot"]["handoff"])
             self.assertIsNone(report["snapshot"]["handoff_score"])
             self.assertIsNone(report["snapshot"]["handoff_triage"])
+
+    def test_run_memory_cycle_handoff_quality_profile_can_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "memory-quality"
+
+            report = run_memory_cycle(repo, out, handoff_quality_profile="strict")
+
+            self.assertEqual(report["schema_version"], "repomori.memory.v1")
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["summary"]["handoff_quality_status"], "fail")
+            self.assertEqual(report["summary"]["handoff_quality_profile"], "strict")
+            self.assertIsNotNone(report["handoff_quality"])
+            self.assertTrue(any("handoff-quality:" in reason for reason in report["failure_reasons"]))
 
     def test_run_memory_cycle_prune_dry_run_and_apply(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2444,6 +2535,51 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(invalid_response["ok"])
             self.assertEqual(invalid_response["error"]["code"], "invalid_request")
 
+    def test_agent_and_mcp_handoff_quality_search_and_archive_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "packs"
+            config = Path(tmp) / "repomori.toml"
+            init_config(repo, out, config_path=config, no_handoff=True)
+            run_memory_cycle(repo, out, no_handoff=True)
+            handoff_dir = Path(tmp) / "handoff-agent"
+            build_handoff_package(pack, "sqlite Store", handoff_dir)
+
+            quality_response = handle_agent_request(
+                {
+                    "id": "quality",
+                    "method": "handoff.quality",
+                    "params": {"score_or_handoff": str(handoff_dir), "profile": "safe"},
+                },
+                config_path=config,
+            )
+            self.assertTrue(quality_response["ok"])
+            self.assertEqual(quality_response["result"]["schema_version"], "repomori.handoff_quality.v1")
+
+            search_response = handle_agent_request(
+                {"id": "search", "method": "timeline.search", "params": {"text": "sqlite", "limit": 1}},
+                config_path=config,
+            )
+            self.assertTrue(search_response["ok"])
+            self.assertEqual(search_response["result"]["schema_version"], "repomori.timeline_search.v1")
+
+            archive_path = Path(tmp) / "handoff-agent.zip"
+            archive_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "archive",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "repomori_handoff_archive",
+                        "arguments": {"handoff_dir": str(handoff_dir), "out": str(archive_path)},
+                    },
+                },
+                config_path=config,
+            )
+            self.assertFalse(archive_response["result"]["isError"])
+            self.assertEqual(archive_response["result"]["structuredContent"]["schema_version"], "repomori.handoff_archive.v1")
+            self.assertTrue(archive_path.exists())
+
     def test_mcp_bridge_initialize_tools_and_errors(self) -> None:
         init_response = handle_mcp_request(
             {
@@ -2475,9 +2611,15 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_chain_verify", first_names)
         self.assertIn("repomori_anchor_build", first_names)
         self.assertIn("repomori_anchor_verify", first_names)
+        self.assertIn("repomori_timeline_search", first_names)
         self.assertIn("repomori_diff_context_build", first_names)
         self.assertIn("repomori_pack_inspect", first_names)
         self.assertIn("repomori_pack_inspect_diff", first_names)
+        self.assertIn("repomori_handoff_score", first_names)
+        self.assertIn("repomori_handoff_triage", first_names)
+        self.assertIn("repomori_handoff_quality", first_names)
+        self.assertIn("repomori_handoff_improve", first_names)
+        self.assertIn("repomori_handoff_archive", first_names)
         self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
         memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
@@ -2487,6 +2629,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("anchor_verify", memory_tool["inputSchema"]["properties"])
         self.assertIn("allow_unverified_anchor", memory_tool["inputSchema"]["properties"])
         self.assertIn("anchor_log", memory_tool["inputSchema"]["properties"])
+        self.assertIn("handoff_quality_profile", memory_tool["inputSchema"]["properties"])
 
         unknown_method = handle_mcp_request({"jsonrpc": "2.0", "id": 4, "method": "missing.method"})
         self.assertEqual(unknown_method["error"]["code"], -32601)
@@ -2742,6 +2885,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.brief.v1", schema_versions)
         self.assertIn("repomori.handoff_score.v1", schema_versions)
         self.assertIn("repomori.handoff_triage.v1", schema_versions)
+        self.assertIn("repomori.handoff_quality.v1", schema_versions)
+        self.assertIn("repomori.handoff_improvement.v1", schema_versions)
+        self.assertIn("repomori.handoff_archive.v1", schema_versions)
+        self.assertIn("repomori.timeline_search.v1", schema_versions)
         self.assertIn("repomori.inspect.v1", schema_versions)
         self.assertIn("repomori.compare.v1", schema_versions)
         self.assertIn("repomori.inspect_diff.v1", schema_versions)
@@ -2758,6 +2905,12 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("diff_context.build", catalog["agent_methods"])
         self.assertIn("inspect.build", catalog["agent_methods"])
         self.assertIn("inspect_diff.build", catalog["agent_methods"])
+        self.assertIn("handoff.score", catalog["agent_methods"])
+        self.assertIn("handoff.triage", catalog["agent_methods"])
+        self.assertIn("handoff.quality", catalog["agent_methods"])
+        self.assertIn("handoff.improve", catalog["agent_methods"])
+        self.assertIn("handoff.archive", catalog["agent_methods"])
+        self.assertIn("timeline.search", catalog["agent_methods"])
         self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
         self.assertIn("repomori_anchor_build", catalog["mcp_tools"])
@@ -2767,6 +2920,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_diff_context_build", catalog["mcp_tools"])
         self.assertIn("repomori_pack_inspect", catalog["mcp_tools"])
         self.assertIn("repomori_pack_inspect_diff", catalog["mcp_tools"])
+        self.assertIn("repomori_handoff_quality", catalog["mcp_tools"])
+        self.assertIn("repomori_handoff_improve", catalog["mcp_tools"])
+        self.assertIn("repomori_handoff_archive", catalog["mcp_tools"])
+        self.assertIn("repomori_timeline_search", catalog["mcp_tools"])
         self.assertIn("repomori_stats_read", catalog["mcp_tools"])
         self.assertIn("repomori_schema_list", catalog["mcp_tools"])
 
@@ -2814,6 +2971,14 @@ class RepoMoriCodecTests(unittest.TestCase):
         handoff_triage_schema = schema_catalog("repomori.handoff_triage.v1")
         self.assertEqual(handoff_triage_schema["selected"], "repomori.handoff_triage.v1")
         self.assertEqual(handoff_triage_schema["schema"]["producer"], "triage_handoff_score")
+
+        handoff_quality_schema = schema_catalog("repomori.handoff_quality.v1")
+        self.assertEqual(handoff_quality_schema["selected"], "repomori.handoff_quality.v1")
+        self.assertEqual(handoff_quality_schema["schema"]["producer"], "evaluate_handoff_quality")
+
+        timeline_search_schema = schema_catalog("repomori.timeline_search.v1")
+        self.assertEqual(timeline_search_schema["selected"], "repomori.timeline_search.v1")
+        self.assertEqual(timeline_search_schema["schema"]["producer"], "search_snapshot_timeline")
 
     def test_golden_fixture_core_output_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3438,6 +3603,72 @@ class RepoMoriCodecTests(unittest.TestCase):
             )
             self.assertIn("# RepoMori Handoff Triage", markdown_out.read_text(encoding="utf-8"))
 
+    def test_cli_handoff_quality_improve_and_archive_json_are_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            handoff_dir = Path(tmp) / "handoff-quality-cli"
+            improved_dir = Path(tmp) / "improved-cli"
+            archive_path = Path(tmp) / "handoff-cli.zip"
+            build_handoff_package(pack, "sqlite Store", handoff_dir)
+
+            quality_output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "handoff-quality",
+                    str(handoff_dir),
+                    "--profile",
+                    "safe",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+            quality = json.loads(quality_output)
+            self.assertEqual(quality["schema_version"], "repomori.handoff_quality.v1")
+
+            improve_output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "improve-handoff",
+                    str(pack),
+                    "sqlite Store",
+                    "--out",
+                    str(improved_dir),
+                    "--target-score",
+                    "90",
+                    "--max-attempts",
+                    "2",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+            improved = json.loads(improve_output)
+            self.assertEqual(improved["schema_version"], "repomori.handoff_improvement.v1")
+            self.assertTrue((improved_dir / "handoff-improvement.json").exists())
+
+            archive_output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "archive-handoff",
+                    str(improved_dir),
+                    "--out",
+                    str(archive_path),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+            archive = json.loads(archive_output)
+            self.assertEqual(archive["schema_version"], "repomori.handoff_archive.v1")
+            self.assertTrue(archive_path.exists())
+
     def test_cli_bench_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, _pack = self._demo_pack(Path(tmp))
@@ -3633,6 +3864,32 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["snapshot_count"], 2)
             self.assertEqual(payload["returned_count"], 1)
             self.assertEqual(payload["summary"]["chain_status"], "pass")
+
+    def test_cli_timeline_search_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "timeline-search-cli"
+            snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'sqlite'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "timeline-search",
+                    str(out),
+                    "sqlite",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.timeline_search.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertGreaterEqual(payload["summary"]["matched_snapshot_count"], 1)
 
     def test_cli_timeline_out_fail_shows_stderr_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -38,6 +38,10 @@ python -m repomori inspect-diff D:\Dev\YourRepo\.repomori-packs\previous.repomor
 python -m repomori diff-context D:\Dev\YourRepo\.repomori-packs\previous.repomori D:\Dev\YourRepo\.repomori-packs\latest.repomori "what changed?" --out D:\Dev\YourRepo\diff-context.md
 python -m repomori score-handoff D:\handoffs\repo --json
 python -m repomori handoff-triage D:\handoffs\repo --out D:\handoffs\repo\triage.md
+python -m repomori handoff-quality D:\handoffs\repo --profile ci --json
+python -m repomori improve-handoff D:\Dev\YourRepo\.repomori-packs\latest.repomori "continue this repo" --out D:\handoffs\repo-improved --target-score 90 --json
+python -m repomori archive-handoff D:\handoffs\repo-improved --out D:\handoffs\repo-improved.zip --json
+python -m repomori timeline-search D:\Dev\YourRepo\.repomori-packs "sqlite Store" --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
 python -m repomori release-health D:\Dev\YourRepo --snapshot-dir D:\Dev\YourRepo\.repomori-packs --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
@@ -64,6 +68,11 @@ Generated snapshot, memory, and benchmark handoffs also include
 `handoff-score.json` and `handoff-score.md` sidecars. If the score triage is not
 `pass`, RepoMori also writes `handoff-triage.json` and `handoff-triage.md` so the
 next agent can start from a short repair checklist.
+Use `handoff-quality` when CI or a receiving agent needs a profile-level
+pass/warn/fail decision. Use `improve-handoff` when you want RepoMori to retry a
+handoff locally with more files, snippets, and source bytes before handing it off.
+Use `archive-handoff` to create a portable zip, and `timeline-search` to ask when
+a path, symbol, or concept started appearing across snapshot packs.
 
 ## Recommended Local Workflow
 
@@ -73,7 +82,7 @@ Use `memory` at the end of a work session:
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --diff-context --prune-apply --json
 ```
 
-This builds a fresh incremental snapshot, creates a handoff package unless disabled, writes changed-files context when a previous snapshot exists, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Use `brief` on the pack directory to create one agent-readable start file with the latest inspect-diff and diff-context summaries, `chain` to verify timeline integrity, `anchor` to export a small proof of the current chain head, `verify-anchor` to check that proof later, and `stats` to see how many files and chunks RepoMori avoided rebuilding.
+This builds a fresh incremental snapshot, creates a handoff package unless disabled, writes changed-files context when a previous snapshot exists, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Add `--handoff-quality-profile safe`, `ci`, or `strict` when you want memory runs to surface handoff quality as an operational gate. Use `brief` on the pack directory to create one agent-readable start file with the latest inspect-diff and diff-context summaries, `chain` to verify timeline integrity, `anchor` to export a small proof of the current chain head, `verify-anchor` to check that proof later, and `stats` to see how many files and chunks RepoMori avoided rebuilding.
 
 `anchor` and `verify-anchor` expect an existing timeline in `<out-dir>`; if you have not
 run `memory` yet, start with `python -m repomori memory --config ...` (you can include

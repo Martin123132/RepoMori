@@ -117,7 +117,7 @@ repomori release-check [repo] [--baseline file] [--fail-on low] [--drift-policy 
 repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
 repomori drift-summary <log> [--limit n] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
-repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--anchor-out file] [--anchor-verify] [--allow-unverified-anchor] [--anchor-log file] [--no-incremental] [--diff-context] [--keep n] [--prune-apply] [--json]
+repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-handoff] [--handoff-quality-profile safe|ci|strict] [--anchor-out file] [--anchor-verify] [--allow-unverified-anchor] [--anchor-log file] [--no-incremental] [--diff-context] [--keep n] [--prune-apply] [--json]
 repomori agent [--config file] [--profile name]
 repomori mcp [--config file] [--profile name]
 repomori schema [schema-version] [--json]
@@ -126,6 +126,7 @@ repomori chain <snapshot-dir> [--format markdown|json] [--out file] [--json]
 repomori anchor <snapshot-dir> [--format json|markdown] [--out file] [--json]
 repomori verify-anchor <anchor.json> [snapshot-dir] [--no-current] [--format markdown|json] [--out file] [--json]
 repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
+repomori timeline-search <snapshot-dir> <text> [--limit n] [--per-snapshot-limit n] [--format markdown|json] [--out file] [--json]
 repomori stats <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
 repomori prune <snapshot-dir> [--keep n] [--apply] [--json]
@@ -146,6 +147,9 @@ repomori handoff <pack> <question> --out <dir> [--base-pack pack] [--copy-pack] 
 repomori check-handoff <dir> [--json]
 repomori score-handoff <dir> [--format markdown|json] [--out file] [--json]
 repomori handoff-triage <score-or-handoff> [--limit n] [--format markdown|json] [--out file] [--json]
+repomori handoff-quality <score-or-handoff> [--profile safe|ci|strict] [--target-score n] [--format markdown|json] [--out file] [--json]
+repomori improve-handoff <pack> <question> --out <dir> [--target-score n] [--quality-profile safe|ci|strict] [--max-attempts n] [--force] [--json]
+repomori archive-handoff <dir> [--out handoff.zip] [--force] [--json]
 repomori bench <repo> --out <dir> [--force] [--json]
 repomori get <pack> <path> [--out file]
 ```
@@ -396,6 +400,15 @@ turns weak score checks into a short prioritized repair checklist.
 When generated handoffs have non-pass triage, RepoMori also writes
 `handoff-triage.json` and `handoff-triage.md` next to the score sidecars so the
 next agent gets a direct fix list.
+
+`handoff-quality` applies `safe`, `ci`, or `strict` quality profiles to a score.
+`memory --handoff-quality-profile strict` can intentionally fail a weak generated
+handoff, while the default memory behavior remains unchanged.
+
+`improve-handoff` rebuilds a handoff with progressively richer local settings
+until it reaches the target score or exhausts attempts, then writes before/after
+score, triage, and quality reports. `archive-handoff` writes a portable zip for
+a verified handoff directory.
 
 `bench` runs the full local proof loop for a repository: build, verify, brief,
 eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.

@@ -25,6 +25,9 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.handoff.v1`: handoff directory manifest.
 - `repomori.handoff_score.v1`: deterministic handoff usefulness score report.
 - `repomori.handoff_triage.v1`: prioritized checklist generated from a handoff score.
+- `repomori.handoff_quality.v1`: safe/ci/strict handoff quality gate report.
+- `repomori.handoff_improvement.v1`: before/after handoff improvement run report.
+- `repomori.handoff_archive.v1`: portable handoff zip archive report.
 - `repomori.memory.v1`: full memory-cycle report.
 - `repomori.doctor.v1`: snapshot directory health report.
 - `repomori.prune.v1`: safe prune dry-run or applied result.
@@ -32,6 +35,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.snapshot_anchor.v1`: external proof record for the current snapshot chain head.
 - `repomori.snapshot_anchor.verify.v1`: verification report for an exported snapshot anchor proof.
 - `repomori.timeline.v1`: snapshot timeline report.
+- `repomori.timeline_search.v1`: query report across indexed snapshot packs.
 - `repomori.stats.v1`: snapshot incremental reuse and storage statistics.
 - `repomori.snapshot.v1`: single snapshot build report.
 - `repomori.config.v1`: `repomori.toml` profile config.
