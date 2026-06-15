@@ -11,8 +11,8 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Run tests
@@ -21,8 +21,8 @@ jobs:
   workflow-self-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Validate workflow YAML contract
@@ -186,7 +186,7 @@ jobs:
           RELEASE_HEALTH_PATH="$HEALTH_OUT/release-health.json" python -c "import json, os; from pathlib import Path; payload=json.loads(Path(os.environ['RELEASE_HEALTH_PATH']).read_text(encoding='utf-8')); assert payload.get('schema_version') == 'repomori.health.v1', 'release-health schema_version was unexpected'; assert 'checks' in payload, 'release-health payload is missing checks'; assert payload.get('artifacts', {}).get('json') is not None, 'release-health artifacts.json path missing'; print('release-health contract smoke passed')"
       - name: Archive workflow self-check artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: repomori-workflow-self-check
           path: |
@@ -195,8 +195,8 @@ jobs:
   release-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Preflight release-check workspace
@@ -251,7 +251,7 @@ jobs:
             --json
       - name: Upload release-check artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: repomori-release-check-artifacts
           path: |

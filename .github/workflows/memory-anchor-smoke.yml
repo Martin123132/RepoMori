@@ -31,8 +31,8 @@ jobs:
     name: matrix
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Run memory anchor profile smoke matrix
@@ -98,7 +98,7 @@ jobs:
 
       - name: Archive anchor smoke artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: repomori-memory-anchor-smoke
           path: |
