@@ -26,6 +26,9 @@ on:
         type: string
         default: ".repomori-smoke"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   smoke:
     name: matrix

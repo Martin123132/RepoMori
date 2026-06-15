@@ -41,6 +41,9 @@ on:
         default: "low"
         type: string
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   run_release_health:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
