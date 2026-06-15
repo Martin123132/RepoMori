@@ -14,6 +14,7 @@ python -m repomori schema repomori.memory.v1 --json
 ## Core Schemas
 
 - `repomori.pack.v1`: pack metadata stored in `.repomori` SQLite metadata.
+- `repomori.inspect.v1`: pack inspector report with storage, file, vocabulary, manifest, and verification summary.
 - `repomori.context.v1`: source-backed context bundle from `context.build`.
 - `repomori.diff_context.v1`: source-backed changed-files context from `diff_context.build`.
 - `repomori.brief.v1`: question-free orientation brief from one pack.

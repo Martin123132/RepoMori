@@ -42,7 +42,7 @@ python -m repomori demo --out D:\Temp\repomori-demo --force --json
 ```
 
 That creates a tiny demo repository, builds and verifies a `.repomori` pack,
-creates source-backed context, runs a memory cycle, and checks the MCP tool
+writes pack inspection and source-backed context, runs a memory cycle, and checks the MCP tool
 bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
 
 ## Quick Start
@@ -161,8 +161,8 @@ exact source text goes into the context bundle.
 
 `demo` creates a complete local quickstart under an output directory. It writes
 a tiny demo repo, builds `demo.repomori`, verifies it, creates context, runs a
-memory cycle, checks the MCP bridge, and writes `demo.json` plus a local
-`README.md` with follow-up commands.
+memory cycle, checks the MCP bridge, and writes `inspect.md`, `inspect.json`,
+`demo.json`, plus a local `README.md` with follow-up commands.
 
 `scan` checks a repository before packing or publishing. It looks for likely
 secrets, private-key files, generated `.repomori` packs, handoff and benchmark
@@ -269,7 +269,7 @@ query RepoMori without guessing shell commands. Send one JSON object per line:
 
 Responses are JSON lines with `schema_version`, `jsonrpc`, `id`, `ok`, and
 either `result` or `error`. Supported methods are `memory.run`, `timeline.read`,
-`stats.read`, `doctor.run`, `query.run`, `context.build`,
+`stats.read`, `doctor.run`, `inspect.build`, `query.run`, `context.build`,
 `brief.build`, `chain.verify`, `anchor.build`, `anchor.verify`, `diff_context.build`, `handoff.build`,
 `capsule.build`, `file.get`, and `schema.list`. Methods use the configured latest snapshot pack when `pack` is
 not supplied. `diff_context.build` can also infer previous-to-latest from the
@@ -302,7 +302,7 @@ Example local client config:
 
 The MCP tool names are `repomori_help`, `repomori_memory_run`,
 `repomori_brief_build`, `repomori_chain_verify`, `repomori_anchor_build`, `repomori_anchor_verify`, `repomori_timeline_read`,
-`repomori_stats_read`, `repomori_doctor_run`, `repomori_query_run`,
+`repomori_stats_read`, `repomori_doctor_run`, `repomori_pack_inspect`, `repomori_query_run`,
 `repomori_context_build`, `repomori_diff_context_build`, `repomori_handoff_build`,
 `repomori_capsule_build`, `repomori_file_get`, and
 `repomori_schema_list`.

@@ -8,7 +8,7 @@ RepoMori creates compact, source-backed repository memory for local agents and t
 python -m repomori demo --out D:\Temp\repomori-demo --force --json
 ```
 
-That command creates a tiny demo repository, builds `demo.repomori`, verifies the pack, builds context, runs a memory cycle, and checks the MCP tool bridge.
+That command creates a tiny demo repository, builds `demo.repomori`, verifies the pack, writes inspection and context reports, runs a memory cycle, and checks the MCP tool bridge.
 
 Inspect the output:
 

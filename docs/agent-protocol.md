@@ -19,8 +19,9 @@ Send one JSON object per line:
 {"id":5,"method":"anchor.build"}
 {"id":6,"method":"anchor.verify","params":{"anchor":"D:\\Dev\\RepoMori\\timeline-anchor.json"}}
 {"id":7,"method":"query.run","params":{"text":"sqlite Store","limit":3}}
-{"id":8,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
-{"id":9,"method":"file.get","params":{"path":"repomori/codec.py"}}
+{"id":8,"method":"inspect.build","params":{"max_files":8,"verify":true}}
+{"id":9,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
+{"id":10,"method":"file.get","params":{"path":"repomori/codec.py"}}
 ```
 
 Each response is one JSON line:
@@ -47,6 +48,7 @@ Errors use the same envelope with `ok:false` and an `error` object.
 - `timeline.read`: reads the configured snapshot timeline.
 - `stats.read`: reads incremental reuse and storage statistics for the snapshot timeline.
 - `doctor.run`: checks snapshot directory health.
+- `inspect.build`: inspects a pack's metadata, storage, indexes, vocabulary, and optional verification status.
 - `query.run`: runs pack query; uses latest configured pack if `pack` is omitted.
 - `context.build`: builds a source-backed context bundle.
 - `diff_context.build`: builds source-backed changed-files context between two packs.
@@ -108,6 +110,7 @@ machine-readable `structuredContent`.
 - `repomori_timeline_read`: reads the configured snapshot timeline.
 - `repomori_stats_read`: reads incremental reuse and storage statistics.
 - `repomori_doctor_run`: checks snapshot directory health.
+- `repomori_pack_inspect`: inspects a pack's contents, storage, indexes, and verification status.
 - `repomori_query_run`: searches a pack or latest configured snapshot pack.
 - `repomori_context_build`: builds a source-backed context bundle.
 - `repomori_diff_context_build`: builds source-backed changed-files context.

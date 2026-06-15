@@ -50,6 +50,9 @@ Call `repomori_anchor_build` when you want a compact proof record for the
 current chain head that can be copied outside the snapshot directory.
 Call `repomori_anchor_verify` to check that exported proof later and compare it
 with the configured current timeline.
+Call `repomori_pack_inspect` when an agent needs pack storage, language,
+vocabulary, source-manifest, or verification context before choosing what to
+query or retrieve.
 
 ## Tools
 
@@ -62,6 +65,7 @@ with the configured current timeline.
 - `repomori_timeline_read`
 - `repomori_stats_read`
 - `repomori_doctor_run`
+- `repomori_pack_inspect`
 - `repomori_query_run`
 - `repomori_context_build`
 - `repomori_diff_context_build`

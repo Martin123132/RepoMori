@@ -4365,6 +4365,8 @@ def run_demo(
 
     repo_path = out_path / "demo-repo"
     pack_path = out_path / "demo.repomori"
+    inspect_json_path = out_path / "inspect.json"
+    inspect_md_path = out_path / "inspect.md"
     context_path = out_path / "context.md"
     config_path = out_path / "repomori.toml"
     packs_path = out_path / "packs"
@@ -4374,6 +4376,9 @@ def run_demo(
     _write_demo_repo(repo_path)
     build = build_pack(repo_path, pack_path, BuildOptions(chunk_size=chunk_size, force=True))
     verify = verify_pack(pack_path)
+    inspect = inspect_pack(pack_path, max_files=8, top_terms=20, top_symbols=20, verify=True)
+    _write_json(inspect_json_path, inspect)
+    inspect_md_path.write_text(format_pack_inspect_markdown(inspect), encoding="utf-8")
     query = query_pack(pack_path, question, limit=3)
     context = build_context_bundle(pack_path, question, limit=2, max_bytes=1200)
     context_path.write_text(format_context_markdown(context), encoding="utf-8")
@@ -4400,7 +4405,16 @@ def run_demo(
     ]
     mcp_context_result = (mcp_context or {}).get("result", {})
     mcp_ok = isinstance(mcp_context_result, dict) and not mcp_context_result.get("isError")
-    status = "pass" if verify.get("verified") and query and context.get("sources") and memory.get("status") != "fail" and mcp_ok else "fail"
+    status = (
+        "pass"
+        if verify.get("verified")
+        and inspect.get("status") == "pass"
+        and query
+        and context.get("sources")
+        and memory.get("status") != "fail"
+        and mcp_ok
+        else "fail"
+    )
     elapsed = time.time() - started
     summary = {
         "elapsed_seconds": round(elapsed, 4),
@@ -4410,6 +4424,8 @@ def run_demo(
         "pack_bytes": build.get("pack_bytes"),
         "logical_bytes": build.get("logical_bytes"),
         "file_count": build.get("file_count"),
+        "inspect_status": inspect.get("status"),
+        "inspect_schema": inspect.get("schema_version"),
         "query_top_path": query[0].get("path") if query else None,
         "context_source_count": len(context.get("sources", [])),
         "memory_status": memory.get("status"),
@@ -4419,6 +4435,8 @@ def run_demo(
     artifacts = {
         "demo_repo": repo_path.name,
         "pack": pack_path.name,
+        "inspect_json": inspect_json_path.name,
+        "inspect_markdown": inspect_md_path.name,
         "context_markdown": context_path.name,
         "config": config_path.name,
         "memory_out_dir": packs_path.name,
@@ -4436,6 +4454,7 @@ def run_demo(
         "artifacts": artifacts,
         "build": build,
         "verify": verify,
+        "inspect": inspect,
         "query": query,
         "context": context,
         "config": config,
@@ -6733,9 +6752,14 @@ def _demo_output_readme(report: dict[str, Any]) -> str:
         f"- Pack: `{pack}`\n"
         f"- Config: `{config}`\n"
         f"- Question: `{question}`\n\n"
+        "Artifacts to inspect:\n\n"
+        "- `inspect.md` / `inspect.json`: pack contents, storage, vocabulary, and verification.\n"
+        "- `context.md`: source-backed context for the demo question.\n"
+        "- `demo.json`: complete machine-readable demo report.\n\n"
         "Try these next:\n\n"
         "```powershell\n"
         f"python -m repomori query {pack} \"{question}\" --json\n"
+        f"python -m repomori inspect {pack} --verify --out {out_dir}\\inspect.md\n"
         f"python -m repomori context {pack} \"{question}\" --format markdown --out {out_dir}\\context.md\n"
         f"python -m repomori memory --config {config} --json\n"
         f"python -m repomori mcp --config {config}\n"
