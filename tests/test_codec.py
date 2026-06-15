@@ -36,6 +36,7 @@ from repomori.codec import (
     format_compare_markdown,
     format_eval_markdown,
     format_handoff_score_markdown,
+    format_handoff_triage_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_context_markdown,
@@ -73,6 +74,7 @@ from repomori.codec import (
     snapshot_repo,
     verify_snapshot_anchor,
     tree_pack,
+    triage_handoff_score,
     verify_snapshot_chain,
     verify_pack,
     write_scan_baseline,
@@ -674,6 +676,62 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(report["summary"]["inspect_diff_present"])
             delta = next(item for item in report["checks"] if item["id"] == "delta_context")
             self.assertEqual(delta["status"], "pass")
+
+    def test_handoff_triage_reports_no_urgent_actions_for_clean_score(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff-triage-clean"
+            build_handoff_package(pack, "sqlite Store", out)
+            score = score_handoff_package(out)
+            score = json.loads(json.dumps(score))
+            score["warnings"] = []
+            score["summary"]["warned_checks"] = []
+            score["summary"]["score"] = score["summary"]["max_score"]
+            score["summary"]["score_percent"] = 100.0
+            for check in score["checks"]:
+                check["status"] = "pass"
+                check["points"] = check["max_points"]
+
+            report = triage_handoff_score(score)
+
+            self.assertEqual(report["schema_version"], "repomori.handoff_triage.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["action_count"], 0)
+            markdown = format_handoff_triage_markdown(report)
+            self.assertIn("# RepoMori Handoff Triage", markdown)
+            self.assertIn("No urgent handoff fixes", markdown)
+
+    def test_handoff_triage_turns_weak_score_into_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            memory_dir = Path(tmp) / "memory"
+            memory = run_memory_cycle(repo, memory_dir)
+            handoff_dir = Path(memory["summary"]["handoff_dir"])
+
+            report = triage_handoff_score(handoff_dir)
+
+            self.assertEqual(report["schema_version"], "repomori.handoff_triage.v1")
+            self.assertEqual(report["status"], "fail")
+            self.assertGreaterEqual(report["summary"]["high_priority_count"], 1)
+            action_ids = {item["id"] for item in report["actions"]}
+            self.assertIn("improve-source-context", action_ids)
+            self.assertIn("tighten-eval-questions", action_ids)
+            self.assertIn("rescore-after-fixes", action_ids)
+            self.assertEqual(report["source"]["type"], "handoff_dir_score")
+
+    def test_handoff_triage_prioritizes_invalid_handoff_integrity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff-triage-invalid"
+            build_handoff_package(pack, "sqlite Store", out)
+            (out / "context.md").write_text("tampered\n", encoding="utf-8")
+
+            report = triage_handoff_score(out)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertGreaterEqual(report["summary"]["high_priority_count"], 1)
+            self.assertEqual(report["actions"][0]["id"], "fix-integrity")
+            self.assertIn("check-handoff", report["actions"][0]["command"])
 
     def test_benchmark_repo_outputs_reports_and_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2662,6 +2720,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.agent_brief.v1", schema_versions)
         self.assertIn("repomori.brief.v1", schema_versions)
         self.assertIn("repomori.handoff_score.v1", schema_versions)
+        self.assertIn("repomori.handoff_triage.v1", schema_versions)
         self.assertIn("repomori.inspect.v1", schema_versions)
         self.assertIn("repomori.compare.v1", schema_versions)
         self.assertIn("repomori.inspect_diff.v1", schema_versions)
@@ -2731,6 +2790,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(handoff_score_schema["selected"], "repomori.handoff_score.v1")
         self.assertEqual(handoff_score_schema["schema"]["producer"], "score_handoff_package")
 
+        handoff_triage_schema = schema_catalog("repomori.handoff_triage.v1")
+        self.assertEqual(handoff_triage_schema["selected"], "repomori.handoff_triage.v1")
+        self.assertEqual(handoff_triage_schema["schema"]["producer"], "triage_handoff_score")
+
     def test_golden_fixture_core_output_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2743,6 +2806,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             capsule = build_capsule(pack, max_files=2)
             handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
             handoff_score = score_handoff_package(handoff_dir)
+            handoff_triage = triage_handoff_score(handoff_score)
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
             inspect_diff = inspect_pack_diff(pack, memory["summary"]["pack_path"], max_files=2)
             diff_context = build_diff_context_bundle(pack, memory["summary"]["pack_path"])
@@ -2784,6 +2848,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     handoff_score,
                     "repomori.handoff_score.v1",
                     {"schema_version", "status", "handoff_dir", "summary", "checks", "validation"},
+                ),
+                "handoff_triage": (
+                    handoff_triage,
+                    "repomori.handoff_triage.v1",
+                    {"schema_version", "status", "source", "summary", "actions"},
                 ),
                 "diff_context": (
                     diff_context,
@@ -2839,6 +2908,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(capsule["files"])
             self.assertEqual(handoff["status"], "complete")
             self.assertEqual(handoff_score["status"], "pass")
+            self.assertIn(handoff_triage["status"], {"pass", "warn"})
             self.assertEqual(inspect_diff["summary"]["changed_count"], 0)
             self.assertEqual(diff_context["summary"]["changed_count"], 0)
             self.assertEqual(memory["status"], "pass")
@@ -3306,6 +3376,46 @@ class RepoMoriCodecTests(unittest.TestCase):
                 cwd=Path(__file__).resolve().parents[1],
             )
             self.assertIn("# RepoMori Handoff Score", markdown_out.read_text(encoding="utf-8"))
+
+    def test_cli_handoff_triage_json_and_markdown_are_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            memory_dir = Path(tmp) / "memory"
+            markdown_out = Path(tmp) / "handoff-triage.md"
+            memory = run_memory_cycle(repo, memory_dir)
+            handoff_dir = Path(memory["summary"]["handoff_dir"])
+            score_path = handoff_dir / "handoff-score.json"
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "handoff-triage",
+                    str(score_path),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.handoff_triage.v1")
+            self.assertIn(payload["status"], {"pass", "warn", "fail"})
+            self.assertEqual(payload["source"]["type"], "score_file")
+
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "handoff-triage",
+                    str(handoff_dir),
+                    "--out",
+                    str(markdown_out),
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+            )
+            self.assertIn("# RepoMori Handoff Triage", markdown_out.read_text(encoding="utf-8"))
 
     def test_cli_bench_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

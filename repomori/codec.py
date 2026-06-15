@@ -129,6 +129,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "handoff_dir", "summary", "checks", "validation"],
     },
     {
+        "schema_version": "repomori.handoff_triage.v1",
+        "kind": "report",
+        "title": "Agent handoff fix checklist",
+        "producer": "triage_handoff_score",
+        "required_fields": ["schema_version", "status", "source", "summary", "actions"],
+    },
+    {
         "schema_version": "repomori.memory.v1",
         "kind": "report",
         "title": "Snapshot memory cycle report",
@@ -4846,6 +4853,76 @@ def format_handoff_score_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def triage_handoff_score(score_or_handoff: Path | str | dict[str, Any], *, limit: int = 8) -> dict[str, Any]:
+    """Turn a handoff score report into a short prioritized fix checklist."""
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    score, source = _load_handoff_score_input(score_or_handoff)
+    summary = score.get("summary", {})
+    actions = _handoff_triage_actions(score)
+    actions = sorted(actions, key=lambda item: (item["priority"], item["id"]))[:limit]
+    high_count = sum(1 for item in actions if item["priority"] == 1)
+    medium_count = sum(1 for item in actions if item["priority"] == 2)
+    low_count = sum(1 for item in actions if item["priority"] >= 3)
+    status = "fail" if high_count else "warn" if actions or score.get("status") != "pass" else "pass"
+
+    return {
+        "schema_version": "repomori.handoff_triage.v1",
+        "status": status,
+        "source": source,
+        "created_at": int(time.time()),
+        "settings": {"limit": limit},
+        "summary": {
+            "score_status": score.get("status"),
+            "score_percent": summary.get("score_percent"),
+            "score": summary.get("score"),
+            "max_score": summary.get("max_score"),
+            "handoff_dir": score.get("handoff_dir"),
+            "action_count": len(actions),
+            "high_priority_count": high_count,
+            "medium_priority_count": medium_count,
+            "low_priority_count": low_count,
+        },
+        "actions": actions,
+        "score": score,
+    }
+
+
+def format_handoff_triage_markdown(report: dict[str, Any]) -> str:
+    """Render a handoff triage report as Markdown."""
+
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Handoff Triage",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Handoff: `{summary.get('handoff_dir')}`",
+        f"- Score: `{summary.get('score_percent')}`% status=`{summary.get('score_status')}`",
+        "",
+        "## Checklist",
+        "",
+    ]
+    actions = report.get("actions", [])
+    if not actions:
+        lines.extend(["No urgent handoff fixes. Keep the current handoff with its source pack.", ""])
+    else:
+        for index, action in enumerate(actions, start=1):
+            lines.append(
+                f"{index}. [P{action.get('priority')}] {action.get('title')} "
+                f"(`{action.get('id')}`)"
+            )
+            lines.append(f"   - Why: {action.get('reason')}")
+            fix = action.get("fix")
+            if fix:
+                lines.append(f"   - Fix: {fix}")
+            command = action.get("command")
+            if command:
+                lines.append(f"   - Command: `{command}`")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _write_handoff_score_artifacts(handoff_path: Path) -> tuple[dict[str, Any], Path, Path]:
     score = score_handoff_package(handoff_path)
     score_json = handoff_path / "handoff-score.json"
@@ -7826,6 +7903,186 @@ def _handoff_score_file_exists(root: Path, relative: str) -> bool:
     except ValueError:
         return False
     return path.exists() and path.is_file()
+
+
+def _load_handoff_score_input(score_or_handoff: Path | str | dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    if isinstance(score_or_handoff, dict):
+        if score_or_handoff.get("schema_version") != "repomori.handoff_score.v1":
+            raise ValueError("handoff score input must use schema repomori.handoff_score.v1")
+        return score_or_handoff, {"type": "object", "path": None}
+
+    path = Path(score_or_handoff).resolve()
+    if path.is_dir():
+        score_path = path / "handoff-score.json"
+        if score_path.exists() and score_path.is_file():
+            score = _read_handoff_score_file(score_path)
+            return score, {"type": "handoff_dir_score", "path": str(path), "score_path": str(score_path)}
+        score = score_handoff_package(path)
+        return score, {"type": "handoff_dir", "path": str(path), "score_path": None}
+
+    score = _read_handoff_score_file(path)
+    return score, {"type": "score_file", "path": str(path), "score_path": str(path)}
+
+
+def _read_handoff_score_file(path: Path) -> dict[str, Any]:
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"Handoff score file not found: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != "repomori.handoff_score.v1":
+        raise ValueError(f"Unexpected handoff score schema: {path}")
+    return payload
+
+
+def _handoff_triage_actions(score: dict[str, Any]) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    checks = {
+        str(item.get("id")): item
+        for item in score.get("checks", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    warnings = [item for item in score.get("warnings", []) if isinstance(item, dict)]
+    errors = [item for item in score.get("errors", []) if isinstance(item, dict)]
+    handoff_dir = score.get("handoff_dir") or "<handoff-dir>"
+
+    if score.get("status") == "fail" or checks.get("integrity", {}).get("status") == "fail":
+        actions.append(
+            _handoff_triage_action(
+                "fix-integrity",
+                1,
+                "Fix failed handoff validation",
+                "The score report says artifact hashes, JSON files, or copied pack verification failed.",
+                "Run check-handoff, restore or regenerate the broken artifact, then rescore the handoff.",
+                f"python -m repomori check-handoff {handoff_dir} --json",
+                "integrity",
+            )
+        )
+    if checks.get("manifest", {}).get("status") == "fail":
+        actions.append(
+            _handoff_triage_action(
+                "rebuild-manifest",
+                1,
+                "Rebuild the handoff manifest",
+                "The handoff manifest is missing required identity, question, pack, or completion fields.",
+                "Regenerate the handoff from the source pack so manifest.json and artifact hashes agree.",
+                None,
+                "manifest",
+            )
+        )
+
+    missing = [item for item in warnings if item.get("code") == "missing_core_artifact"]
+    if missing or checks.get("artifact_coverage", {}).get("status") in {"fail", "warn"}:
+        paths = ", ".join(str(item.get("path")) for item in missing[:5] if item.get("path"))
+        reason = "Core handoff artifacts are missing from disk or the manifest."
+        if paths:
+            reason += f" Missing: {paths}."
+        actions.append(
+            _handoff_triage_action(
+                "restore-core-artifacts",
+                1 if checks.get("artifact_coverage", {}).get("status") == "fail" else 2,
+                "Restore missing handoff artifacts",
+                reason,
+                "Rebuild the handoff with --force, or restore the missing files from the last good package.",
+                None,
+                "artifact_coverage",
+            )
+        )
+
+    source_context = checks.get("source_context", {})
+    if source_context.get("status") in {"fail", "warn"}:
+        details = source_context.get("details", {})
+        actions.append(
+            _handoff_triage_action(
+                "improve-source-context",
+                1 if source_context.get("status") == "fail" else 2,
+                "Regenerate richer source context",
+                f"Context has sources={details.get('source_count')} snippets={details.get('snippet_count')} line_numbered={details.get('line_numbered_snippets')}.",
+                "Use a more specific handoff question, raise --max-files, or raise --snippets-per-file.",
+                None,
+                "source_context",
+            )
+        )
+
+    machine_state = checks.get("machine_state", {})
+    if machine_state.get("status") in {"fail", "warn"}:
+        actions.append(
+            _handoff_triage_action(
+                "refresh-machine-state",
+                2,
+                "Refresh brief and capsule machine state",
+                "The handoff has weak orientation, capsule files, source manifest, or vocabulary coverage.",
+                "Rebuild the handoff from a freshly verified pack and include enough files for the capsule.",
+                None,
+                "machine_state",
+            )
+        )
+
+    context_eval = checks.get("context_eval", {})
+    weak_eval = next((item for item in warnings if item.get("code") == "weak_eval_questions"), None)
+    if context_eval.get("status") in {"fail", "warn"} or weak_eval:
+        details = context_eval.get("details", {})
+        actions.append(
+            _handoff_triage_action(
+                "tighten-eval-questions",
+                2 if context_eval.get("status") != "fail" else 1,
+                "Tighten the handoff question and eval prompts",
+                f"Eval has passed={details.get('passed_questions')} weak={details.get('weak_questions')} total={details.get('question_count')}.",
+                "Add targeted --eval-question values and prefer a task-shaped handoff question over a broad continuation prompt.",
+                None,
+                "context_eval",
+            )
+        )
+
+    delta_context = checks.get("delta_context", {})
+    if delta_context.get("status") in {"fail", "warn"}:
+        actions.append(
+            _handoff_triage_action(
+                "restore-delta-context",
+                2 if delta_context.get("status") == "warn" else 1,
+                "Restore compare and inspect-diff artifacts",
+                "The handoff records a base pack but is missing compare.json or inspect-diff.json.",
+                "Rebuild the handoff with --base-pack pointing at the previous pack.",
+                None,
+                "delta_context",
+            )
+        )
+
+    if score.get("status") == "pass" and not actions:
+        return []
+    if not errors and not any(action["id"] == "rescore-after-fixes" for action in actions):
+        actions.append(
+            _handoff_triage_action(
+                "rescore-after-fixes",
+                3,
+                "Rescore after applying fixes",
+                "The checklist should end with a fresh deterministic score report.",
+                "Run score-handoff again and keep handoff-score.json with the package.",
+                f"python -m repomori score-handoff {handoff_dir} --json",
+                "score",
+            )
+        )
+    return actions
+
+
+def _handoff_triage_action(
+    action_id: str,
+    priority: int,
+    title: str,
+    reason: str,
+    fix: str,
+    command: str | None,
+    related_check: str,
+) -> dict[str, Any]:
+    data = {
+        "id": action_id,
+        "priority": priority,
+        "title": title,
+        "reason": reason,
+        "fix": fix,
+        "related_check": related_check,
+    }
+    if command:
+        data["command"] = command
+    return data
 
 
 def _safe_child_path(root: Path, relative: str) -> Path:

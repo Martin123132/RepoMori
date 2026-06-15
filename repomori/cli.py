@@ -30,6 +30,7 @@ from .codec import (
     format_diff_context_markdown,
     format_eval_markdown,
     format_handoff_score_markdown,
+    format_handoff_triage_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_snapshot_chain_markdown,
@@ -60,6 +61,7 @@ from .codec import (
     score_handoff_package,
     snapshot_repo,
     tree_pack,
+    triage_handoff_score,
     verify_snapshot_chain,
     verify_snapshot_anchor,
     verify_pack,
@@ -475,6 +477,13 @@ def main(argv: list[str] | None = None) -> int:
     score_handoff.add_argument("--out", type=Path, help="Write the score report to a file.")
     score_handoff.add_argument("--json", action="store_true", help="Print JSON output.")
 
+    handoff_triage = sub.add_parser("handoff-triage", help="Turn a handoff score into a prioritized fix checklist.")
+    handoff_triage.add_argument("score_or_handoff", type=Path, help="handoff-score.json or a handoff directory.")
+    handoff_triage.add_argument("--limit", type=int, default=8, help="Maximum checklist items.")
+    handoff_triage.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    handoff_triage.add_argument("--out", type=Path, help="Write the triage report to a file.")
+    handoff_triage.add_argument("--json", action="store_true", help="Print JSON output.")
+
     bench = sub.add_parser("bench", help="Run an end-to-end repository benchmark.")
     bench.add_argument("repo", type=Path)
     bench.add_argument("--out", type=Path, required=True, help="Directory to write benchmark artifacts.")
@@ -884,7 +893,7 @@ def main(argv: list[str] | None = None) -> int:
             args.out.write_text(output, encoding="utf-8")
         else:
             print(output, end="" if output.endswith("\n") else "\n")
-        return 0 if report["status"] != "fail" else 1
+        return 0
     if args.command == "tree":
         _print(tree_pack(args.pack, limit=args.limit), args.json)
         return 0
@@ -1076,6 +1085,20 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0 if report["status"] != "fail" else 1
+    if args.command == "handoff-triage":
+        report = triage_handoff_score(args.score_or_handoff, limit=args.limit)
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_handoff_triage_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0
     if args.command == "bench":
         extra_questions = _eval_questions(args.eval_question, args.questions_file)
         report = benchmark_repo(

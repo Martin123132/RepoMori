@@ -86,6 +86,7 @@ python -m repomori handoff C:\path\to\repo.repomori "where is storage handled?" 
 python -m repomori handoff C:\path\to\new.repomori "continue this work" --base-pack C:\path\to\old.repomori --out D:\handoffs\next
 python -m repomori check-handoff D:\handoffs\repo --json
 python -m repomori score-handoff D:\handoffs\repo --json
+python -m repomori handoff-triage D:\handoffs\repo --out D:\handoffs\repo\triage.md
 python -m repomori bench D:\Dev\RepoMori --out D:\benchmarks\repomori
 python -m repomori get C:\path\to\repo.repomori path\inside\repo.py --out restored.py
 ```
@@ -144,6 +145,7 @@ repomori capsule <pack> [--max-files n] [--top-terms n] [--out file]
 repomori handoff <pack> <question> --out <dir> [--base-pack pack] [--copy-pack] [--force] [--json]
 repomori check-handoff <dir> [--json]
 repomori score-handoff <dir> [--format markdown|json] [--out file] [--json]
+repomori handoff-triage <score-or-handoff> [--limit n] [--format markdown|json] [--out file] [--json]
 repomori bench <repo> --out <dir> [--force] [--json]
 repomori get <pack> <path> [--out file]
 ```
@@ -388,6 +390,9 @@ eval strength, and base-pack delta artifacts when present.
 Snapshot, memory, and benchmark-generated handoffs also write
 `handoff-score.json` and `handoff-score.md` sidecars automatically and surface
 the score status in their summaries.
+
+`handoff-triage` reads either a handoff directory or `handoff-score.json` and
+turns weak score checks into a short prioritized repair checklist.
 
 `bench` runs the full local proof loop for a repository: build, verify, brief,
 eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
