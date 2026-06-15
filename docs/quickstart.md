@@ -59,6 +59,8 @@ when it needs source-backed changed-file snippets.
 Handoff packages created with `--base-pack`, `snapshot --handoff`, or `memory`
 include both compare and inspect-diff artifacts so a receiving agent can start
 from the latest file-level and machine-state deltas.
+Generated snapshot, memory, and benchmark handoffs also include
+`handoff-score.json` and `handoff-score.md` sidecars.
 
 ## Recommended Local Workflow
 

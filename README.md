@@ -385,6 +385,9 @@ JSON artifacts, and any copied `.repomori` pack.
 `score-handoff` scores a handoff's operational usefulness: validation state,
 artifact coverage, source-backed context snippets, capsule/brief machine state,
 eval strength, and base-pack delta artifacts when present.
+Snapshot, memory, and benchmark-generated handoffs also write
+`handoff-score.json` and `handoff-score.md` sidecars automatically and surface
+the score status in their summaries.
 
 `bench` runs the full local proof loop for a repository: build, verify, brief,
 eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.

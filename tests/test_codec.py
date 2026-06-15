@@ -686,12 +686,16 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["status"], "pass")
             self.assertTrue(report["summary"]["verify_passed"])
             self.assertTrue(report["summary"]["handoff_passed"])
+            self.assertIn(report["summary"]["handoff_score_status"], {"pass", "warn"})
+            self.assertGreaterEqual(report["summary"]["handoff_score_percent"], 85)
             self.assertTrue((out / "bench.json").exists())
             self.assertTrue((out / "bench.md").exists())
             self.assertTrue((out / "brief.json").exists())
             self.assertTrue((out / "brief.md").exists())
             self.assertTrue((out / "handoff" / "manifest.json").exists())
             self.assertTrue((out / "handoff" / "brief.json").exists())
+            self.assertTrue((out / "handoff" / "handoff-score.json").exists())
+            self.assertEqual(report["handoff_score"]["schema_version"], "repomori.handoff_score.v1")
             self.assertEqual(json.loads((out / "bench.json").read_text(encoding="utf-8")), report)
 
             markdown = format_benchmark_markdown(report)
@@ -1539,16 +1543,23 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(second["schema_version"], "repomori.snapshot.v1")
             self.assertIsNotNone(second["handoff"])
             self.assertTrue(second["summary"]["handoff_passed"])
+            self.assertEqual(second["summary"]["handoff_score_status"], "pass")
+            self.assertGreaterEqual(second["summary"]["handoff_score_percent"], 85)
             handoff_dir = Path(second["summary"]["handoff_dir"])
             self.assertTrue((handoff_dir / "manifest.json").exists())
             self.assertTrue((handoff_dir / "compare.json").exists())
             self.assertTrue((handoff_dir / "inspect-diff.json").exists())
+            self.assertTrue((handoff_dir / "handoff-score.json").exists())
+            self.assertTrue((handoff_dir / "handoff-score.md").exists())
+            self.assertEqual(second["handoff_score"]["schema_version"], "repomori.handoff_score.v1")
             manifest = second["handoff"]
             self.assertEqual(manifest["settings"]["base_pack"], first["summary"]["pack_path"])
             self.assertEqual(second["handoff_check"]["checked_json"], 7)
             index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
             self.assertEqual(index["latest"]["handoff_dir"], str(handoff_dir))
             self.assertTrue(index["latest"]["handoff_passed"])
+            self.assertEqual(index["latest"]["handoff_score_status"], "pass")
+            self.assertTrue(Path(index["latest"]["handoff_score_json"]).exists())
 
     def test_doctor_snapshot_dir_passes_clean_timeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1682,6 +1693,11 @@ class RepoMoriCodecTests(unittest.TestCase):
             handoff_dir = Path(report["summary"]["handoff_dir"])
             self.assertTrue((handoff_dir / "manifest.json").exists())
             self.assertTrue(report["summary"]["handoff_passed"])
+            self.assertIn(report["summary"]["handoff_score_status"], {"pass", "warn"})
+            self.assertGreaterEqual(report["summary"]["handoff_score_percent"], 60)
+            self.assertTrue((handoff_dir / "handoff-score.json").exists())
+            self.assertIn("handoff_score_json", report["artifacts"])
+            self.assertEqual(report["snapshot"]["handoff_score"]["schema_version"], "repomori.handoff_score.v1")
             self.assertEqual(report["timeline"]["returned_count"], 1)
 
     def test_run_memory_cycle_can_skip_handoff(self) -> None:
@@ -1695,8 +1711,11 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["status"], "pass")
             self.assertIsNone(report["settings"]["handoff_question"])
             self.assertIsNone(report["summary"]["handoff_dir"])
+            self.assertIsNone(report["summary"]["handoff_score_status"])
             self.assertNotIn("handoff", report["artifacts"])
+            self.assertNotIn("handoff_score_json", report["artifacts"])
             self.assertIsNone(report["snapshot"]["handoff"])
+            self.assertIsNone(report["snapshot"]["handoff_score"])
 
     def test_run_memory_cycle_prune_dry_run_and_apply(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3449,7 +3468,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(output)
             self.assertEqual(payload["schema_version"], "repomori.snapshot.v1")
             self.assertTrue(payload["summary"]["handoff_passed"])
+            self.assertEqual(payload["summary"]["handoff_score_status"], "pass")
             self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "compare.json").exists())
+            self.assertTrue((Path(payload["summary"]["handoff_dir"]) / "handoff-score.json").exists())
 
     def test_cli_timeline_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
