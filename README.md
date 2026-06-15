@@ -393,6 +393,9 @@ the score status in their summaries.
 
 `handoff-triage` reads either a handoff directory or `handoff-score.json` and
 turns weak score checks into a short prioritized repair checklist.
+When generated handoffs have non-pass triage, RepoMori also writes
+`handoff-triage.json` and `handoff-triage.md` next to the score sidecars so the
+next agent gets a direct fix list.
 
 `bench` runs the full local proof loop for a repository: build, verify, brief,
 eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.

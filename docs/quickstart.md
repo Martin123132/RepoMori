@@ -61,7 +61,9 @@ Handoff packages created with `--base-pack`, `snapshot --handoff`, or `memory`
 include both compare and inspect-diff artifacts so a receiving agent can start
 from the latest file-level and machine-state deltas.
 Generated snapshot, memory, and benchmark handoffs also include
-`handoff-score.json` and `handoff-score.md` sidecars.
+`handoff-score.json` and `handoff-score.md` sidecars. If the score triage is not
+`pass`, RepoMori also writes `handoff-triage.json` and `handoff-triage.md` so the
+next agent can start from a short repair checklist.
 
 ## Recommended Local Workflow
 

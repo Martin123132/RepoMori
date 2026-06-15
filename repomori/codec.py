@@ -3985,6 +3985,9 @@ def build_agent_brief(
         "handoff_score_percent": latest.get("handoff_score_percent") if latest else None,
         "handoff_score_failed_checks": latest.get("handoff_score_failed_checks") if latest else None,
         "handoff_score_warned_checks": latest.get("handoff_score_warned_checks") if latest else None,
+        "handoff_triage_status": latest.get("handoff_triage_status") if latest else None,
+        "handoff_triage_action_count": latest.get("handoff_triage_action_count") if latest else None,
+        "handoff_triage_high_priority_count": latest.get("handoff_triage_high_priority_count") if latest else None,
         "inspect_diff_status": latest.get("inspect_diff_status") if latest else None,
         "inspect_diff_json": latest.get("inspect_diff_json") if latest else None,
         "inspect_diff_markdown": latest.get("inspect_diff_markdown") if latest else None,
@@ -4073,6 +4076,7 @@ def format_agent_brief_markdown(brief: dict[str, Any]) -> str:
         f"- Verify passed: `{latest.get('verify_passed')}`",
         f"- Handoff: `{summary.get('handoff_dir')}` exists=`{summary.get('handoff_exists')}`",
         f"- Handoff score: `{summary.get('handoff_score_status')}` `{summary.get('handoff_score_percent')}`%",
+        f"- Handoff triage: `{summary.get('handoff_triage_status')}` actions=`{summary.get('handoff_triage_action_count')}` high=`{summary.get('handoff_triage_high_priority_count')}`",
         "",
     ]
 
@@ -4932,6 +4936,21 @@ def _write_handoff_score_artifacts(handoff_path: Path) -> tuple[dict[str, Any], 
     return score, score_json, score_md
 
 
+def _write_handoff_triage_artifacts(
+    handoff_path: Path,
+    score: dict[str, Any],
+) -> tuple[dict[str, Any], Path | None, Path | None]:
+    triage = triage_handoff_score(score)
+    if triage.get("status") == "pass":
+        return triage, None, None
+
+    triage_json = handoff_path / "handoff-triage.json"
+    triage_md = handoff_path / "handoff-triage.md"
+    _write_json(triage_json, triage)
+    triage_md.write_text(format_handoff_triage_markdown(triage), encoding="utf-8")
+    return triage, triage_json, triage_md
+
+
 def benchmark_repo(
     repo: Path | str,
     out_dir: Path | str,
@@ -4992,9 +5011,14 @@ def benchmark_repo(
     )
     handoff_check = check_handoff_package(handoff_path)
     handoff_score, handoff_score_json, handoff_score_md = _write_handoff_score_artifacts(handoff_path)
+    handoff_triage, handoff_triage_json, handoff_triage_md = _write_handoff_triage_artifacts(
+        handoff_path,
+        handoff_score,
+    )
     elapsed = time.time() - started
     status = "pass" if verify["verified"] and handoff_check["valid"] else "fail"
     handoff_score_summary = handoff_score.get("summary", {})
+    handoff_triage_summary = handoff_triage.get("summary", {})
 
     report = {
         "schema_version": "repomori.bench.v1",
@@ -5029,6 +5053,11 @@ def benchmark_repo(
             "handoff_score_percent": handoff_score_summary.get("score_percent"),
             "handoff_score_json": str(handoff_score_json),
             "handoff_score_markdown": str(handoff_score_md),
+            "handoff_triage_status": handoff_triage.get("status"),
+            "handoff_triage_action_count": handoff_triage_summary.get("action_count"),
+            "handoff_triage_high_priority_count": handoff_triage_summary.get("high_priority_count"),
+            "handoff_triage_json": str(handoff_triage_json) if handoff_triage_json is not None else None,
+            "handoff_triage_markdown": str(handoff_triage_md) if handoff_triage_md is not None else None,
             "eval_weak_questions": eval_report.get("summary", {}).get("weak_questions"),
             "eval_total_source_bytes": eval_report.get("summary", {}).get("total_source_bytes"),
             "eval_total_snippets": eval_report.get("summary", {}).get("total_snippets"),
@@ -5052,7 +5081,11 @@ def benchmark_repo(
         "handoff": handoff,
         "handoff_check": handoff_check,
         "handoff_score": handoff_score,
+        "handoff_triage": handoff_triage,
     }
+    if handoff_triage_json is not None and handoff_triage_md is not None:
+        report["artifacts"]["handoff_triage_json"] = str(handoff_triage_json)
+        report["artifacts"]["handoff_triage_markdown"] = str(handoff_triage_md)
     _write_json(out_path / "bench.json", report)
     (out_path / "bench.md").write_text(format_benchmark_markdown(report), encoding="utf-8")
     return report
@@ -5271,6 +5304,9 @@ def snapshot_repo(
     handoff_score = None
     handoff_score_json = None
     handoff_score_md = None
+    handoff_triage = None
+    handoff_triage_json = None
+    handoff_triage_md = None
     handoff_path = None
     if handoff_question is not None:
         handoff_path = Path(handoff_out_dir).resolve() if handoff_out_dir is not None else out_path / f"{pack_path.stem}.handoff"
@@ -5283,6 +5319,10 @@ def snapshot_repo(
         )
         handoff_check = check_handoff_package(handoff_path)
         handoff_score, handoff_score_json, handoff_score_md = _write_handoff_score_artifacts(handoff_path)
+        handoff_triage, handoff_triage_json, handoff_triage_md = _write_handoff_triage_artifacts(
+            handoff_path,
+            handoff_score,
+        )
 
     diff_context_bundle = None
     diff_context_json = None
@@ -5315,6 +5355,7 @@ def snapshot_repo(
     snapshot_json = out_path / f"{pack_path.stem}.snapshot.json"
     snapshot_md = out_path / f"{pack_path.stem}.snapshot.md"
     handoff_score_summary = handoff_score.get("summary", {}) if handoff_score else {}
+    handoff_triage_summary = handoff_triage.get("summary", {}) if handoff_triage else {}
     report = {
         "schema_version": "repomori.snapshot.v1",
         "status": "pass" if verify.get("verified") else "fail",
@@ -5365,6 +5406,11 @@ def snapshot_repo(
             "handoff_score_markdown": str(handoff_score_md) if handoff_score_md is not None else None,
             "handoff_score_failed_checks": handoff_score_summary.get("failed_checks"),
             "handoff_score_warned_checks": handoff_score_summary.get("warned_checks"),
+            "handoff_triage_status": handoff_triage.get("status") if handoff_triage else None,
+            "handoff_triage_action_count": handoff_triage_summary.get("action_count"),
+            "handoff_triage_high_priority_count": handoff_triage_summary.get("high_priority_count"),
+            "handoff_triage_json": str(handoff_triage_json) if handoff_triage_json is not None else None,
+            "handoff_triage_markdown": str(handoff_triage_md) if handoff_triage_md is not None else None,
             "diff_context_status": diff_context_status,
             "diff_context_json": str(diff_context_json) if diff_context_json is not None else None,
             "diff_context_markdown": str(diff_context_md) if diff_context_md is not None else None,
@@ -5387,6 +5433,7 @@ def snapshot_repo(
         "handoff": handoff,
         "handoff_check": handoff_check,
         "handoff_score": handoff_score,
+        "handoff_triage": handoff_triage,
         "diff_context": diff_context_bundle,
     }
     if compare_json is not None and compare_md is not None:
@@ -5400,6 +5447,9 @@ def snapshot_repo(
     if handoff_score_json is not None and handoff_score_md is not None:
         report["artifacts"]["handoff_score_json"] = str(handoff_score_json)
         report["artifacts"]["handoff_score_markdown"] = str(handoff_score_md)
+    if handoff_triage_json is not None and handoff_triage_md is not None:
+        report["artifacts"]["handoff_triage_json"] = str(handoff_triage_json)
+        report["artifacts"]["handoff_triage_markdown"] = str(handoff_triage_md)
     if diff_context_json is not None and diff_context_md is not None:
         report["artifacts"]["diff_context_json"] = diff_context_json.name
         report["artifacts"]["diff_context_markdown"] = diff_context_md.name
@@ -5445,6 +5495,7 @@ def format_benchmark_markdown(report: dict[str, Any]) -> str:
         f"- Verify passed: `{summary.get('verify_passed')}`",
         f"- Handoff check passed: `{summary.get('handoff_passed')}`",
         f"- Handoff score: `{summary.get('handoff_score_status')}` `{summary.get('handoff_score_percent')}`%",
+        f"- Handoff triage: `{summary.get('handoff_triage_status')}` actions=`{summary.get('handoff_triage_action_count')}` high=`{summary.get('handoff_triage_high_priority_count')}`",
         f"- Eval weak questions: `{summary.get('eval_weak_questions')}`",
         f"- Eval source bytes: `{summary.get('eval_total_source_bytes')}`",
         f"- Eval snippets: `{summary.get('eval_total_snippets')}`",
@@ -5556,6 +5607,9 @@ def format_snapshot_markdown(report: dict[str, Any]) -> str:
                 f"- Score: `{summary.get('handoff_score_status')}` `{summary.get('handoff_score_percent')}`%",
                 f"- Score JSON: `{summary.get('handoff_score_json')}`",
                 f"- Score Markdown: `{summary.get('handoff_score_markdown')}`",
+                f"- Triage: `{summary.get('handoff_triage_status')}` actions=`{summary.get('handoff_triage_action_count')}` high=`{summary.get('handoff_triage_high_priority_count')}`",
+                f"- Triage JSON: `{summary.get('handoff_triage_json')}`",
+                f"- Triage Markdown: `{summary.get('handoff_triage_markdown')}`",
                 f"- Status: `{handoff.get('status')}`",
                 "",
             ]
@@ -5623,6 +5677,9 @@ def read_snapshot_timeline(out_dir: Path | str, *, limit: int | None = None) -> 
             "handoff_score_pass_count": sum(1 for item in snapshots if item.get("handoff_score_status") == "pass"),
             "handoff_score_warn_count": sum(1 for item in snapshots if item.get("handoff_score_status") == "warn"),
             "handoff_score_fail_count": sum(1 for item in snapshots if item.get("handoff_score_status") == "fail"),
+            "handoff_triage_pass_count": sum(1 for item in snapshots if item.get("handoff_triage_status") == "pass"),
+            "handoff_triage_warn_count": sum(1 for item in snapshots if item.get("handoff_triage_status") == "warn"),
+            "handoff_triage_fail_count": sum(1 for item in snapshots if item.get("handoff_triage_status") == "fail"),
             "incremental_snapshot_count": sum(1 for item in snapshots if item.get("incremental")),
             "total_reused_files": _sum_snapshot_field(snapshots, "reused_file_count"),
             "total_rebuilt_files": _sum_snapshot_field(snapshots, "rebuilt_file_count"),
@@ -6133,6 +6190,9 @@ def read_snapshot_stats(out_dir: Path | str, *, limit: int | None = 10) -> dict[
             "handoff_score_pass_count": sum(1 for item in snapshots if item.get("handoff_score_status") == "pass"),
             "handoff_score_warn_count": sum(1 for item in snapshots if item.get("handoff_score_status") == "warn"),
             "handoff_score_fail_count": sum(1 for item in snapshots if item.get("handoff_score_status") == "fail"),
+            "handoff_triage_pass_count": sum(1 for item in snapshots if item.get("handoff_triage_status") == "pass"),
+            "handoff_triage_warn_count": sum(1 for item in snapshots if item.get("handoff_triage_status") == "warn"),
+            "handoff_triage_fail_count": sum(1 for item in snapshots if item.get("handoff_triage_status") == "fail"),
         },
         "latest": latest_stats,
         "snapshots": [_snapshot_stats_entry(item) for item in recent],
@@ -6596,6 +6656,10 @@ def run_memory_cycle(
         artifacts["handoff_score_json"] = snapshot["artifacts"]["handoff_score_json"]
     if snapshot.get("artifacts", {}).get("handoff_score_markdown"):
         artifacts["handoff_score_markdown"] = snapshot["artifacts"]["handoff_score_markdown"]
+    if snapshot.get("artifacts", {}).get("handoff_triage_json"):
+        artifacts["handoff_triage_json"] = snapshot["artifacts"]["handoff_triage_json"]
+    if snapshot.get("artifacts", {}).get("handoff_triage_markdown"):
+        artifacts["handoff_triage_markdown"] = snapshot["artifacts"]["handoff_triage_markdown"]
     if snapshot.get("artifacts", {}).get("compare_json"):
         artifacts["compare_json"] = snapshot["artifacts"]["compare_json"]
     if snapshot.get("artifacts", {}).get("compare_markdown"):
@@ -6667,6 +6731,11 @@ def run_memory_cycle(
             "handoff_score_markdown": snapshot_summary.get("handoff_score_markdown"),
             "handoff_score_failed_checks": snapshot_summary.get("handoff_score_failed_checks"),
             "handoff_score_warned_checks": snapshot_summary.get("handoff_score_warned_checks"),
+            "handoff_triage_status": snapshot_summary.get("handoff_triage_status"),
+            "handoff_triage_action_count": snapshot_summary.get("handoff_triage_action_count"),
+            "handoff_triage_high_priority_count": snapshot_summary.get("handoff_triage_high_priority_count"),
+            "handoff_triage_json": snapshot_summary.get("handoff_triage_json"),
+            "handoff_triage_markdown": snapshot_summary.get("handoff_triage_markdown"),
             "inspect_diff_status": snapshot_summary.get("inspect_diff_status"),
             "inspect_diff_json": snapshot_summary.get("inspect_diff_json"),
             "inspect_diff_markdown": snapshot_summary.get("inspect_diff_markdown"),
@@ -6690,6 +6759,7 @@ def run_memory_cycle(
         "prune": prune,
         "timeline": timeline,
         "inspect_diff": snapshot.get("inspect_diff"),
+        "handoff_triage": snapshot.get("handoff_triage"),
         "diff_context": snapshot.get("diff_context"),
         "anchor": anchor_report,
         "anchor_verification": anchor_verification,
@@ -7000,6 +7070,7 @@ def format_timeline_markdown(timeline: dict[str, Any]) -> str:
         f"- Verified snapshots: `{summary.get('verified_count')}`",
         f"- Handoffs: `{summary.get('handoff_count')}`",
         f"- Handoff scores pass/warn/fail: `{summary.get('handoff_score_pass_count')}` / `{summary.get('handoff_score_warn_count')}` / `{summary.get('handoff_score_fail_count')}`",
+        f"- Handoff triage pass/warn/fail: `{summary.get('handoff_triage_pass_count')}` / `{summary.get('handoff_triage_warn_count')}` / `{summary.get('handoff_triage_fail_count')}`",
         f"- Total added: `{summary.get('total_added')}`",
         f"- Total removed: `{summary.get('total_removed')}`",
         f"- Total changed: `{summary.get('total_changed')}`",
@@ -8620,6 +8691,8 @@ def _agent_brief_artifacts(out_path: Path, latest: dict[str, Any] | None) -> lis
         ("inspect_diff_markdown", "inspect_diff_markdown"),
         ("handoff_score_json", "handoff_score_json"),
         ("handoff_score_markdown", "handoff_score_markdown"),
+        ("handoff_triage_json", "handoff_triage_json"),
+        ("handoff_triage_markdown", "handoff_triage_markdown"),
         ("diff_context_json", "diff_context_json"),
         ("diff_context_markdown", "diff_context_markdown"),
         ("handoff_dir", "handoff_dir"),
@@ -9166,6 +9239,8 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
         "inspect_diff_markdown": artifacts.get("inspect_diff_markdown"),
         "handoff_score_json": artifacts.get("handoff_score_json"),
         "handoff_score_markdown": artifacts.get("handoff_score_markdown"),
+        "handoff_triage_json": artifacts.get("handoff_triage_json"),
+        "handoff_triage_markdown": artifacts.get("handoff_triage_markdown"),
         "diff_context_json": artifacts.get("diff_context_json"),
         "diff_context_markdown": artifacts.get("diff_context_markdown"),
         "file_count": summary.get("file_count"),
@@ -9184,6 +9259,9 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
         "handoff_score_percent": summary.get("handoff_score_percent"),
         "handoff_score_failed_checks": summary.get("handoff_score_failed_checks"),
         "handoff_score_warned_checks": summary.get("handoff_score_warned_checks"),
+        "handoff_triage_status": summary.get("handoff_triage_status"),
+        "handoff_triage_action_count": summary.get("handoff_triage_action_count"),
+        "handoff_triage_high_priority_count": summary.get("handoff_triage_high_priority_count"),
         "inspect_diff_status": summary.get("inspect_diff_status"),
         "diff_context_status": summary.get("diff_context_status"),
         "diff_context_selected_count": summary.get("diff_context_selected_count"),
@@ -9228,6 +9306,9 @@ def _snapshot_stats_entry(snapshot: dict[str, Any] | None) -> dict[str, Any]:
         "handoff_dir": item.get("handoff_dir"),
         "handoff_score_status": item.get("handoff_score_status"),
         "handoff_score_percent": item.get("handoff_score_percent"),
+        "handoff_triage_status": item.get("handoff_triage_status"),
+        "handoff_triage_action_count": _snapshot_int(item, "handoff_triage_action_count"),
+        "handoff_triage_high_priority_count": _snapshot_int(item, "handoff_triage_high_priority_count"),
     }
 
 
@@ -9309,6 +9390,9 @@ def _doctor_check_snapshot(
         if snapshot.get(field):
             _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
     for field in ("handoff_score_json", "handoff_score_markdown"):
+        if snapshot.get(field):
+            _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
+    for field in ("handoff_triage_json", "handoff_triage_markdown"):
         if snapshot.get(field):
             _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
     for field in ("diff_context_json", "diff_context_markdown"):
@@ -9449,6 +9533,8 @@ def _snapshot_prune_record(snapshot: dict[str, Any]) -> dict[str, Any]:
         "inspect_diff_markdown": snapshot.get("inspect_diff_markdown"),
         "handoff_score_json": snapshot.get("handoff_score_json"),
         "handoff_score_markdown": snapshot.get("handoff_score_markdown"),
+        "handoff_triage_json": snapshot.get("handoff_triage_json"),
+        "handoff_triage_markdown": snapshot.get("handoff_triage_markdown"),
         "diff_context_json": snapshot.get("diff_context_json"),
         "diff_context_markdown": snapshot.get("diff_context_markdown"),
         "handoff_dir": snapshot.get("handoff_dir"),
