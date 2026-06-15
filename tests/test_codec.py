@@ -35,6 +35,7 @@ from repomori.codec import (
     format_brief_markdown,
     format_compare_markdown,
     format_eval_markdown,
+    format_handoff_score_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_context_markdown,
@@ -68,6 +69,7 @@ from repomori.codec import (
     schema_catalog,
     scan_baseline_from_report,
     scan_repository,
+    score_handoff_package,
     snapshot_repo,
     verify_snapshot_anchor,
     tree_pack,
@@ -618,6 +620,60 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(broken["valid"])
             self.assertGreaterEqual(broken["error_count"], 1)
             self.assertTrue(any(error["scope"] == "artifact" for error in broken["errors"]))
+
+    def test_score_handoff_package_reports_quality_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff-score"
+            build_handoff_package(pack, "sqlite Store", out)
+
+            report = score_handoff_package(out)
+
+            self.assertEqual(report["schema_version"], "repomori.handoff_score.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["summary"]["valid"])
+            self.assertGreaterEqual(report["summary"]["score_percent"], 85)
+            check_ids = {item["id"] for item in report["checks"]}
+            self.assertIn("source_context", check_ids)
+            self.assertIn("machine_state", check_ids)
+            self.assertGreaterEqual(report["summary"]["context_snippet_count"], 1)
+
+            markdown = format_handoff_score_markdown(report)
+            self.assertIn("# RepoMori Handoff Score", markdown)
+            self.assertIn("source_context", markdown)
+
+    def test_score_handoff_package_detects_invalid_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff-score-invalid"
+            build_handoff_package(pack, "sqlite Store", out)
+            (out / "context.md").write_text("tampered\n", encoding="utf-8")
+
+            report = score_handoff_package(out)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["summary"]["valid"])
+            self.assertIn("integrity", report["summary"]["failed_checks"])
+            self.assertTrue(any(error["code"] == "handoff_validation_failed" for error in report["errors"]))
+
+    def test_score_handoff_package_rewards_base_pack_deltas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, base_pack = self._demo_pack(Path(tmp))
+            build_pack(repo, base_pack, BuildOptions(force=True))
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            target_pack = Path(tmp) / "target.repomori"
+            build_pack(repo, target_pack, BuildOptions(force=True))
+            out = Path(tmp) / "handoff-score-delta"
+            build_handoff_package(target_pack, "sqlite Store", out, base_pack=base_pack)
+
+            report = score_handoff_package(out)
+
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["summary"]["base_pack_present"])
+            self.assertTrue(report["summary"]["compare_present"])
+            self.assertTrue(report["summary"]["inspect_diff_present"])
+            delta = next(item for item in report["checks"] if item["id"] == "delta_context")
+            self.assertEqual(delta["status"], "pass")
 
     def test_benchmark_repo_outputs_reports_and_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2586,6 +2642,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
         self.assertIn("repomori.brief.v1", schema_versions)
+        self.assertIn("repomori.handoff_score.v1", schema_versions)
         self.assertIn("repomori.inspect.v1", schema_versions)
         self.assertIn("repomori.compare.v1", schema_versions)
         self.assertIn("repomori.inspect_diff.v1", schema_versions)
@@ -2651,6 +2708,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(anchor_verify["selected"], "repomori.snapshot_anchor.verify.v1")
         self.assertEqual(anchor_verify["schema"]["producer"], "verify_snapshot_anchor")
 
+        handoff_score_schema = schema_catalog("repomori.handoff_score.v1")
+        self.assertEqual(handoff_score_schema["selected"], "repomori.handoff_score.v1")
+        self.assertEqual(handoff_score_schema["schema"]["producer"], "score_handoff_package")
+
     def test_golden_fixture_core_output_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2662,6 +2723,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             inspect_report = inspect_pack(pack, max_files=2, top_terms=5, top_symbols=5)
             capsule = build_capsule(pack, max_files=2)
             handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
+            handoff_score = score_handoff_package(handoff_dir)
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
             inspect_diff = inspect_pack_diff(pack, memory["summary"]["pack_path"], max_files=2)
             diff_context = build_diff_context_bundle(pack, memory["summary"]["pack_path"])
@@ -2698,6 +2760,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     handoff,
                     "repomori.handoff.v1",
                     {"schema_version", "status", "question", "out_dir", "artifacts", "verification"},
+                ),
+                "handoff_score": (
+                    handoff_score,
+                    "repomori.handoff_score.v1",
+                    {"schema_version", "status", "handoff_dir", "summary", "checks", "validation"},
                 ),
                 "diff_context": (
                     diff_context,
@@ -2752,6 +2819,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(context["sources"][0]["path"], "app.py")
             self.assertTrue(capsule["files"])
             self.assertEqual(handoff["status"], "complete")
+            self.assertEqual(handoff_score["status"], "pass")
             self.assertEqual(inspect_diff["summary"]["changed_count"], 0)
             self.assertEqual(diff_context["summary"]["changed_count"], 0)
             self.assertEqual(memory["status"], "pass")
@@ -3181,6 +3249,44 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.handoff.check.v1")
             self.assertTrue(payload["valid"])
             self.assertEqual(payload["error_count"], 0)
+
+    def test_cli_score_handoff_json_and_markdown_are_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            out = Path(tmp) / "handoff-score-cli"
+            markdown_out = Path(tmp) / "handoff-score.md"
+            build_handoff_package(pack, "sqlite Store", out)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "score-handoff",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.handoff_score.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertGreaterEqual(payload["summary"]["score_percent"], 85)
+
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "score-handoff",
+                    str(out),
+                    "--out",
+                    str(markdown_out),
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+            )
+            self.assertIn("# RepoMori Handoff Score", markdown_out.read_text(encoding="utf-8"))
 
     def test_cli_bench_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -29,6 +29,7 @@ from .codec import (
     format_context_markdown,
     format_diff_context_markdown,
     format_eval_markdown,
+    format_handoff_score_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_snapshot_chain_markdown,
@@ -56,6 +57,7 @@ from .codec import (
     run_memory_cycle,
     schema_catalog,
     scan_repository,
+    score_handoff_package,
     snapshot_repo,
     tree_pack,
     verify_snapshot_chain,
@@ -466,6 +468,12 @@ def main(argv: list[str] | None = None) -> int:
     check_handoff = sub.add_parser("check-handoff", help="Validate a handoff package directory.")
     check_handoff.add_argument("handoff_dir", type=Path)
     check_handoff.add_argument("--json", action="store_true")
+
+    score_handoff = sub.add_parser("score-handoff", help="Score a handoff package for agent usefulness.")
+    score_handoff.add_argument("handoff_dir", type=Path)
+    score_handoff.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    score_handoff.add_argument("--out", type=Path, help="Write the score report to a file.")
+    score_handoff.add_argument("--json", action="store_true", help="Print JSON output.")
 
     bench = sub.add_parser("bench", help="Run an end-to-end repository benchmark.")
     bench.add_argument("repo", type=Path)
@@ -1054,6 +1062,20 @@ def main(argv: list[str] | None = None) -> int:
         result = check_handoff_package(args.handoff_dir)
         _print(result, args.json)
         return 0 if result["valid"] else 1
+    if args.command == "score-handoff":
+        report = score_handoff_package(args.handoff_dir)
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_handoff_score_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
     if args.command == "bench":
         extra_questions = _eval_questions(args.eval_question, args.questions_file)
         report = benchmark_repo(

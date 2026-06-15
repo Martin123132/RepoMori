@@ -122,6 +122,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "question", "out_dir", "artifacts", "verification"],
     },
     {
+        "schema_version": "repomori.handoff_score.v1",
+        "kind": "report",
+        "title": "Agent handoff usefulness score",
+        "producer": "score_handoff_package",
+        "required_fields": ["schema_version", "status", "handoff_dir", "summary", "checks", "validation"],
+    },
+    {
         "schema_version": "repomori.memory.v1",
         "kind": "report",
         "title": "Snapshot memory cycle report",
@@ -4515,6 +4522,325 @@ def check_handoff_package(handoff_dir: Path | str) -> dict[str, Any]:
     }
 
 
+def score_handoff_package(handoff_dir: Path | str) -> dict[str, Any]:
+    """Score whether a handoff is valid, source-backed, and useful for another agent."""
+
+    started = time.time()
+    root = Path(handoff_dir).resolve()
+    validation = check_handoff_package(root)
+    checks: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    manifest = _handoff_score_read_json(root, "manifest.json")
+    manifest_ok = isinstance(manifest, dict) and manifest.get("schema_version") == "repomori.handoff.v1"
+    manifest_status = manifest.get("status") if isinstance(manifest, dict) else None
+    manifest_points = 0.0
+    if manifest_ok:
+        manifest_points += 3
+    if isinstance(manifest, dict) and manifest.get("question"):
+        manifest_points += 2
+    if isinstance(manifest, dict) and isinstance(manifest.get("pack"), dict):
+        manifest_points += 2
+    if manifest_status in {"complete", "complete_unverified"}:
+        manifest_points += 3
+    _handoff_score_add_check(
+        checks,
+        "manifest",
+        manifest_points,
+        10,
+        "pass" if manifest_points == 10 else "fail",
+        "Manifest has expected schema, question, pack identity, and completion status.",
+        {"manifest_status": manifest_status, "schema_version": manifest.get("schema_version") if isinstance(manifest, dict) else None},
+    )
+
+    _handoff_score_add_check(
+        checks,
+        "integrity",
+        25 if validation.get("valid") else 0,
+        25,
+        "pass" if validation.get("valid") else "fail",
+        "check-handoff validates artifact hashes, sizes, JSON, and copied pack when present.",
+        {
+            "valid": validation.get("valid"),
+            "error_count": validation.get("error_count"),
+            "checked_artifacts": validation.get("checked_artifacts"),
+            "checked_json": validation.get("checked_json"),
+        },
+    )
+    if not validation.get("valid"):
+        errors.append({"code": "handoff_validation_failed", "message": "Handoff failed artifact or JSON validation."})
+
+    artifact_paths = set()
+    artifact_kinds = set()
+    if isinstance(manifest, dict):
+        for artifact in manifest.get("artifacts", []):
+            if isinstance(artifact, dict):
+                artifact_paths.add(str(artifact.get("path", "")))
+                artifact_kinds.add(str(artifact.get("kind", "")))
+
+    required_paths = [
+        "README.md",
+        "brief.json",
+        "brief.md",
+        "context.json",
+        "context.md",
+        "capsule.json",
+        "eval.json",
+        "eval.md",
+        "verify.json",
+    ]
+    present_required = [
+        path
+        for path in required_paths
+        if path in artifact_paths and _handoff_score_file_exists(root, path)
+    ]
+    missing_required = [path for path in required_paths if path not in present_required]
+    artifact_points = round(15 * (len(present_required) / len(required_paths)), 2)
+    _handoff_score_add_check(
+        checks,
+        "artifact_coverage",
+        artifact_points,
+        15,
+        "pass" if not missing_required else ("warn" if present_required else "fail"),
+        "Core readable and machine-readable handoff artifacts are present and recorded in the manifest.",
+        {"present": present_required, "missing": missing_required, "artifact_kinds": sorted(artifact_kinds)},
+    )
+    for missing in missing_required:
+        warnings.append({"code": "missing_core_artifact", "path": missing, "message": "Expected handoff artifact is missing."})
+
+    context = _handoff_score_read_json(root, "context.json")
+    context_sources = context.get("sources", []) if isinstance(context, dict) else []
+    context_manifest = context.get("source_manifest", []) if isinstance(context, dict) else []
+    snippets = [
+        snippet
+        for source in context_sources
+        if isinstance(source, dict)
+        for snippet in source.get("snippets", [])
+        if isinstance(snippet, dict)
+    ]
+    line_numbered = bool(snippets) and all(
+        isinstance(snippet.get("start_line"), int)
+        and isinstance(snippet.get("end_line"), int)
+        and snippet["start_line"] <= snippet["end_line"]
+        for snippet in snippets
+    )
+    context_points = 0.0
+    if isinstance(context, dict) and context.get("schema_version") == "repomori.context.v1":
+        context_points += 4
+    if context_sources:
+        context_points += 5
+    if context_manifest:
+        context_points += 4
+    if snippets:
+        context_points += 4
+    if line_numbered:
+        context_points += 3
+    _handoff_score_add_check(
+        checks,
+        "source_context",
+        context_points,
+        20,
+        "pass" if context_points == 20 else ("warn" if context_points >= 10 else "fail"),
+        "Context bundle contains ranked sources, source manifest entries, and exact line-numbered snippets.",
+        {
+            "source_count": len(context_sources),
+            "source_manifest_count": len(context_manifest),
+            "snippet_count": len(snippets),
+            "line_numbered_snippets": line_numbered,
+        },
+    )
+
+    brief = _handoff_score_read_json(root, "brief.json")
+    capsule = _handoff_score_read_json(root, "capsule.json")
+    brief_orientation = brief.get("orientation", {}) if isinstance(brief, dict) else {}
+    capsule_files = capsule.get("files", []) if isinstance(capsule, dict) else []
+    capsule_manifest = capsule.get("manifest", []) if isinstance(capsule, dict) else []
+    capsule_terms = capsule.get("dictionary", {}).get("terms", []) if isinstance(capsule, dict) else []
+    machine_points = 0.0
+    if isinstance(brief, dict) and brief.get("schema_version") == "repomori.brief.v1":
+        machine_points += 3
+    if brief_orientation.get("key_files") or brief_orientation.get("entrypoints"):
+        machine_points += 4
+    if isinstance(capsule, dict) and capsule.get("schema_version") == "repomori.capsule.v1":
+        machine_points += 3
+    if capsule_files and capsule_manifest:
+        machine_points += 3
+    if capsule_terms:
+        machine_points += 2
+    _handoff_score_add_check(
+        checks,
+        "machine_state",
+        machine_points,
+        15,
+        "pass" if machine_points == 15 else ("warn" if machine_points >= 8 else "fail"),
+        "Brief and capsule provide orientation, compact file records, source manifest, and vocabulary.",
+        {
+            "brief_key_files": len(brief_orientation.get("key_files", []) or []),
+            "brief_entrypoints": len(brief_orientation.get("entrypoints", []) or []),
+            "capsule_files": len(capsule_files),
+            "capsule_manifest_count": len(capsule_manifest),
+            "capsule_term_count": len(capsule_terms),
+        },
+    )
+
+    eval_report = _handoff_score_read_json(root, "eval.json")
+    eval_summary = eval_report.get("summary", {}) if isinstance(eval_report, dict) else {}
+    question_count = int(eval_summary.get("question_count") or 0)
+    passed_questions = int(eval_summary.get("passed_questions") or 0)
+    weak_questions = int(eval_summary.get("weak_questions") or 0)
+    eval_points = 0.0
+    if isinstance(eval_report, dict) and eval_report.get("schema_version") == "repomori.eval.v1":
+        eval_points += 2
+    if question_count:
+        eval_points += round(6 * (passed_questions / question_count), 2)
+    if int(eval_summary.get("total_snippets") or 0) > 0:
+        eval_points += 2
+    _handoff_score_add_check(
+        checks,
+        "context_eval",
+        eval_points,
+        10,
+        "pass" if eval_points == 10 else ("warn" if eval_points >= 5 else "fail"),
+        "Eval report shows whether default and user questions receive enough ranked source context.",
+        {
+            "question_count": question_count,
+            "passed_questions": passed_questions,
+            "weak_questions": weak_questions,
+            "total_snippets": eval_summary.get("total_snippets"),
+        },
+    )
+    if weak_questions:
+        warnings.append({"code": "weak_eval_questions", "message": "Some eval questions produced weak context.", "count": weak_questions})
+
+    base_pack_present = isinstance(manifest, dict) and isinstance(manifest.get("base_pack"), dict)
+    compare = _handoff_score_read_json(root, "compare.json") if _handoff_score_file_exists(root, "compare.json") else None
+    inspect_diff = _handoff_score_read_json(root, "inspect-diff.json") if _handoff_score_file_exists(root, "inspect-diff.json") else None
+    if base_pack_present:
+        delta_points = 0.0
+        if isinstance(compare, dict) and compare.get("schema_version") == "repomori.compare.v1":
+            delta_points += 2.5
+        if isinstance(inspect_diff, dict) and inspect_diff.get("schema_version") == "repomori.inspect_diff.v1":
+            delta_points += 2.5
+        delta_status = "pass" if delta_points == 5 else ("warn" if delta_points else "fail")
+        delta_message = "Base-pack handoff includes both file-level compare and structural inspect-diff artifacts."
+    else:
+        delta_points = 5.0
+        delta_status = "pass"
+        delta_message = "No base pack was recorded, so delta artifacts are not required."
+    _handoff_score_add_check(
+        checks,
+        "delta_context",
+        delta_points,
+        5,
+        delta_status,
+        delta_message,
+        {
+            "base_pack_present": base_pack_present,
+            "compare_present": isinstance(compare, dict),
+            "inspect_diff_present": isinstance(inspect_diff, dict),
+        },
+    )
+
+    total_score = round(sum(float(item["points"]) for item in checks), 2)
+    max_score = round(sum(float(item["max_points"]) for item in checks), 2)
+    percent = round((total_score / max_score) * 100, 2) if max_score else 0.0
+    failed_checks = [item["id"] for item in checks if item["status"] == "fail"]
+    warned_checks = [item["id"] for item in checks if item["status"] == "warn"]
+    critical_failed = any(check_id in {"manifest", "integrity"} for check_id in failed_checks)
+    if not validation.get("valid") or critical_failed or percent < 60:
+        status = "fail"
+    elif failed_checks or percent < 85:
+        status = "warn"
+    else:
+        status = "pass"
+
+    return {
+        "schema_version": "repomori.handoff_score.v1",
+        "status": status,
+        "handoff_dir": str(root),
+        "created_at": int(time.time()),
+        "summary": {
+            "score": total_score,
+            "max_score": max_score,
+            "score_percent": percent,
+            "valid": bool(validation.get("valid")),
+            "failed_checks": failed_checks,
+            "warned_checks": warned_checks,
+            "artifact_count": len(artifact_paths),
+            "context_source_count": len(context_sources),
+            "context_snippet_count": len(snippets),
+            "eval_question_count": question_count,
+            "eval_weak_questions": weak_questions,
+            "base_pack_present": base_pack_present,
+            "compare_present": isinstance(compare, dict),
+            "inspect_diff_present": isinstance(inspect_diff, dict),
+            "elapsed_seconds": round(time.time() - started, 4),
+        },
+        "checks": checks,
+        "validation": validation,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def format_handoff_score_markdown(report: dict[str, Any]) -> str:
+    """Render a handoff usefulness score report as Markdown."""
+
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Handoff Score",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Handoff: `{report.get('handoff_dir')}`",
+        f"- Score: `{summary.get('score')}` / `{summary.get('max_score')}` (`{summary.get('score_percent')}`%)",
+        f"- Valid: `{summary.get('valid')}`",
+        "",
+        "## Checks",
+        "",
+    ]
+    for item in report.get("checks", []):
+        lines.append(
+            f"- `{item.get('id')}`: status=`{item.get('status')}` "
+            f"points=`{item.get('points')}/{item.get('max_points')}`"
+        )
+        message = item.get("message")
+        if message:
+            lines.append(f"  - {message}")
+    lines.append("")
+
+    warnings = report.get("warnings", [])
+    if warnings:
+        lines.extend(["## Warnings", ""])
+        for warning in warnings:
+            message = warning.get("message", "")
+            code = warning.get("code", "warning")
+            suffix = f" path=`{warning.get('path')}`" if warning.get("path") else ""
+            lines.append(f"- `{code}` {message}{suffix}")
+        lines.append("")
+
+    errors = report.get("errors", [])
+    if errors:
+        lines.extend(["## Errors", ""])
+        for error in errors:
+            lines.append(f"- `{error.get('code')}` {error.get('message')}")
+        lines.append("")
+
+    validation = report.get("validation", {})
+    lines.extend(
+        [
+            "## Validation",
+            "",
+            f"- Valid: `{validation.get('valid')}`",
+            f"- Checked artifacts: `{validation.get('checked_artifacts')}`",
+            f"- Checked JSON: `{validation.get('checked_json')}`",
+            f"- Error count: `{validation.get('error_count')}`",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def benchmark_repo(
     repo: Path | str,
     out_dir: Path | str,
@@ -7398,6 +7724,49 @@ def _check_handoff_pack_copy(pack_path: Path, errors: list[dict[str, Any]]) -> d
             actual=verify_report.get("error_count"),
         )
     return result
+
+
+def _handoff_score_add_check(
+    checks: list[dict[str, Any]],
+    check_id: str,
+    points: float,
+    max_points: float,
+    status: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    checks.append(
+        {
+            "id": check_id,
+            "status": status,
+            "points": round(points, 2),
+            "max_points": round(max_points, 2),
+            "message": message,
+            "details": details or {},
+        }
+    )
+
+
+def _handoff_score_read_json(root: Path, relative: str) -> dict[str, Any] | None:
+    try:
+        path = _safe_child_path(root, relative)
+    except ValueError:
+        return None
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _handoff_score_file_exists(root: Path, relative: str) -> bool:
+    try:
+        path = _safe_child_path(root, relative)
+    except ValueError:
+        return False
+    return path.exists() and path.is_file()
 
 
 def _safe_child_path(root: Path, relative: str) -> Path:

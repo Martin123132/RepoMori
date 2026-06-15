@@ -85,6 +85,7 @@ python -m repomori capsule C:\path\to\repo.repomori --out repo.capsule.json
 python -m repomori handoff C:\path\to\repo.repomori "where is storage handled?" --out D:\handoffs\repo
 python -m repomori handoff C:\path\to\new.repomori "continue this work" --base-pack C:\path\to\old.repomori --out D:\handoffs\next
 python -m repomori check-handoff D:\handoffs\repo --json
+python -m repomori score-handoff D:\handoffs\repo --json
 python -m repomori bench D:\Dev\RepoMori --out D:\benchmarks\repomori
 python -m repomori get C:\path\to\repo.repomori path\inside\repo.py --out restored.py
 ```
@@ -142,6 +143,7 @@ repomori eval <pack> [--question text] [--format markdown|json] [--out file]
 repomori capsule <pack> [--max-files n] [--top-terms n] [--out file]
 repomori handoff <pack> <question> --out <dir> [--base-pack pack] [--copy-pack] [--force] [--json]
 repomori check-handoff <dir> [--json]
+repomori score-handoff <dir> [--format markdown|json] [--out file] [--json]
 repomori bench <repo> --out <dir> [--force] [--json]
 repomori get <pack> <path> [--out file]
 ```
@@ -379,6 +381,10 @@ machine-state changes since an earlier pack.
 
 `check-handoff` validates a handoff manifest, artifact sizes and SHA-256 hashes,
 JSON artifacts, and any copied `.repomori` pack.
+
+`score-handoff` scores a handoff's operational usefulness: validation state,
+artifact coverage, source-backed context snippets, capsule/brief machine state,
+eval strength, and base-pack delta artifacts when present.
 
 `bench` runs the full local proof loop for a repository: build, verify, brief,
 eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.

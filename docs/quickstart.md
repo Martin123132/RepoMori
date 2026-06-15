@@ -36,6 +36,7 @@ python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\.repomori-packs\next.re
 python -m repomori inspect D:\Dev\YourRepo\.repomori-packs\latest.repomori --verify --out D:\Dev\YourRepo\pack-inspect.md
 python -m repomori inspect-diff D:\Dev\YourRepo\.repomori-packs\previous.repomori D:\Dev\YourRepo\.repomori-packs\latest.repomori --out D:\Dev\YourRepo\inspect-diff.md
 python -m repomori diff-context D:\Dev\YourRepo\.repomori-packs\previous.repomori D:\Dev\YourRepo\.repomori-packs\latest.repomori "what changed?" --out D:\Dev\YourRepo\diff-context.md
+python -m repomori score-handoff D:\handoffs\repo --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
 python -m repomori release-health D:\Dev\YourRepo --snapshot-dir D:\Dev\YourRepo\.repomori-packs --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
