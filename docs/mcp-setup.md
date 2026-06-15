@@ -53,6 +53,9 @@ with the configured current timeline.
 Call `repomori_pack_inspect` when an agent needs pack storage, language,
 vocabulary, source-manifest, or verification context before choosing what to
 query or retrieve.
+Call `repomori_pack_inspect_diff` when an agent needs structural movement
+between two packs, including storage, language, vocabulary, and changed-file
+manifests.
 
 ## Tools
 
@@ -66,6 +69,7 @@ query or retrieve.
 - `repomori_stats_read`
 - `repomori_doctor_run`
 - `repomori_pack_inspect`
+- `repomori_pack_inspect_diff`
 - `repomori_query_run`
 - `repomori_context_build`
 - `repomori_diff_context_build`

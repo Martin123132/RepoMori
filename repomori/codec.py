@@ -66,6 +66,20 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "pack", "summary", "storage", "files", "vocabulary"],
     },
     {
+        "schema_version": "repomori.compare.v1",
+        "kind": "report",
+        "title": "RepoMori pack comparison report",
+        "producer": "compare_packs",
+        "required_fields": ["schema_version", "base_pack", "target_pack", "summary", "language_delta", "files"],
+    },
+    {
+        "schema_version": "repomori.inspect_diff.v1",
+        "kind": "report",
+        "title": "RepoMori pack inspector diff report",
+        "producer": "inspect_pack_diff",
+        "required_fields": ["schema_version", "status", "base_pack", "target_pack", "summary", "comparison", "storage_delta", "vocabulary_delta"],
+    },
+    {
         "schema_version": "repomori.context.v1",
         "kind": "report",
         "title": "Source-backed agent context bundle",
@@ -3486,6 +3500,220 @@ def format_compare_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def inspect_pack_diff(
+    base_pack: Path | str,
+    target_pack: Path | str,
+    *,
+    max_files: int = 20,
+    top_terms: int = 30,
+    top_symbols: int = 30,
+    verify: bool = False,
+) -> dict[str, Any]:
+    """Build a compact structural inspection diff between two RepoMori packs."""
+
+    if max_files <= 0:
+        raise ValueError("max_files must be greater than zero")
+    if top_terms < 0:
+        raise ValueError("top_terms must be zero or greater")
+    if top_symbols < 0:
+        raise ValueError("top_symbols must be zero or greater")
+
+    started = time.time()
+    base_inspect = inspect_pack(
+        base_pack,
+        max_files=max_files,
+        top_terms=top_terms,
+        top_symbols=top_symbols,
+        verify=verify,
+    )
+    target_inspect = inspect_pack(
+        target_pack,
+        max_files=max_files,
+        top_terms=top_terms,
+        top_symbols=top_symbols,
+        verify=verify,
+    )
+    comparison = compare_packs(base_pack, target_pack, limit=max_files)
+    base_summary = base_inspect.get("summary", {})
+    target_summary = target_inspect.get("summary", {})
+    compare_summary = comparison.get("summary", {})
+    storage_delta = _inspect_diff_storage_delta(base_inspect, target_inspect)
+    vocabulary_delta = _inspect_diff_vocabulary_delta(base_inspect, target_inspect, limit=max(top_terms, top_symbols))
+    status = _inspect_diff_status(base_inspect, target_inspect)
+
+    return {
+        "schema_version": "repomori.inspect_diff.v1",
+        "status": status,
+        "base_pack": base_inspect.get("pack", {}),
+        "target_pack": target_inspect.get("pack", {}),
+        "settings": {
+            "max_files": max_files,
+            "top_terms": top_terms,
+            "top_symbols": top_symbols,
+            "verify": verify,
+        },
+        "summary": {
+            "added_count": compare_summary.get("added_count", 0),
+            "removed_count": compare_summary.get("removed_count", 0),
+            "changed_count": compare_summary.get("changed_count", 0),
+            "unchanged_count": compare_summary.get("unchanged_count", 0),
+            "file_count_delta": compare_summary.get("file_count_delta", 0),
+            "text_files_delta": _inspect_delta_value(base_summary, target_summary, "text_files"),
+            "binary_files_delta": _inspect_delta_value(base_summary, target_summary, "binary_files"),
+            "byte_delta": compare_summary.get("byte_delta", 0),
+            "logical_bytes_delta": compare_summary.get("logical_bytes_delta", 0),
+            "pack_bytes_delta": _inspect_delta_value(base_summary, target_summary, "pack_bytes"),
+            "unique_chunk_raw_bytes_delta": _inspect_delta_value(base_summary, target_summary, "unique_chunk_raw_bytes"),
+            "compressed_chunk_bytes_delta": _inspect_delta_value(base_summary, target_summary, "compressed_chunk_bytes"),
+            "compression_savings_bytes_delta": _inspect_delta_value(base_summary, target_summary, "compression_savings_bytes"),
+            "dedupe_savings_bytes_delta": _inspect_delta_value(base_summary, target_summary, "dedupe_savings_bytes"),
+            "base_top_language": base_summary.get("top_language"),
+            "target_top_language": target_summary.get("top_language"),
+            "elapsed_seconds": round(time.time() - started, 4),
+        },
+        "comparison": {
+            "summary": compare_summary,
+            "language_delta": comparison.get("language_delta", []),
+            "truncated": comparison.get("truncated", {}),
+        },
+        "storage_delta": storage_delta,
+        "language_delta": _inspect_diff_language_delta(base_inspect, target_inspect),
+        "vocabulary_delta": vocabulary_delta,
+        "files": comparison.get("files", {}),
+        "verification": {
+            "base": base_inspect.get("verification", {}),
+            "target": target_inspect.get("verification", {}),
+        },
+        "source_manifest": _inspect_diff_source_manifest(comparison, limit=max_files),
+    }
+
+
+def format_pack_inspect_diff_markdown(report: dict[str, Any]) -> str:
+    """Render a pack inspection diff report as Markdown."""
+
+    summary = report.get("summary", {})
+    base_pack = report.get("base_pack", {})
+    target_pack = report.get("target_pack", {})
+    lines = [
+        "# RepoMori Pack Inspect Diff",
+        "",
+        f"Status: `{report.get('status')}`",
+        f"Base: `{base_pack.get('pack_path')}`",
+        f"Target: `{target_pack.get('pack_path')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Added: `{summary.get('added_count', 0)}`",
+        f"- Removed: `{summary.get('removed_count', 0)}`",
+        f"- Changed: `{summary.get('changed_count', 0)}`",
+        f"- Unchanged: `{summary.get('unchanged_count', 0)}`",
+        f"- File count delta: `{summary.get('file_count_delta', 0)}`",
+        f"- Text files delta: `{summary.get('text_files_delta', 0)}`",
+        f"- Binary files delta: `{summary.get('binary_files_delta', 0)}`",
+        f"- Logical bytes delta: `{summary.get('logical_bytes_delta', 0)}`",
+        f"- Pack bytes delta: `{summary.get('pack_bytes_delta', 0)}`",
+        f"- Base top language: `{summary.get('base_top_language') or 'unknown'}`",
+        f"- Target top language: `{summary.get('target_top_language') or 'unknown'}`",
+        "",
+        "## Verification",
+        "",
+    ]
+
+    verification = report.get("verification", {})
+    for label in ("base", "target"):
+        item = verification.get(label, {})
+        lines.append(
+            f"- {label}: status=`{item.get('status')}` verified=`{item.get('verified')}` "
+            f"errors=`{item.get('error_count')}`"
+        )
+    lines.append("")
+
+    storage = report.get("storage_delta", {})
+    lines.extend(
+        [
+            "## Storage Delta",
+            "",
+            f"- Chunk count delta: `{storage.get('chunk_count_delta')}`",
+            f"- Unique chunk raw bytes delta: `{storage.get('unique_chunk_raw_bytes_delta')}`",
+            f"- Compressed chunk bytes delta: `{storage.get('compressed_chunk_bytes_delta')}`",
+            f"- File chunk link delta: `{storage.get('file_chunk_link_delta')}`",
+            f"- Duplicate chunk link delta: `{storage.get('duplicate_chunk_link_delta')}`",
+            "",
+        ]
+    )
+
+    language_delta = report.get("language_delta", [])
+    lines.extend(["## Language Delta", ""])
+    if not language_delta:
+        lines.extend(["No language-level changes.", ""])
+    else:
+        for item in language_delta:
+            lines.append(
+                f"- `{item.get('language')}` files `{item.get('base_file_count')}` -> `{item.get('target_file_count')}` "
+                f"delta=`{item.get('file_count_delta')}` bytes_delta=`{item.get('bytes_delta')}`"
+            )
+        lines.append("")
+
+    vocabulary = report.get("vocabulary_delta", {})
+    lines.extend(["## Vocabulary Delta", ""])
+    for label, key in (
+        ("Terms", "top_terms"),
+        ("Symbols", "top_symbols"),
+        ("Imports", "top_imports"),
+        ("Headings", "top_headings"),
+    ):
+        item = vocabulary.get(key, {})
+        added = item.get("added", [])
+        removed = item.get("removed", [])
+        changed = item.get("changed", [])
+        lines.append(
+            f"- {label}: added=`{len(added)}` removed=`{len(removed)}` count_changed=`{len(changed)}` shared=`{item.get('shared_count', 0)}`"
+        )
+        if added:
+            lines.append("  - added: " + ", ".join(f"`{entry.get('value')}`" for entry in added[:8]))
+        if removed:
+            lines.append("  - removed: " + ", ".join(f"`{entry.get('value')}`" for entry in removed[:8]))
+    lines.append("")
+
+    files = report.get("files", {})
+    _append_compare_file_section(lines, "Added Files", files.get("added", []))
+    _append_compare_file_section(lines, "Removed Files", files.get("removed", []))
+    lines.extend(["## Changed Files", ""])
+    changed_files = files.get("changed", [])
+    if not changed_files:
+        lines.extend(["No changed files.", ""])
+    else:
+        for item in changed_files:
+            before = item.get("before", {})
+            after = item.get("after", {})
+            reasons = ", ".join(item.get("change_reasons", []))
+            lines.append(
+                f"- `{item.get('path')}` reasons=`{reasons}` "
+                f"bytes `{before.get('size')}` -> `{after.get('size')}` "
+                f"sha `{before.get('sha256')}` -> `{after.get('sha256')}`"
+            )
+            detail = item.get("summary_delta", {})
+            for key in ("added_symbols", "removed_symbols", "added_imports", "removed_imports", "added_terms", "removed_terms"):
+                values = detail.get(key, [])
+                if values:
+                    lines.append(f"  - {key}: " + ", ".join(f"`{value}`" for value in values[:8]))
+        lines.append("")
+
+    manifest = report.get("source_manifest", [])
+    lines.extend(["## Source Manifest", ""])
+    if not manifest:
+        lines.extend(["No changed source manifest entries.", ""])
+    else:
+        for item in manifest:
+            lines.append(
+                f"- `{item.get('path')}` change=`{item.get('change_type')}` "
+                f"base_sha=`{item.get('base_sha256')}` target_sha=`{item.get('target_sha256')}`"
+            )
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def build_repo_brief(
     pack: Path | str,
     *,
@@ -4538,12 +4766,20 @@ def snapshot_repo(
     comparison = None
     compare_json = None
     compare_md = None
+    inspect_diff = None
+    inspect_diff_json = None
+    inspect_diff_md = None
     if compare and previous_pack is not None:
         comparison = compare_packs(previous_pack, pack_path, limit=compare_limit)
         compare_json = out_path / f"{pack_path.stem}.compare.json"
         compare_md = out_path / f"{pack_path.stem}.compare.md"
         _write_json(compare_json, comparison)
         compare_md.write_text(format_compare_markdown(comparison), encoding="utf-8")
+        inspect_diff = inspect_pack_diff(previous_pack, pack_path, max_files=compare_limit)
+        inspect_diff_json = out_path / f"{pack_path.stem}.inspect-diff.json"
+        inspect_diff_md = out_path / f"{pack_path.stem}.inspect-diff.md"
+        _write_json(inspect_diff_json, inspect_diff)
+        inspect_diff_md.write_text(format_pack_inspect_diff_markdown(inspect_diff), encoding="utf-8")
 
     handoff = None
     handoff_check = None
@@ -4628,6 +4864,9 @@ def snapshot_repo(
             "changed_count": comparison.get("summary", {}).get("changed_count") if comparison else None,
             "added_count": comparison.get("summary", {}).get("added_count") if comparison else None,
             "removed_count": comparison.get("summary", {}).get("removed_count") if comparison else None,
+            "inspect_diff_status": inspect_diff.get("status") if inspect_diff else None,
+            "inspect_diff_json": str(inspect_diff_json) if inspect_diff_json is not None else None,
+            "inspect_diff_markdown": str(inspect_diff_md) if inspect_diff_md is not None else None,
             "handoff_dir": str(handoff_path) if handoff_path is not None else None,
             "handoff_passed": handoff_check.get("valid") if handoff_check else None,
             "diff_context_status": diff_context_status,
@@ -4648,6 +4887,7 @@ def snapshot_repo(
         "build": build,
         "verify": verify,
         "comparison": comparison,
+        "inspect_diff": inspect_diff,
         "handoff": handoff,
         "handoff_check": handoff_check,
         "diff_context": diff_context_bundle,
@@ -4655,6 +4895,9 @@ def snapshot_repo(
     if compare_json is not None and compare_md is not None:
         report["artifacts"]["compare_json"] = compare_json.name
         report["artifacts"]["compare_markdown"] = compare_md.name
+    if inspect_diff_json is not None and inspect_diff_md is not None:
+        report["artifacts"]["inspect_diff_json"] = inspect_diff_json.name
+        report["artifacts"]["inspect_diff_markdown"] = inspect_diff_md.name
     if handoff_path is not None:
         report["artifacts"]["handoff"] = handoff_path.name
     if diff_context_json is not None and diff_context_md is not None:
@@ -4780,6 +5023,26 @@ def format_snapshot_markdown(report: dict[str, Any]) -> str:
         lines.extend(["No previous `latest.repomori` snapshot was available to compare.", ""])
     else:
         lines.extend(["Comparison disabled for this snapshot.", ""])
+
+    lines.extend(["## Inspect Diff", ""])
+    inspect_diff = report.get("inspect_diff")
+    if inspect_diff:
+        inspect_summary = inspect_diff.get("summary", {})
+        lines.extend(
+            [
+                f"- Status: `{inspect_diff.get('status')}`",
+                f"- Added: `{inspect_summary.get('added_count')}`",
+                f"- Removed: `{inspect_summary.get('removed_count')}`",
+                f"- Changed: `{inspect_summary.get('changed_count')}`",
+                f"- JSON: `{summary.get('inspect_diff_json')}`",
+                f"- Markdown: `{summary.get('inspect_diff_markdown')}`",
+                "",
+            ]
+        )
+    elif report.get("settings", {}).get("compare"):
+        lines.extend(["No previous `latest.repomori` snapshot was available to inspect-diff.", ""])
+    else:
+        lines.extend(["Inspect diff disabled because comparison is disabled.", ""])
 
     handoff = report.get("handoff")
     lines.extend(["## Handoff", ""])
@@ -5823,6 +6086,10 @@ def run_memory_cycle(
         artifacts["compare_json"] = snapshot["artifacts"]["compare_json"]
     if snapshot.get("artifacts", {}).get("compare_markdown"):
         artifacts["compare_markdown"] = snapshot["artifacts"]["compare_markdown"]
+    if snapshot.get("artifacts", {}).get("inspect_diff_json"):
+        artifacts["inspect_diff_json"] = snapshot["artifacts"]["inspect_diff_json"]
+    if snapshot.get("artifacts", {}).get("inspect_diff_markdown"):
+        artifacts["inspect_diff_markdown"] = snapshot["artifacts"]["inspect_diff_markdown"]
     if snapshot.get("artifacts", {}).get("diff_context_json"):
         artifacts["diff_context_json"] = snapshot["artifacts"]["diff_context_json"]
     if snapshot.get("artifacts", {}).get("diff_context_markdown"):
@@ -5880,6 +6147,9 @@ def run_memory_cycle(
             "rebuilt_file_count": snapshot_summary.get("rebuilt_file_count"),
             "handoff_dir": snapshot_summary.get("handoff_dir"),
             "handoff_passed": snapshot_summary.get("handoff_passed"),
+            "inspect_diff_status": snapshot_summary.get("inspect_diff_status"),
+            "inspect_diff_json": snapshot_summary.get("inspect_diff_json"),
+            "inspect_diff_markdown": snapshot_summary.get("inspect_diff_markdown"),
             "diff_context_status": snapshot_summary.get("diff_context_status"),
             "diff_context_json": snapshot_summary.get("diff_context_json"),
             "diff_context_markdown": snapshot_summary.get("diff_context_markdown"),
@@ -5899,6 +6169,7 @@ def run_memory_cycle(
         "doctor": doctor,
         "prune": prune,
         "timeline": timeline,
+        "inspect_diff": snapshot.get("inspect_diff"),
         "diff_context": snapshot.get("diff_context"),
         "anchor": anchor_report,
         "anchor_verification": anchor_verification,
@@ -7238,6 +7509,197 @@ def _append_inspect_file_section(lines: list[str], title: str, files: list[dict[
     lines.append("")
 
 
+def _inspect_diff_status(base_inspect: dict[str, Any], target_inspect: dict[str, Any]) -> str:
+    statuses = {base_inspect.get("status"), target_inspect.get("status")}
+    base_verify = base_inspect.get("verification", {})
+    target_verify = target_inspect.get("verification", {})
+    statuses.update({base_verify.get("status"), target_verify.get("status")})
+    if "fail" in statuses:
+        return "fail"
+    if "warn" in statuses:
+        return "warn"
+    return "pass"
+
+
+def _inspect_delta_value(before: dict[str, Any], after: dict[str, Any], key: str) -> int | None:
+    before_value = before.get(key)
+    after_value = after.get(key)
+    if isinstance(before_value, int) and isinstance(after_value, int):
+        return after_value - before_value
+    return None
+
+
+def _inspect_diff_storage_delta(base_inspect: dict[str, Any], target_inspect: dict[str, Any]) -> dict[str, Any]:
+    base_summary = base_inspect.get("summary", {})
+    target_summary = target_inspect.get("summary", {})
+    base_storage = base_inspect.get("storage", {})
+    target_storage = target_inspect.get("storage", {})
+    base_chunks = base_storage.get("chunks", {})
+    target_chunks = target_storage.get("chunks", {})
+    base_file_chunks = base_storage.get("file_chunks", {})
+    target_file_chunks = target_storage.get("file_chunks", {})
+    return {
+        "chunk_count_delta": _inspect_delta_value(base_chunks, target_chunks, "count"),
+        "unique_chunk_raw_bytes_delta": _inspect_delta_value(base_summary, target_summary, "unique_chunk_raw_bytes"),
+        "compressed_chunk_bytes_delta": _inspect_delta_value(base_summary, target_summary, "compressed_chunk_bytes"),
+        "compression_savings_bytes_delta": _inspect_delta_value(base_summary, target_summary, "compression_savings_bytes"),
+        "dedupe_savings_bytes_delta": _inspect_delta_value(base_summary, target_summary, "dedupe_savings_bytes"),
+        "file_chunk_link_delta": _inspect_delta_value(base_file_chunks, target_file_chunks, "links"),
+        "duplicate_chunk_link_delta": _inspect_delta_value(base_file_chunks, target_file_chunks, "duplicate_chunk_links"),
+        "base_compression_ratio": base_chunks.get("compression_ratio"),
+        "target_compression_ratio": target_chunks.get("compression_ratio"),
+        "base_logical_to_pack_ratio": base_summary.get("logical_to_pack_ratio"),
+        "target_logical_to_pack_ratio": target_summary.get("logical_to_pack_ratio"),
+    }
+
+
+def _inspect_diff_language_delta(base_inspect: dict[str, Any], target_inspect: dict[str, Any]) -> list[dict[str, Any]]:
+    base_languages = {
+        str(item.get("language") or "unknown"): item
+        for item in base_inspect.get("languages", [])
+        if isinstance(item, dict)
+    }
+    target_languages = {
+        str(item.get("language") or "unknown"): item
+        for item in target_inspect.get("languages", [])
+        if isinstance(item, dict)
+    }
+    rows = []
+    for language in sorted(set(base_languages) | set(target_languages)):
+        before = base_languages.get(language, {})
+        after = target_languages.get(language, {})
+        row = {
+            "language": language,
+            "base_file_count": int(before.get("file_count") or 0),
+            "target_file_count": int(after.get("file_count") or 0),
+            "base_bytes": int(before.get("bytes") or 0),
+            "target_bytes": int(after.get("bytes") or 0),
+            "base_tokens": int(before.get("tokens") or 0),
+            "target_tokens": int(after.get("tokens") or 0),
+            "base_lines": int(before.get("lines") or 0),
+            "target_lines": int(after.get("lines") or 0),
+        }
+        row["file_count_delta"] = row["target_file_count"] - row["base_file_count"]
+        row["bytes_delta"] = row["target_bytes"] - row["base_bytes"]
+        row["tokens_delta"] = row["target_tokens"] - row["base_tokens"]
+        row["lines_delta"] = row["target_lines"] - row["base_lines"]
+        if any(row[key] for key in ("file_count_delta", "bytes_delta", "tokens_delta", "lines_delta")):
+            rows.append(row)
+    return rows
+
+
+def _inspect_diff_vocabulary_delta(
+    base_inspect: dict[str, Any],
+    target_inspect: dict[str, Any],
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    base_vocab = base_inspect.get("vocabulary", {})
+    target_vocab = target_inspect.get("vocabulary", {})
+    result = {}
+    for key in ("top_terms", "top_symbols", "top_imports", "top_headings"):
+        result[key] = _inspect_count_delta(
+            _inspect_vocabulary_counts(base_vocab.get(key, []), key),
+            _inspect_vocabulary_counts(target_vocab.get(key, []), key),
+            limit=limit,
+        )
+    return result
+
+
+def _inspect_vocabulary_counts(items: Any, key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not isinstance(items, list):
+        return counts
+    for item in items:
+        value = None
+        count = 1
+        if key == "top_symbols" and isinstance(item, dict):
+            name = str(item.get("name", "")).strip()
+            kind = str(item.get("kind", "symbol")).strip() or "symbol"
+            if name:
+                value = f"{kind}:{name}"
+            raw_count = item.get("count")
+            if isinstance(raw_count, int):
+                count = raw_count
+        elif isinstance(item, (list, tuple)) and item:
+            value = str(item[0]).strip()
+            if len(item) > 1 and isinstance(item[1], int):
+                count = item[1]
+        if value:
+            counts[value] = count
+    return counts
+
+
+def _inspect_count_delta(base: dict[str, int], target: dict[str, int], *, limit: int) -> dict[str, Any]:
+    added = sorted(set(target) - set(base))
+    removed = sorted(set(base) - set(target))
+    changed = sorted(value for value in set(base) & set(target) if base[value] != target[value])
+    return {
+        "added": [{"value": value, "target_count": target[value]} for value in added[:limit]],
+        "removed": [{"value": value, "base_count": base[value]} for value in removed[:limit]],
+        "changed": [
+            {
+                "value": value,
+                "base_count": base[value],
+                "target_count": target[value],
+                "delta": target[value] - base[value],
+            }
+            for value in changed[:limit]
+        ],
+        "shared_count": len(set(base) & set(target)),
+        "truncated": {
+            "added": len(added) > limit,
+            "removed": len(removed) > limit,
+            "changed": len(changed) > limit,
+        },
+    }
+
+
+def _inspect_diff_source_manifest(comparison: dict[str, Any], *, limit: int) -> list[dict[str, Any]]:
+    manifest = []
+    files = comparison.get("files", {})
+    for item in files.get("added", []):
+        manifest.append(
+            {
+                "path": item.get("path"),
+                "change_type": "added",
+                "base_sha256": None,
+                "target_sha256": item.get("sha256"),
+                "base_size": None,
+                "target_size": item.get("size"),
+                "language": item.get("language"),
+            }
+        )
+    for item in files.get("removed", []):
+        manifest.append(
+            {
+                "path": item.get("path"),
+                "change_type": "removed",
+                "base_sha256": item.get("sha256"),
+                "target_sha256": None,
+                "base_size": item.get("size"),
+                "target_size": None,
+                "language": item.get("language"),
+            }
+        )
+    for item in files.get("changed", []):
+        before = item.get("before", {})
+        after = item.get("after", {})
+        manifest.append(
+            {
+                "path": item.get("path"),
+                "change_type": "changed",
+                "base_sha256": before.get("sha256"),
+                "target_sha256": after.get("sha256"),
+                "base_size": before.get("size"),
+                "target_size": after.get("size"),
+                "language": after.get("language") or before.get("language"),
+                "change_reasons": item.get("change_reasons", []),
+            }
+        )
+    return manifest[:limit]
+
+
 def _compare_record_reasons(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
     reasons = []
     for key in ("sha256", "size", "language", "is_text", "line_count", "token_count"):
@@ -7409,6 +7871,8 @@ def _agent_brief_artifacts(out_path: Path, latest: dict[str, Any] | None) -> lis
         ("snapshot_markdown", "snapshot_markdown"),
         ("compare_json", "compare_json"),
         ("compare_markdown", "compare_markdown"),
+        ("inspect_diff_json", "inspect_diff_json"),
+        ("inspect_diff_markdown", "inspect_diff_markdown"),
         ("diff_context_json", "diff_context_json"),
         ("diff_context_markdown", "diff_context_markdown"),
         ("handoff_dir", "handoff_dir"),
@@ -7882,6 +8346,8 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
         "snapshot_markdown": artifacts.get("snapshot_markdown"),
         "compare_json": artifacts.get("compare_json"),
         "compare_markdown": artifacts.get("compare_markdown"),
+        "inspect_diff_json": artifacts.get("inspect_diff_json"),
+        "inspect_diff_markdown": artifacts.get("inspect_diff_markdown"),
         "diff_context_json": artifacts.get("diff_context_json"),
         "diff_context_markdown": artifacts.get("diff_context_markdown"),
         "file_count": summary.get("file_count"),
@@ -7896,6 +8362,7 @@ def _snapshot_index_entry(report: dict[str, Any]) -> dict[str, Any]:
         "compared_with_previous": summary.get("compared_with_previous"),
         "handoff_dir": summary.get("handoff_dir"),
         "handoff_passed": summary.get("handoff_passed"),
+        "inspect_diff_status": summary.get("inspect_diff_status"),
         "diff_context_status": summary.get("diff_context_status"),
         "diff_context_selected_count": summary.get("diff_context_selected_count"),
         "diff_context_added_count": summary.get("diff_context_added_count"),
@@ -8012,6 +8479,9 @@ def _doctor_check_snapshot(
     for field in ("snapshot_json", "snapshot_markdown"):
         _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
     for field in ("compare_json", "compare_markdown"):
+        if snapshot.get(field):
+            _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
+    for field in ("inspect_diff_json", "inspect_diff_markdown"):
         if snapshot.get(field):
             _doctor_check_snapshot_artifact(out_path, snapshot, index, field, errors, summary)
     for field in ("diff_context_json", "diff_context_markdown"):
@@ -8148,6 +8618,8 @@ def _snapshot_prune_record(snapshot: dict[str, Any]) -> dict[str, Any]:
         "snapshot_markdown": snapshot.get("snapshot_markdown"),
         "compare_json": snapshot.get("compare_json"),
         "compare_markdown": snapshot.get("compare_markdown"),
+        "inspect_diff_json": snapshot.get("inspect_diff_json"),
+        "inspect_diff_markdown": snapshot.get("inspect_diff_markdown"),
         "diff_context_json": snapshot.get("diff_context_json"),
         "diff_context_markdown": snapshot.get("diff_context_markdown"),
         "handoff_dir": snapshot.get("handoff_dir"),
@@ -8163,6 +8635,8 @@ def _snapshot_prune_targets(out_path: Path, snapshot: dict[str, Any]) -> tuple[l
         ("snapshot_markdown", "snapshot_markdown"),
         ("compare_json", "compare_json"),
         ("compare_markdown", "compare_markdown"),
+        ("inspect_diff_json", "inspect_diff_json"),
+        ("inspect_diff_markdown", "inspect_diff_markdown"),
         ("diff_context_json", "diff_context_json"),
         ("diff_context_markdown", "diff_context_markdown"),
     ):
@@ -8407,6 +8881,7 @@ AGENT_METHODS = (
     "stats.read",
     "doctor.run",
     "inspect.build",
+    "inspect_diff.build",
     "query.run",
     "context.build",
     "diff_context.build",
@@ -8568,6 +9043,26 @@ MCP_TOOLS = (
             "type": "object",
             "properties": {
                 "pack": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "max_files": {"type": "integer"},
+                "top_terms": {"type": "integer"},
+                "top_symbols": {"type": "integer"},
+                "verify": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "repomori_pack_inspect_diff",
+        "title": "RepoMori Pack Inspect Diff",
+        "description": "Inspect structural storage, language, vocabulary, and file changes between two packs.",
+        "agent_method": "inspect_diff.build",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "base_pack": {"type": "string"},
+                "target_pack": {"type": "string"},
                 "out_dir": {"type": "string"},
                 "max_files": {"type": "integer"},
                 "top_terms": {"type": "integer"},
@@ -8797,6 +9292,16 @@ def _agent_dispatch(
             top_symbols=_agent_int(params, "top_symbols", 30),
             verify=bool(params.get("verify", False)),
         )
+    if method == "inspect_diff.build":
+        base_pack, target_pack = _agent_pack_pair(params, settings, method_name="inspect_diff.build")
+        return inspect_pack_diff(
+            base_pack,
+            target_pack,
+            max_files=_agent_int(params, "max_files", 20),
+            top_terms=_agent_int(params, "top_terms", 30),
+            top_symbols=_agent_int(params, "top_symbols", 30),
+            verify=bool(params.get("verify", False)),
+        )
     if method == "query.run":
         return {
             "schema_version": "repomori.agent.query.v1",
@@ -8818,7 +9323,7 @@ def _agent_dispatch(
             include_source=bool(params.get("include_source", True)),
         )
     if method == "diff_context.build":
-        base_pack, target_pack = _agent_pack_pair(params, settings)
+        base_pack, target_pack = _agent_pack_pair(params, settings, method_name="diff_context.build")
         limit = _agent_int(params, "max_files", _agent_int(params, "limit", 8))
         question = str(params.get("question", "what changed?"))
         return build_diff_context_bundle(
@@ -8939,26 +9444,26 @@ def _agent_pack(params: dict[str, Any], settings: dict[str, Any]) -> str:
     raise ValueError("Method requires params.pack or a snapshot timeline with latest pack.")
 
 
-def _agent_pack_pair(params: dict[str, Any], settings: dict[str, Any]) -> tuple[str, str]:
+def _agent_pack_pair(params: dict[str, Any], settings: dict[str, Any], *, method_name: str = "diff_context.build") -> tuple[str, str]:
     base_pack = params.get("base_pack")
     target_pack = params.get("target_pack")
     if isinstance(base_pack, str) and base_pack.strip() and isinstance(target_pack, str) and target_pack.strip():
         return base_pack, target_pack
     out_dir = params.get("out_dir", settings.get("out_dir"))
     if not isinstance(out_dir, str) or not out_dir.strip():
-        raise ValueError("diff_context.build requires params.base_pack and params.target_pack, or params.out_dir/config out_dir.")
+        raise ValueError(f"{method_name} requires params.base_pack and params.target_pack, or params.out_dir/config out_dir.")
     timeline = read_snapshot_timeline(out_dir, limit=2)
     snapshots = timeline.get("snapshots", [])
     if len(snapshots) < 2:
-        raise ValueError("diff_context.build requires at least two snapshots in the timeline.")
+        raise ValueError(f"{method_name} requires at least two snapshots in the timeline.")
     latest = snapshots[0]
     previous = snapshots[1]
     if not isinstance(latest, dict) or not isinstance(previous, dict):
-        raise ValueError("diff_context.build could not resolve latest and previous snapshots.")
+        raise ValueError(f"{method_name} could not resolve latest and previous snapshots.")
     latest_pack = latest.get("pack_path")
     previous_pack = previous.get("pack_path")
     if not latest_pack or not previous_pack:
-        raise ValueError("diff_context.build snapshot entries must include pack_path.")
+        raise ValueError(f"{method_name} snapshot entries must include pack_path.")
     return str(previous_pack), str(latest_pack)
 
 
@@ -9147,6 +9652,15 @@ def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
         lines.append(f"logical_bytes: {summary.get('logical_bytes')}")
         lines.append(f"pack_bytes: {summary.get('pack_bytes')}")
         lines.append(f"verification: {payload.get('verification', {}).get('status')}")
+    elif name == "repomori_pack_inspect_diff":
+        summary = payload.get("summary", {})
+        lines.append(f"status: {payload.get('status')}")
+        lines.append(f"added: {summary.get('added_count')}")
+        lines.append(f"removed: {summary.get('removed_count')}")
+        lines.append(f"changed: {summary.get('changed_count')}")
+        lines.append(f"file_count_delta: {summary.get('file_count_delta')}")
+        lines.append(f"logical_bytes_delta: {summary.get('logical_bytes_delta')}")
+        lines.append(f"pack_bytes_delta: {summary.get('pack_bytes_delta')}")
     elif name == "repomori_stats_read":
         summary = payload.get("summary", {})
         lines.append(f"snapshots: {payload.get('snapshot_count')}")

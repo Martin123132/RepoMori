@@ -20,8 +20,9 @@ Send one JSON object per line:
 {"id":6,"method":"anchor.verify","params":{"anchor":"D:\\Dev\\RepoMori\\timeline-anchor.json"}}
 {"id":7,"method":"query.run","params":{"text":"sqlite Store","limit":3}}
 {"id":8,"method":"inspect.build","params":{"max_files":8,"verify":true}}
-{"id":9,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
-{"id":10,"method":"file.get","params":{"path":"repomori/codec.py"}}
+{"id":9,"method":"inspect_diff.build","params":{"max_files":8}}
+{"id":10,"method":"context.build","params":{"question":"where is storage handled?","max_files":3}}
+{"id":11,"method":"file.get","params":{"path":"repomori/codec.py"}}
 ```
 
 Each response is one JSON line:
@@ -49,6 +50,7 @@ Errors use the same envelope with `ok:false` and an `error` object.
 - `stats.read`: reads incremental reuse and storage statistics for the snapshot timeline.
 - `doctor.run`: checks snapshot directory health.
 - `inspect.build`: inspects a pack's metadata, storage, indexes, vocabulary, and optional verification status.
+- `inspect_diff.build`: inspects structural differences between two packs, or previous-to-latest from a configured snapshot directory.
 - `query.run`: runs pack query; uses latest configured pack if `pack` is omitted.
 - `context.build`: builds a source-backed context bundle.
 - `diff_context.build`: builds source-backed changed-files context between two packs.
@@ -61,9 +63,9 @@ Errors use the same envelope with `ok:false` and an `error` object.
 
 Methods that operate on a pack accept `params.pack`. If omitted, RepoMori reads
 the configured snapshot timeline and uses the latest indexed pack.
-`diff_context.build` accepts `params.base_pack` and `params.target_pack`; if
-they are omitted, it uses the previous and latest snapshots from the configured
-timeline.
+`inspect_diff.build` and `diff_context.build` accept `params.base_pack` and
+`params.target_pack`; if they are omitted, they use the previous and latest
+snapshots from the configured timeline.
 
 ## MCP Stdio Bridge
 
@@ -111,6 +113,7 @@ machine-readable `structuredContent`.
 - `repomori_stats_read`: reads incremental reuse and storage statistics.
 - `repomori_doctor_run`: checks snapshot directory health.
 - `repomori_pack_inspect`: inspects a pack's contents, storage, indexes, and verification status.
+- `repomori_pack_inspect_diff`: inspects structural storage, language, vocabulary, and file changes between two packs.
 - `repomori_query_run`: searches a pack or latest configured snapshot pack.
 - `repomori_context_build`: builds a source-backed context bundle.
 - `repomori_diff_context_build`: builds source-backed changed-files context.

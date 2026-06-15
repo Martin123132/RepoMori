@@ -129,6 +129,7 @@ repomori doctor <snapshot-dir> [--verify-packs] [--json]
 repomori prune <snapshot-dir> [--keep n] [--apply] [--json]
 repomori info <pack>
 repomori inspect <pack> [--format markdown|json] [--verify] [--out file]
+repomori inspect-diff <base-pack> <target-pack> [--format markdown|json] [--verify] [--out file]
 repomori tree <pack>
 repomori query <pack> <text>
 repomori diagnose <pack> <question> [--json] [--max-files n] [--max-bytes n]
@@ -152,6 +153,10 @@ so the snapshot timeline exists before exporting or verifying an anchor.
 `inspect` builds a richer pack report than `info`: pack identity, pack hash,
 storage and compression details, language counts, key/largest files, vocabulary,
 source manifest entries, and optional full verification via `--verify`.
+
+`inspect-diff` compares two packs as machine-facing state: storage deltas,
+language movement, vocabulary shifts, added/removed/changed file manifests, and
+optional verification for both packs.
 
 `context` creates an offline, source-backed bundle for AI agents. It ranks
 matching files, restores exact text from compressed chunks, adds line-numbered
@@ -269,11 +274,11 @@ query RepoMori without guessing shell commands. Send one JSON object per line:
 
 Responses are JSON lines with `schema_version`, `jsonrpc`, `id`, `ok`, and
 either `result` or `error`. Supported methods are `memory.run`, `timeline.read`,
-`stats.read`, `doctor.run`, `inspect.build`, `query.run`, `context.build`,
+`stats.read`, `doctor.run`, `inspect.build`, `inspect_diff.build`, `query.run`, `context.build`,
 `brief.build`, `chain.verify`, `anchor.build`, `anchor.verify`, `diff_context.build`, `handoff.build`,
 `capsule.build`, `file.get`, and `schema.list`. Methods use the configured latest snapshot pack when `pack` is
-not supplied. `diff_context.build` can also infer previous-to-latest from the
-configured snapshot directory.
+not supplied. `inspect_diff.build` and `diff_context.build` can also infer
+previous-to-latest from the configured snapshot directory.
 
 `schema` lists RepoMori's supported JSON contracts and agent methods. See
 `docs/schemas.md` and `docs/agent-protocol.md` for the compact protocol notes.
@@ -302,7 +307,7 @@ Example local client config:
 
 The MCP tool names are `repomori_help`, `repomori_memory_run`,
 `repomori_brief_build`, `repomori_chain_verify`, `repomori_anchor_build`, `repomori_anchor_verify`, `repomori_timeline_read`,
-`repomori_stats_read`, `repomori_doctor_run`, `repomori_pack_inspect`, `repomori_query_run`,
+`repomori_stats_read`, `repomori_doctor_run`, `repomori_pack_inspect`, `repomori_pack_inspect_diff`, `repomori_query_run`,
 `repomori_context_build`, `repomori_diff_context_build`, `repomori_handoff_build`,
 `repomori_capsule_build`, `repomori_file_get`, and
 `repomori_schema_list`.
@@ -311,7 +316,7 @@ The MCP tool names are `repomori_help`, `repomori_memory_run`,
 `latest.repomori`, and automatically compares the new pack against the previous
 latest pack when one exists. It also reuses unchanged file records and chunks
 from that previous pack by default, then writes snapshot JSON/Markdown reports
-and compare reports for machine-readable project memory over time, plus a
+and compare/inspect-diff reports for machine-readable project memory over time, plus a
 `snapshots.json` index that records the timeline of pack hashes, incremental
 reuse counts, and change summaries. Use `--no-incremental` to rebuild every file
 and `--handoff` to create a handoff package for the new snapshot, using the

@@ -34,6 +34,7 @@ python -m repomori chain D:\Dev\YourRepo\.repomori-packs --json
 python -m repomori stats D:\Dev\YourRepo\.repomori-packs --format json
 python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\.repomori-packs\next.repomori --base D:\Dev\YourRepo\.repomori-packs\latest.repomori --force --json
 python -m repomori inspect D:\Dev\YourRepo\.repomori-packs\latest.repomori --verify --out D:\Dev\YourRepo\pack-inspect.md
+python -m repomori inspect-diff D:\Dev\YourRepo\.repomori-packs\previous.repomori D:\Dev\YourRepo\.repomori-packs\latest.repomori --out D:\Dev\YourRepo\inspect-diff.md
 python -m repomori diff-context D:\Dev\YourRepo\.repomori-packs\previous.repomori D:\Dev\YourRepo\.repomori-packs\latest.repomori "what changed?" --out D:\Dev\YourRepo\diff-context.md
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
@@ -51,8 +52,9 @@ only for intentional findings you want future scans to acknowledge.
 summary for local health snapshots after one or more memory runs.
 Use `build --base` when you already have a recent pack and want to reuse
 unchanged file state. `memory` and `snapshot` do that automatically against the
-latest pack unless you pass `--no-incremental`. Use `diff-context` when an
-agent needs only the source-backed changes between two packs.
+latest pack unless you pass `--no-incremental`. Use `inspect-diff` when an
+agent needs structural storage/language/vocabulary movement, and `diff-context`
+when it needs source-backed changed-file snippets.
 
 ## Recommended Local Workflow
 

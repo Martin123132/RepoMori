@@ -35,6 +35,7 @@ from repomori.codec import (
     format_brief_markdown,
     format_compare_markdown,
     format_eval_markdown,
+    format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_context_markdown,
     format_diff_context_markdown,
@@ -50,6 +51,7 @@ from repomori.codec import (
     handle_mcp_request,
     init_config,
     info_pack,
+    inspect_pack_diff,
     inspect_pack,
     load_memory_config,
     query_pack,
@@ -228,6 +230,49 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("## Changed Files", markdown)
             self.assertIn("new.py", markdown)
             self.assertIn("blob.bin", markdown)
+
+    def test_pack_inspect_diff_reports_structural_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, base_pack = self._demo_pack(root)
+            build_pack(repo, base_pack, BuildOptions(force=True))
+
+            (repo / "README.md").write_text("# Demo\n\nStorage engine changed.\n", encoding="utf-8")
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            (repo / "blob.bin").unlink()
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            target_pack = root / "target.repomori"
+            build_pack(repo, target_pack, BuildOptions(force=True, base_pack=base_pack))
+
+            report = inspect_pack_diff(base_pack, target_pack, max_files=5, top_terms=10, top_symbols=10, verify=True)
+
+            self.assertEqual(report["schema_version"], "repomori.inspect_diff.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["added_count"], 1)
+            self.assertEqual(report["summary"]["removed_count"], 1)
+            self.assertGreaterEqual(report["summary"]["changed_count"], 2)
+            self.assertEqual(report["verification"]["base"]["status"], "pass")
+            self.assertEqual(report["verification"]["target"]["status"], "pass")
+            self.assertIn("chunk_count_delta", report["storage_delta"])
+            added_symbols = {item["value"] for item in report["vocabulary_delta"]["top_symbols"]["added"]}
+            self.assertIn("function:close", added_symbols)
+            manifest_paths = {item["path"] for item in report["source_manifest"]}
+            self.assertIn("app.py", manifest_paths)
+            self.assertIn("new.py", manifest_paths)
+            self.assertIn("blob.bin", manifest_paths)
+
+            markdown = format_pack_inspect_diff_markdown(report)
+            self.assertIn("# RepoMori Pack Inspect Diff", markdown)
+            self.assertIn("## Storage Delta", markdown)
+            self.assertIn("function:close", markdown)
 
     def test_repo_brief_summarizes_pack_orientation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1660,14 +1705,25 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(second["summary"]["diff_context_status"], "written")
             self.assertEqual(second["diff_context"]["schema_version"], "repomori.diff_context.v1")
             self.assertEqual(second["diff_context"]["summary"]["changed_count"], 1)
+            self.assertEqual(second["summary"]["inspect_diff_status"], "pass")
+            self.assertEqual(second["inspect_diff"]["schema_version"], "repomori.inspect_diff.v1")
+            self.assertEqual(second["inspect_diff"]["summary"]["changed_count"], 1)
+            self.assertIn("inspect_diff_json", second["artifacts"])
             self.assertIn("diff_context_json", second["artifacts"])
+            inspect_diff_json = out / second["artifacts"]["inspect_diff_json"]
+            inspect_diff_md = out / second["artifacts"]["inspect_diff_markdown"]
             diff_json = out / second["artifacts"]["diff_context_json"]
             diff_md = out / second["artifacts"]["diff_context_markdown"]
+            self.assertTrue(inspect_diff_json.exists())
+            self.assertTrue(inspect_diff_md.exists())
             self.assertTrue(diff_json.exists())
             self.assertTrue(diff_md.exists())
+            self.assertIn("# RepoMori Pack Inspect Diff", inspect_diff_md.read_text(encoding="utf-8"))
             self.assertIn("def close", diff_md.read_text(encoding="utf-8"))
 
             index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["latest"]["inspect_diff_json"], inspect_diff_json.name)
+            self.assertEqual(index["latest"]["inspect_diff_status"], "pass")
             self.assertEqual(index["latest"]["diff_context_json"], diff_json.name)
             self.assertEqual(index["latest"]["diff_context_status"], "written")
             doctor = doctor_snapshot_dir(out)
@@ -1676,6 +1732,8 @@ class RepoMoriCodecTests(unittest.TestCase):
             (repo / "next.py").write_text("def next_step():\n    return 'next'\n", encoding="utf-8")
             third = run_memory_cycle(repo, out, no_handoff=True, diff_context=True, keep=1, prune_apply=True)
             self.assertEqual(third["summary"]["diff_context_status"], "written")
+            self.assertFalse(inspect_diff_json.exists())
+            self.assertFalse(inspect_diff_md.exists())
             self.assertFalse(diff_json.exists())
             self.assertFalse(diff_md.exists())
 
@@ -2088,6 +2146,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             )
             self.assertTrue(help_response["ok"])
             self.assertIn("query.run", help_response["result"]["methods"])
+            self.assertIn("inspect_diff.build", help_response["result"]["methods"])
 
             query_response = handle_agent_request(
                 {"id": 2, "method": "query.run", "params": {"text": "sqlite Store", "limit": 1}},
@@ -2188,6 +2247,14 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(stats_response["ok"])
             self.assertEqual(stats_response["result"]["schema_version"], "repomori.stats.v1")
 
+            inspect_diff_response = handle_agent_request(
+                {"id": "inspect-diff", "method": "inspect_diff.build", "params": {"max_files": 2}},
+                config_path=config,
+            )
+            self.assertTrue(inspect_diff_response["ok"])
+            self.assertEqual(inspect_diff_response["result"]["schema_version"], "repomori.inspect_diff.v1")
+            self.assertEqual(inspect_diff_response["result"]["summary"]["added_count"], 1)
+
             diff_response = handle_agent_request(
                 {"id": "diff", "method": "diff_context.build", "params": {"question": "added", "max_files": 2}},
                 config_path=config,
@@ -2244,6 +2311,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_anchor_verify", first_names)
         self.assertIn("repomori_diff_context_build", first_names)
         self.assertIn("repomori_pack_inspect", first_names)
+        self.assertIn("repomori_pack_inspect_diff", first_names)
         self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
         memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
@@ -2328,6 +2396,23 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(inspect_response["result"]["structuredContent"]["schema_version"], "repomori.inspect.v1")
             self.assertEqual(inspect_response["result"]["structuredContent"]["verification"]["status"], "pass")
             self.assertIn("files:", inspect_response["result"]["content"][0]["text"])
+
+            inspect_diff_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "inspect-diff",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "repomori_pack_inspect_diff",
+                        "arguments": {"max_files": 2},
+                    },
+                },
+                config_path=config,
+            )
+            self.assertFalse(inspect_diff_response["result"]["isError"])
+            self.assertEqual(inspect_diff_response["result"]["structuredContent"]["schema_version"], "repomori.inspect_diff.v1")
+            self.assertEqual(inspect_diff_response["result"]["structuredContent"]["summary"]["added_count"], 1)
+            self.assertIn("changed:", inspect_diff_response["result"]["content"][0]["text"])
 
             context_response = handle_mcp_request(
                 {
@@ -2490,6 +2575,8 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.agent_brief.v1", schema_versions)
         self.assertIn("repomori.brief.v1", schema_versions)
         self.assertIn("repomori.inspect.v1", schema_versions)
+        self.assertIn("repomori.compare.v1", schema_versions)
+        self.assertIn("repomori.inspect_diff.v1", schema_versions)
         self.assertIn("repomori.snapshot_chain.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.verify.v1", schema_versions)
@@ -2502,6 +2589,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("context.build", catalog["agent_methods"])
         self.assertIn("diff_context.build", catalog["agent_methods"])
         self.assertIn("inspect.build", catalog["agent_methods"])
+        self.assertIn("inspect_diff.build", catalog["agent_methods"])
         self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
         self.assertIn("repomori_anchor_build", catalog["mcp_tools"])
@@ -2510,6 +2598,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_chain_verify", catalog["mcp_tools"])
         self.assertIn("repomori_diff_context_build", catalog["mcp_tools"])
         self.assertIn("repomori_pack_inspect", catalog["mcp_tools"])
+        self.assertIn("repomori_pack_inspect_diff", catalog["mcp_tools"])
         self.assertIn("repomori_stats_read", catalog["mcp_tools"])
         self.assertIn("repomori_schema_list", catalog["mcp_tools"])
 
@@ -2529,6 +2618,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         inspect_schema = schema_catalog("repomori.inspect.v1")
         self.assertEqual(inspect_schema["selected"], "repomori.inspect.v1")
         self.assertEqual(inspect_schema["schema"]["producer"], "inspect_pack")
+
+        inspect_diff_schema = schema_catalog("repomori.inspect_diff.v1")
+        self.assertEqual(inspect_diff_schema["selected"], "repomori.inspect_diff.v1")
+        self.assertEqual(inspect_diff_schema["schema"]["producer"], "inspect_pack_diff")
 
         agent_brief = schema_catalog("repomori.agent_brief.v1")
         self.assertEqual(agent_brief["selected"], "repomori.agent_brief.v1")
@@ -2558,6 +2651,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             capsule = build_capsule(pack, max_files=2)
             handoff = build_handoff_package(pack, "sqlite Store", handoff_dir)
             memory = run_memory_cycle(repo, memory_dir, no_handoff=True)
+            inspect_diff = inspect_pack_diff(pack, memory["summary"]["pack_path"], max_files=2)
             diff_context = build_diff_context_bundle(pack, memory["summary"]["pack_path"])
             agent_brief = build_agent_brief(memory_dir)
             chain = verify_snapshot_chain(memory_dir)
@@ -2582,6 +2676,11 @@ class RepoMoriCodecTests(unittest.TestCase):
                     inspect_report,
                     "repomori.inspect.v1",
                     {"schema_version", "status", "pack", "summary", "storage", "files", "vocabulary"},
+                ),
+                "inspect_diff": (
+                    inspect_diff,
+                    "repomori.inspect_diff.v1",
+                    {"schema_version", "status", "base_pack", "target_pack", "summary", "comparison", "storage_delta", "vocabulary_delta"},
                 ),
                 "handoff": (
                     handoff,
@@ -2641,6 +2740,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(context["sources"][0]["path"], "app.py")
             self.assertTrue(capsule["files"])
             self.assertEqual(handoff["status"], "complete")
+            self.assertEqual(inspect_diff["summary"]["changed_count"], 0)
             self.assertEqual(diff_context["summary"]["changed_count"], 0)
             self.assertEqual(memory["status"], "pass")
             self.assertEqual(stats["snapshot_count"], 1)
@@ -2674,6 +2774,46 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["summary"]["file_count"], 3)
             self.assertEqual(payload["verification"]["status"], "pass")
             self.assertTrue(payload["source_manifest"])
+
+    def test_cli_inspect_diff_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, base_pack = self._demo_pack(root)
+            build_pack(repo, base_pack, BuildOptions(force=True))
+            (repo / "app.py").write_text(
+                "import sqlite3\n\n"
+                "class Store:\n"
+                "    def connect(self):\n"
+                "        return sqlite3.connect(':memory:')\n"
+                "    def close(self):\n"
+                "        return None\n",
+                encoding="utf-8",
+            )
+            target_pack = root / "target.repomori"
+            build_pack(repo, target_pack, BuildOptions(force=True, base_pack=base_pack))
+
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "inspect-diff",
+                    str(base_pack),
+                    str(target_pack),
+                    "--json",
+                    "--max-files",
+                    "2",
+                    "--top-symbols",
+                    "10",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.inspect_diff.v1")
+            self.assertEqual(payload["summary"]["changed_count"], 1)
+            self.assertEqual(payload["source_manifest"][0]["path"], "app.py")
 
     def test_cli_context_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
