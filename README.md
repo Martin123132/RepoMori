@@ -222,8 +222,9 @@ context.
 languages, likely entrypoints, key files, top terms, symbols, imports, headings,
 and a source manifest for the files an agent should inspect first. When given a
 snapshot directory, it writes an agent start brief from latest memory: doctor
-status, timeline and reuse summaries, latest handoff, latest diff-context, key
-artifacts, repo orientation, and recommended next commands.
+status, timeline and reuse summaries, latest handoff, latest inspect-diff,
+latest diff-context, key artifacts, repo orientation, and recommended next
+commands.
 
 `compare` diffs two packs and reports added, removed, changed, and unchanged
 file counts, language deltas, changed hashes and sizes, and symbol/import/heading
@@ -372,8 +373,9 @@ manifest without embedding raw source text.
 `brief.md`, `brief.json`, `context.md`, `context.json`, `capsule.json`,
 `eval.md`, `eval.json`, `verify.json`, and a short `README.md`. It verifies the
 pack first and stops before writing context artifacts if verification fails. Use
-`--base-pack` to include `compare.md` and `compare.json` so the receiving agent
-can see what changed since an earlier pack.
+`--base-pack` to include `compare.md`, `compare.json`, `inspect-diff.md`, and
+`inspect-diff.json` so the receiving agent can see both file-level and
+machine-state changes since an earlier pack.
 
 `check-handoff` validates a handoff manifest, artifact sizes and SHA-256 hashes,
 JSON artifacts, and any copied `.repomori` pack.

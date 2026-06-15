@@ -55,6 +55,9 @@ unchanged file state. `memory` and `snapshot` do that automatically against the
 latest pack unless you pass `--no-incremental`. Use `inspect-diff` when an
 agent needs structural storage/language/vocabulary movement, and `diff-context`
 when it needs source-backed changed-file snippets.
+Handoff packages created with `--base-pack`, `snapshot --handoff`, or `memory`
+include both compare and inspect-diff artifacts so a receiving agent can start
+from the latest file-level and machine-state deltas.
 
 ## Recommended Local Workflow
 
@@ -64,7 +67,7 @@ Use `memory` at the end of a work session:
 python -m repomori memory --config D:\Dev\YourRepo\repomori.toml --diff-context --prune-apply --json
 ```
 
-This builds a fresh incremental snapshot, creates a handoff package unless disabled, writes changed-files context when a previous snapshot exists, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Use `brief` on the pack directory to create one agent-readable start file, `chain` to verify timeline integrity, `anchor` to export a small proof of the current chain head, `verify-anchor` to check that proof later, and `stats` to see how many files and chunks RepoMori avoided rebuilding.
+This builds a fresh incremental snapshot, creates a handoff package unless disabled, writes changed-files context when a previous snapshot exists, checks snapshot health, safely prunes old generated artifacts when requested, and returns the recent timeline. Use `brief` on the pack directory to create one agent-readable start file with the latest inspect-diff and diff-context summaries, `chain` to verify timeline integrity, `anchor` to export a small proof of the current chain head, `verify-anchor` to check that proof later, and `stats` to see how many files and chunks RepoMori avoided rebuilding.
 
 `anchor` and `verify-anchor` expect an existing timeline in `<out-dir>`; if you have not
 run `memory` yet, start with `python -m repomori memory --config ...` (you can include

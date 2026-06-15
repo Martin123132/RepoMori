@@ -3925,11 +3925,13 @@ def build_agent_brief(
         repo_brief_error = "latest snapshot pack is missing"
 
     latest_diff_context = _agent_brief_latest_diff_context(out_path, latest, max_files) if latest else None
+    latest_inspect_diff = _agent_brief_latest_inspect_diff(out_path, latest, max_files) if latest else None
     artifacts = _agent_brief_artifacts(out_path, latest)
     latest_handoff = next((item for item in artifacts if item["kind"] == "handoff_dir"), None)
     stats_summary = stats.get("summary", {})
     timeline_summary = timeline.get("summary", {})
     chain_summary = chain.get("summary", {})
+    inspect_diff_summary = latest_inspect_diff.get("summary", {}) if latest_inspect_diff else {}
     status = "pass"
     if (
         doctor.get("status") == "fail"
@@ -3965,6 +3967,12 @@ def build_agent_brief(
         "reuse_percent": stats_summary.get("reuse_percent"),
         "handoff_dir": latest_handoff.get("path") if latest_handoff else None,
         "handoff_exists": latest_handoff.get("exists") if latest_handoff else None,
+        "inspect_diff_status": latest.get("inspect_diff_status") if latest else None,
+        "inspect_diff_json": latest.get("inspect_diff_json") if latest else None,
+        "inspect_diff_markdown": latest.get("inspect_diff_markdown") if latest else None,
+        "inspect_diff_added_count": inspect_diff_summary.get("added_count"),
+        "inspect_diff_changed_count": inspect_diff_summary.get("changed_count"),
+        "inspect_diff_removed_count": inspect_diff_summary.get("removed_count"),
         "diff_context_status": latest.get("diff_context_status") if latest else None,
         "diff_context_selected_count": latest.get("diff_context_selected_count") if latest else None,
         "diff_context_added_count": latest.get("diff_context_added_count") if latest else None,
@@ -3989,6 +3997,7 @@ def build_agent_brief(
         "summary": summary,
         "latest_snapshot": latest,
         "artifacts": artifacts,
+        "latest_inspect_diff": latest_inspect_diff,
         "latest_diff_context": latest_diff_context,
         "repo_brief": repo_brief,
         "timeline": timeline,
@@ -4047,6 +4056,36 @@ def format_agent_brief_markdown(brief: dict[str, Any]) -> str:
         f"- Handoff: `{summary.get('handoff_dir')}` exists=`{summary.get('handoff_exists')}`",
         "",
     ]
+
+    inspect_diff = brief.get("latest_inspect_diff")
+    lines.extend(["## Latest Inspect Diff", ""])
+    if inspect_diff:
+        inspect_summary = inspect_diff.get("summary", {})
+        lines.extend(
+            [
+                f"- Status: `{inspect_diff.get('status')}`",
+                f"- JSON: `{inspect_diff.get('json_path')}`",
+                f"- Markdown: `{inspect_diff.get('markdown_path')}`",
+                f"- Added: `{inspect_summary.get('added_count')}`",
+                f"- Changed: `{inspect_summary.get('changed_count')}`",
+                f"- Removed: `{inspect_summary.get('removed_count')}`",
+                f"- Pack bytes delta: `{inspect_summary.get('pack_bytes_delta')}`",
+                "",
+            ]
+        )
+        for label, key in (("Added Files", "added"), ("Changed Files", "changed"), ("Removed Files", "removed")):
+            entries = inspect_diff.get("files", {}).get(key, [])
+            if entries:
+                lines.extend([f"### {label}", ""])
+                for item in entries:
+                    reasons = ", ".join(str(reason) for reason in item.get("change_reasons", [])[:6])
+                    suffix = f" reasons=`{reasons}`" if reasons else ""
+                    lines.append(
+                        f"- `{item.get('path')}` size=`{item.get('size')}` sha=`{item.get('sha256')}`{suffix}"
+                    )
+                lines.append("")
+    else:
+        lines.extend([f"Inspect diff status: `{summary.get('inspect_diff_status') or 'missing'}`", ""])
 
     diff_context = brief.get("latest_diff_context")
     lines.extend(["## Latest Diff Context", ""])
@@ -4317,6 +4356,20 @@ def build_handoff_package(
         artifacts.append(_artifact_record(out_path, compare_json, "compare_json"))
         artifacts.append(_artifact_record(out_path, compare_md, "compare_markdown"))
 
+        inspect_diff = inspect_pack_diff(
+            base_pack_path,
+            pack_path,
+            max_files=max_files,
+            top_terms=top_terms,
+            top_symbols=top_terms,
+        )
+        inspect_diff_json = out_path / "inspect-diff.json"
+        inspect_diff_md = out_path / "inspect-diff.md"
+        _write_json(inspect_diff_json, inspect_diff)
+        inspect_diff_md.write_text(format_pack_inspect_diff_markdown(inspect_diff), encoding="utf-8")
+        artifacts.append(_artifact_record(out_path, inspect_diff_json, "inspect_diff_json"))
+        artifacts.append(_artifact_record(out_path, inspect_diff_md, "inspect_diff_markdown"))
+
     capsule = build_capsule(pack_path, max_files=capsule_max_files, top_terms=top_terms)
     capsule_path = out_path / "capsule.json"
     _write_json(capsule_path, capsule, compact=True)
@@ -4425,6 +4478,12 @@ def check_handoff_package(handoff_dir: Path | str) -> dict[str, Any]:
         )
         if has_compare:
             json_names.insert(-1, "compare.json")
+        has_inspect_diff = (root / "inspect-diff.json").exists() or any(
+            isinstance(artifact, dict) and artifact.get("path") == "inspect-diff.json"
+            for artifact in artifacts
+        )
+        if has_inspect_diff:
+            json_names.insert(-1, "inspect-diff.json")
         for name in json_names:
             json_results.append(_check_handoff_json(root, name, errors))
 
@@ -7221,7 +7280,8 @@ def _handoff_readme(question: str, copied_pack: bool, has_compare: bool = False)
         else "The original `.repomori` pack is referenced in `manifest.json` but not copied here.\n"
     )
     compare_note = (
-        "8. `compare.md` / `compare.json` - delta from the base pack.\n"
+        "8. `compare.md` / `compare.json` - file-level delta from the base pack.\n"
+        "9. `inspect-diff.md` / `inspect-diff.json` - structural state delta from the base pack.\n"
         if has_compare
         else ""
     )
@@ -7896,6 +7956,75 @@ def _agent_brief_artifact(kind: str, path: Path) -> dict[str, Any]:
         data["size"] = path.stat().st_size
         data["sha256"] = _path_sha256(path)
     return data
+
+
+def _agent_brief_latest_inspect_diff(
+    out_path: Path,
+    latest: dict[str, Any],
+    max_files: int,
+) -> dict[str, Any] | None:
+    json_path = _recorded_snapshot_path(out_path, latest.get("inspect_diff_json"))
+    markdown_path = _recorded_snapshot_path(out_path, latest.get("inspect_diff_markdown"))
+    if json_path is None or not json_path.exists() or not json_path.is_file():
+        return None
+    try:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {
+            "status": "invalid_json",
+            "json_path": str(json_path),
+            "markdown_path": str(markdown_path) if markdown_path is not None else None,
+            "summary": {},
+            "files": {"added": [], "changed": [], "removed": []},
+            "source_manifest": [],
+        }
+
+    files = payload.get("files", {})
+    return {
+        "status": payload.get("status") or "available",
+        "json_path": str(json_path),
+        "markdown_path": str(markdown_path) if markdown_path is not None else None,
+        "summary": payload.get("summary", {}),
+        "comparison_summary": payload.get("comparison", {}).get("summary", {}),
+        "storage_delta": payload.get("storage_delta", {}),
+        "language_delta": payload.get("language_delta", [])[:max_files],
+        "files": {
+            "added": _agent_brief_inspect_files(files.get("added", []), "added", max_files),
+            "changed": _agent_brief_inspect_files(files.get("changed", []), "changed", max_files),
+            "removed": _agent_brief_inspect_files(files.get("removed", []), "removed", max_files),
+        },
+        "source_manifest": payload.get("source_manifest", [])[:max_files],
+    }
+
+
+def _agent_brief_inspect_files(items: list[dict[str, Any]], change_type: str, limit: int) -> list[dict[str, Any]]:
+    records = []
+    for item in items[:limit]:
+        if change_type == "changed":
+            after = item.get("after", {})
+            before = item.get("before", {})
+            records.append(
+                {
+                    "path": item.get("path"),
+                    "change_type": change_type,
+                    "size": after.get("size"),
+                    "sha256": after.get("sha256"),
+                    "previous_size": before.get("size"),
+                    "previous_sha256": before.get("sha256"),
+                    "change_reasons": item.get("change_reasons", []),
+                }
+            )
+        else:
+            records.append(
+                {
+                    "path": item.get("path"),
+                    "change_type": change_type,
+                    "size": item.get("size"),
+                    "sha256": item.get("sha256"),
+                    "language": item.get("language"),
+                }
+            )
+    return records
 
 
 def _agent_brief_latest_diff_context(

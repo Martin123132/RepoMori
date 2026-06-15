@@ -325,17 +325,22 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(brief["summary"]["latest_pack_path"], second["summary"]["pack_path"])
             self.assertEqual(brief["summary"]["doctor_status"], "pass")
             self.assertEqual(brief["summary"]["diff_context_status"], "written")
+            self.assertEqual(brief["summary"]["inspect_diff_status"], "pass")
+            self.assertEqual(brief["summary"]["inspect_diff_changed_count"], 1)
+            self.assertEqual(brief["latest_inspect_diff"]["summary"]["changed_count"], 1)
             self.assertEqual(brief["latest_diff_context"]["summary"]["changed_count"], 1)
             self.assertEqual(brief["repo_brief"]["schema_version"], "repomori.brief.v1")
 
             artifact_kinds = {item["kind"] for item in brief["artifacts"]}
             self.assertIn("latest_pack", artifact_kinds)
             self.assertIn("handoff_dir", artifact_kinds)
+            self.assertIn("inspect_diff_json", artifact_kinds)
             self.assertIn("diff_context_json", artifact_kinds)
             self.assertTrue(any("context" in item["command"] for item in brief["recommended_commands"]))
 
             markdown = format_agent_brief_markdown(brief)
             self.assertIn("# RepoMori Agent Brief", markdown)
+            self.assertIn("## Latest Inspect Diff", markdown)
             self.assertIn("## Latest Diff Context", markdown)
             self.assertIn("app.py", markdown)
             self.assertIn("python -m repomori context", markdown)
@@ -581,15 +586,21 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(manifest["settings"]["base_pack"], str(base_pack.resolve()))
             self.assertTrue((out / "compare.json").exists())
             self.assertTrue((out / "compare.md").exists())
+            self.assertTrue((out / "inspect-diff.json").exists())
+            self.assertTrue((out / "inspect-diff.md").exists())
             artifacts = {artifact["path"]: artifact for artifact in manifest["artifacts"]}
             self.assertEqual(artifacts["compare.json"]["kind"], "compare_json")
+            self.assertEqual(artifacts["inspect-diff.json"]["kind"], "inspect_diff_json")
             compare = json.loads((out / "compare.json").read_text(encoding="utf-8"))
             self.assertEqual(compare["schema_version"], "repomori.compare.v1")
             self.assertGreaterEqual(compare["summary"]["changed_count"], 1)
+            inspect_diff = json.loads((out / "inspect-diff.json").read_text(encoding="utf-8"))
+            self.assertEqual(inspect_diff["schema_version"], "repomori.inspect_diff.v1")
+            self.assertGreaterEqual(inspect_diff["summary"]["changed_count"], 1)
 
             check = check_handoff_package(out)
             self.assertTrue(check["valid"])
-            self.assertEqual(check["checked_json"], 6)
+            self.assertEqual(check["checked_json"], 7)
 
     def test_check_handoff_detects_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1475,9 +1486,10 @@ class RepoMoriCodecTests(unittest.TestCase):
             handoff_dir = Path(second["summary"]["handoff_dir"])
             self.assertTrue((handoff_dir / "manifest.json").exists())
             self.assertTrue((handoff_dir / "compare.json").exists())
+            self.assertTrue((handoff_dir / "inspect-diff.json").exists())
             manifest = second["handoff"]
             self.assertEqual(manifest["settings"]["base_pack"], first["summary"]["pack_path"])
-            self.assertEqual(second["handoff_check"]["checked_json"], 6)
+            self.assertEqual(second["handoff_check"]["checked_json"], 7)
             index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
             self.assertEqual(index["latest"]["handoff_dir"], str(handoff_dir))
             self.assertTrue(index["latest"]["handoff_passed"])
