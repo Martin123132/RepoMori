@@ -90,6 +90,7 @@ those handoff checks with optional local improvement and archive output.
 - `repomori_handoff_health`
 - `repomori_capsule_build`
 - `repomori_file_get`
+- `repomori_compat_check`
 - `repomori_schema_list`
 
 ## Smoke Test By Hand
@@ -97,6 +98,10 @@ those handoff checks with optional local improvement and archive output.
 ```powershell
 $request = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 $request | python -m repomori mcp --config D:\Dev\RepoMori\repomori.toml
+
+$compat = '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"repomori_compat_check","arguments":{"snapshot_dir":"D:\\Dev\\RepoMori\\.repomori-packs","require_handoff":false}}}'
+$compat | python -m repomori mcp --config D:\Dev\RepoMori\repomori.toml
 ```
 
-You should receive one JSON-RPC response with `repomori.mcp.tools.v1` and the tool list.
+The first command returns `repomori.mcp.tools.v1`; the compat call returns
+`repomori.compat.v1` inside `structuredContent`.

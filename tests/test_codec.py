@@ -29,6 +29,7 @@ from repomori.codec import (
     build_handoff_package,
     build_pack,
     check_handoff_package,
+    check_compatibility,
     archive_handoff_package,
     compare_packs,
     diagnose_query,
@@ -39,6 +40,7 @@ from repomori.codec import (
     format_benchmark_markdown,
     format_brief_markdown,
     format_compare_markdown,
+    format_compat_markdown,
     format_eval_markdown,
     format_handoff_score_markdown,
     format_handoff_triage_markdown,
@@ -636,6 +638,65 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertFalse(broken["valid"])
             self.assertGreaterEqual(broken["error_count"], 1)
             self.assertTrue(any(error["scope"] == "artifact" for error in broken["errors"]))
+
+    def test_check_compatibility_validates_pack_handoff_agent_and_mcp_contracts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            handoff_dir = Path(tmp) / "handoff"
+            build_handoff_package(pack, "sqlite Store", handoff_dir)
+
+            report = check_compatibility(pack, handoff=handoff_dir, verify_pack_contents=True)
+
+            self.assertEqual(report["schema_version"], "repomori.compat.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["pack_schema"], codec.SCHEMA_VERSION)
+            self.assertTrue(report["summary"]["handoff_valid"])
+            self.assertTrue(report["pack_verification"]["verified"])
+            check_statuses = {item["id"]: item["status"] for item in report["checks"]}
+            self.assertEqual(check_statuses["pack_schema"], "pass")
+            self.assertEqual(check_statuses["pack_verification"], "pass")
+            self.assertEqual(check_statuses["handoff_integrity"], "pass")
+            self.assertEqual(check_statuses["handoff_schemas"], "pass")
+            self.assertEqual(check_statuses["schema_catalog"], "pass")
+            self.assertEqual(check_statuses["agent_methods"], "pass")
+            self.assertEqual(check_statuses["mcp_tools"], "pass")
+            self.assertIn("repomori.compat.v1", report["schema_catalog"]["required_schemas"])
+            self.assertIn("compat.check", report["schema_catalog"]["required_agent_methods"])
+            self.assertIn("repomori_compat_check", report["schema_catalog"]["required_mcp_tools"])
+
+            markdown = format_compat_markdown(report)
+            self.assertIn("# RepoMori Compatibility", markdown)
+            self.assertIn("handoff_schemas", markdown)
+
+    def test_check_compatibility_missing_inputs_warns_not_fails(self) -> None:
+        report = check_compatibility()
+
+        self.assertEqual(report["schema_version"], "repomori.compat.v1")
+        self.assertEqual(report["status"], "warn")
+        self.assertTrue(any(item["id"] == "pack_input" for item in report["checks"]))
+        self.assertTrue(any(item["id"] == "handoff_input" for item in report["checks"]))
+        self.assertTrue(any(warning["code"] == "pack_missing" for warning in report["warnings"]))
+        self.assertTrue(any(warning["code"] == "handoff_missing" for warning in report["warnings"]))
+
+    def test_check_compatibility_detects_handoff_schema_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            handoff_dir = Path(tmp) / "handoff"
+            build_handoff_package(pack, "sqlite Store", handoff_dir)
+
+            context_path = handoff_dir / "context.json"
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+            context["schema_version"] = "repomori.context.v0"
+            context_path.write_text(json.dumps(context), encoding="utf-8")
+
+            report = check_compatibility(pack, handoff=handoff_dir)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertTrue(any(error["code"] == "handoff_integrity_failed" for error in report["errors"]))
+            self.assertTrue(any(error["code"] == "handoff_schema_mismatch" for error in report["errors"]))
+            schema_checks = {item["path"]: item for item in report["handoff_schemas"]}
+            self.assertEqual(schema_checks["context.json"]["status"], "fail")
+            self.assertEqual(schema_checks["context.json"]["actual"], "repomori.context.v0")
 
     def test_score_handoff_package_reports_quality_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1347,6 +1408,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("chain", report["checks"])
             self.assertIn("timeline", report["checks"])
             self.assertIn("drift_summary", report["checks"])
+            self.assertIn("compat", report["checks"])
+            self.assertEqual(report["checks"]["compat"]["status"], "pass")
+            self.assertEqual(report["summary"]["compat_status"], "pass")
             self.assertEqual(report["artifacts"]["json"], str((health_dir / "release-health.json")))
             self.assertEqual(report["artifacts"]["markdown"], str((health_dir / "release-health.md")))
             self.assertTrue((health_dir / "release-health.json").exists())
@@ -1410,6 +1474,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["checks"]["doctor"]["status"], "warn")
             self.assertEqual(report["checks"]["chain"]["status"], "warn")
             self.assertEqual(report["checks"]["timeline"]["status"], "warn")
+            self.assertEqual(report["checks"]["compat"]["status"], "warn")
 
     def test_run_release_health_policy_can_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2557,6 +2622,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(help_response["ok"])
             self.assertIn("query.run", help_response["result"]["methods"])
             self.assertIn("inspect_diff.build", help_response["result"]["methods"])
+            self.assertIn("compat.check", help_response["result"]["methods"])
 
             query_response = handle_agent_request(
                 {"id": 2, "method": "query.run", "params": {"text": "sqlite Store", "limit": 1}},
@@ -2631,6 +2697,14 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(chain_response["ok"])
             self.assertEqual(chain_response["result"]["schema_version"], "repomori.snapshot_chain.v1")
             self.assertEqual(chain_response["result"]["status"], "pass")
+
+            compat_response = handle_agent_request(
+                {"id": "compat", "method": "compat.check", "params": {"require_handoff": False}},
+                config_path=config,
+            )
+            self.assertTrue(compat_response["ok"])
+            self.assertEqual(compat_response["result"]["schema_version"], "repomori.compat.v1")
+            self.assertEqual(compat_response["result"]["status"], "pass")
 
             anchor_response = handle_agent_request({"id": "anchor", "method": "anchor.build"}, config_path=config)
             self.assertTrue(anchor_response["ok"])
@@ -2800,6 +2874,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_handoff_improve", first_names)
         self.assertIn("repomori_handoff_archive", first_names)
         self.assertIn("repomori_handoff_health", first_names)
+        self.assertIn("repomori_compat_check", first_names)
         self.assertIn("repomori_stats_read", first_names)
         self.assertIn("repomori_schema_list", first_names)
         memory_tool = next(tool for tool in first_list["result"]["tools"] if tool["name"] == "repomori_memory_run")
@@ -3038,6 +3113,23 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(schema_response["result"]["structuredContent"]["schema_version"], "repomori.schema.catalog.v1")
             self.assertIn("repomori_context_build", schema_response["result"]["structuredContent"]["mcp_tools"])
 
+            compat_response = handle_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "compat",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "repomori_compat_check",
+                        "arguments": {"require_handoff": False},
+                    },
+                },
+                config_path=config,
+            )
+            self.assertFalse(compat_response["result"]["isError"])
+            self.assertEqual(compat_response["result"]["structuredContent"]["schema_version"], "repomori.compat.v1")
+            self.assertEqual(compat_response["result"]["structuredContent"]["status"], "pass")
+            self.assertIn("checks:", compat_response["result"]["content"][0]["text"])
+
             file_response = handle_mcp_request(
                 {
                     "jsonrpc": "2.0",
@@ -3071,10 +3163,13 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.handoff_health.v1", schema_versions)
         self.assertIn("repomori.handoff_health_record.v1", schema_versions)
         self.assertIn("repomori.handoff_health_summary.v1", schema_versions)
+        self.assertIn("repomori.compat.v1", schema_versions)
         self.assertIn("repomori.timeline_search.v1", schema_versions)
         self.assertIn("repomori.inspect.v1", schema_versions)
         self.assertIn("repomori.compare.v1", schema_versions)
         self.assertIn("repomori.inspect_diff.v1", schema_versions)
+        self.assertIn("repomori.verify.v1", schema_versions)
+        self.assertIn("repomori.eval.v1", schema_versions)
         self.assertIn("repomori.snapshot_chain.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.verify.v1", schema_versions)
@@ -3094,6 +3189,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("handoff.improve", catalog["agent_methods"])
         self.assertIn("handoff.archive", catalog["agent_methods"])
         self.assertIn("handoff.health", catalog["agent_methods"])
+        self.assertIn("compat.check", catalog["agent_methods"])
         self.assertIn("timeline.search", catalog["agent_methods"])
         self.assertIn("stats.read", catalog["agent_methods"])
         self.assertIn("schema.list", catalog["agent_methods"])
@@ -3108,6 +3204,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori_handoff_improve", catalog["mcp_tools"])
         self.assertIn("repomori_handoff_archive", catalog["mcp_tools"])
         self.assertIn("repomori_handoff_health", catalog["mcp_tools"])
+        self.assertIn("repomori_compat_check", catalog["mcp_tools"])
         self.assertIn("repomori_timeline_search", catalog["mcp_tools"])
         self.assertIn("repomori_stats_read", catalog["mcp_tools"])
         self.assertIn("repomori_schema_list", catalog["mcp_tools"])
@@ -3133,9 +3230,21 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(inspect_diff_schema["selected"], "repomori.inspect_diff.v1")
         self.assertEqual(inspect_diff_schema["schema"]["producer"], "inspect_pack_diff")
 
+        verify_schema = schema_catalog("repomori.verify.v1")
+        self.assertEqual(verify_schema["selected"], "repomori.verify.v1")
+        self.assertEqual(verify_schema["schema"]["producer"], "verify_pack")
+
+        eval_schema = schema_catalog("repomori.eval.v1")
+        self.assertEqual(eval_schema["selected"], "repomori.eval.v1")
+        self.assertEqual(eval_schema["schema"]["producer"], "evaluate_pack")
+
         agent_brief = schema_catalog("repomori.agent_brief.v1")
         self.assertEqual(agent_brief["selected"], "repomori.agent_brief.v1")
         self.assertEqual(agent_brief["schema"]["producer"], "build_agent_brief")
+
+        compat = schema_catalog("repomori.compat.v1")
+        self.assertEqual(compat["selected"], "repomori.compat.v1")
+        self.assertEqual(compat["schema"]["producer"], "check_compatibility")
 
         chain = schema_catalog("repomori.snapshot_chain.v1")
         self.assertEqual(chain["selected"], "repomori.snapshot_chain.v1")
@@ -5488,7 +5597,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("timeline", payload["checks"])
             self.assertIn("chain", payload["checks"])
             self.assertIn("drift_summary", payload["checks"])
+            self.assertIn("compat", payload["checks"])
             self.assertEqual(payload["checks"]["release_check"]["schema_version"], "repomori.release_check.v1")
+            self.assertEqual(payload["checks"]["compat"]["schema_version"], "repomori.compat.v1")
             self.assertEqual(payload["status"], "pass")
 
     def test_cli_release_health_no_snapshot_dir_is_warn(self) -> None:
@@ -5519,6 +5630,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "warn")
             self.assertEqual(payload["checks"]["doctor"]["status"], "warn")
             self.assertEqual(payload["checks"]["chain"]["status"], "warn")
+            self.assertEqual(payload["checks"]["compat"]["status"], "warn")
 
     def test_cli_release_health_artifacts_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5657,6 +5769,37 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["checks"]["release_check"]["summary"]["drift_policy_status"], "fail")
             self.assertEqual(payload["status"], "fail")
+
+    def test_cli_compat_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            handoff_dir = Path(tmp) / "handoff"
+            build_handoff_package(pack, "sqlite Store", handoff_dir)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "compat",
+                    str(pack),
+                    "--handoff",
+                    str(handoff_dir),
+                    "--verify-pack",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.compat.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertTrue(payload["pack_verification"]["verified"])
+            self.assertEqual(payload["summary"]["pack_schema"], codec.SCHEMA_VERSION)
 
     def test_release_check_drift_policy_with_bom_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

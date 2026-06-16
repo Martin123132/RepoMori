@@ -63,6 +63,7 @@ python -m repomori inspect D:\Dev\RepoMori\.repomori-packs\latest.repomori --ver
 python -m repomori agent --config D:\Dev\RepoMori\repomori.toml
 python -m repomori mcp --config D:\Dev\RepoMori\repomori.toml
 python -m repomori schema --json
+python -m repomori compat D:\Dev\RepoMori\.repomori-packs\latest.repomori --handoff D:\handoffs\repo --json
 python -m repomori brief D:\Dev\RepoMori\.repomori-packs --out D:\Dev\RepoMori\agent-brief.md
 python -m repomori snapshot D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --handoff "continue this repo" --json
 python -m repomori chain D:\Dev\RepoMori\.repomori-packs --json
@@ -115,7 +116,7 @@ repomori build <repo> <pack> [--base pack] [--force] [--json]
 repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
 repomori release-check [repo] [--baseline file] [--fail-on low] [--drift-policy file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--drift-log file] [--json]
-repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
+repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--compat-handoff dir] [--compat-verify-pack] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
 repomori drift-summary <log> [--limit n] [--json]
 repomori handoff-health-summary <log> [--limit n] [--format markdown|json] [--out file] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
@@ -123,6 +124,7 @@ repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-ha
 repomori agent [--config file] [--profile name]
 repomori mcp [--config file] [--profile name]
 repomori schema [schema-version] [--json]
+repomori compat [pack] [--snapshot-dir dir] [--handoff dir] [--verify-pack] [--format markdown|json] [--out file] [--json]
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-incremental] [--no-compare] [--json]
 repomori chain <snapshot-dir> [--format markdown|json] [--out file] [--json]
 repomori anchor <snapshot-dir> [--format json|markdown] [--out file] [--json]
@@ -210,8 +212,9 @@ with `scan --public-release --write-baseline` and confirm release-check drift
 returns to strict-only matches.
 
 `release-health` runs the release-check bundle plus snapshot health, timeline tail,
-chain verification, and drift summary in one report (`repomori.health.v1`). Use
-it as your regular local loop for repeatable health checks:
+chain verification, drift summary, and compatibility checks in one report
+(`repomori.health.v1`). Use it as your regular local loop for repeatable health
+checks:
 
 ```powershell
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-log D:\Temp\repomori-drift.log --json
@@ -288,12 +291,21 @@ Responses are JSON lines with `schema_version`, `jsonrpc`, `id`, `ok`, and
 either `result` or `error`. Supported methods are `memory.run`, `timeline.read`,
 `stats.read`, `doctor.run`, `inspect.build`, `inspect_diff.build`, `query.run`, `context.build`,
 `brief.build`, `chain.verify`, `anchor.build`, `anchor.verify`, `diff_context.build`, `handoff.build`,
-`capsule.build`, `file.get`, and `schema.list`. Methods use the configured latest snapshot pack when `pack` is
+`capsule.build`, `file.get`, `compat.check`, and `schema.list`. Methods use the configured latest snapshot pack when `pack` is
 not supplied. `inspect_diff.build` and `diff_context.build` can also infer
 previous-to-latest from the configured snapshot directory.
 
-`schema` lists RepoMori's supported JSON contracts and agent methods. See
-`docs/schemas.md` and `docs/agent-protocol.md` for the compact protocol notes.
+`schema` lists RepoMori's supported JSON contracts and agent methods. `compat`
+checks that a pack, optional handoff directory, schema catalog, agent bridge, and
+MCP bridge still line up with the current RepoMori contracts:
+
+```powershell
+python -m repomori compat D:\Dev\RepoMori\.repomori-packs\latest.repomori --handoff D:\handoffs\repo --verify-pack --json
+python -m repomori compat --snapshot-dir D:\Dev\RepoMori\.repomori-packs --format markdown --out D:\Dev\RepoMori\compat.md
+```
+
+See `docs/schemas.md` and `docs/agent-protocol.md` for the compact protocol
+notes.
 
 `mcp` runs a dependency-free MCP stdio bridge over the same local agent methods.
 It supports `initialize`, `notifications/initialized`, `ping`, `tools/list`,
@@ -321,7 +333,7 @@ The MCP tool names are `repomori_help`, `repomori_memory_run`,
 `repomori_brief_build`, `repomori_chain_verify`, `repomori_anchor_build`, `repomori_anchor_verify`, `repomori_timeline_read`,
 `repomori_stats_read`, `repomori_doctor_run`, `repomori_pack_inspect`, `repomori_pack_inspect_diff`, `repomori_query_run`,
 `repomori_context_build`, `repomori_diff_context_build`, `repomori_handoff_build`,
-`repomori_capsule_build`, `repomori_file_get`, and
+`repomori_capsule_build`, `repomori_file_get`, `repomori_compat_check`, and
 `repomori_schema_list`.
 
 `snapshot` builds timestamped packs into an output directory, updates

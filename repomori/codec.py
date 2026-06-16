@@ -102,6 +102,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "base_pack", "target_pack", "summary", "comparison", "storage_delta", "vocabulary_delta"],
     },
     {
+        "schema_version": "repomori.verify.v1",
+        "kind": "report",
+        "title": "Pack integrity verification report",
+        "producer": "verify_pack",
+        "required_fields": ["schema_version", "pack_path", "pack_schema_version", "verified", "error_count", "checked_files", "checked_chunks", "errors"],
+    },
+    {
         "schema_version": "repomori.context.v1",
         "kind": "report",
         "title": "Source-backed agent context bundle",
@@ -135,6 +142,13 @@ SCHEMA_DEFINITIONS = (
         "title": "Dense machine-readable pack capsule",
         "producer": "build_capsule",
         "required_fields": ["schema_version", "key", "pack", "selection", "files", "dictionary", "manifest"],
+    },
+    {
+        "schema_version": "repomori.eval.v1",
+        "kind": "report",
+        "title": "Source-backed pack evaluation report",
+        "producer": "evaluate_pack",
+        "required_fields": ["schema_version", "pack", "settings", "summary", "coverage", "questions"],
     },
     {
         "schema_version": "repomori.handoff.v1",
@@ -345,6 +359,13 @@ SCHEMA_DEFINITIONS = (
         "title": "Release health and trend bundle",
         "producer": "run_release_health",
         "required_fields": ["schema_version", "status", "repo_path", "settings", "summary", "checks"],
+    },
+    {
+        "schema_version": "repomori.compat.v1",
+        "kind": "report",
+        "title": "RepoMori compatibility report",
+        "producer": "check_compatibility",
+        "required_fields": ["schema_version", "status", "summary", "checks", "schema_catalog"],
     },
     {
         "schema_version": "repomori.baseline_drift_report.v1",
@@ -1474,6 +1495,252 @@ def _build_missing_drift_summary(
     }
 
 
+def check_compatibility(
+    pack: Path | str | None = None,
+    *,
+    handoff: Path | str | None = None,
+    snapshot_dir: Path | str | None = None,
+    verify_pack_contents: bool = False,
+    require_handoff: bool = True,
+) -> dict[str, Any]:
+    """Check whether local RepoMori pack, handoff, schema, agent, and MCP contracts line up."""
+
+    started = time.time()
+    checks: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    resolved_pack = Path(pack).resolve() if pack is not None else _compat_latest_pack(snapshot_dir)
+    handoff_path = Path(handoff).resolve() if handoff is not None else None
+
+    pack_info = None
+    pack_verification = None
+    if resolved_pack is None:
+        _compat_add_check(
+            checks,
+            "pack_input",
+            "warn",
+            "No pack was supplied and no latest snapshot pack could be resolved.",
+            {"pack": None, "snapshot_dir": str(Path(snapshot_dir).resolve()) if snapshot_dir is not None else None},
+        )
+        warnings.append({"code": "pack_missing", "message": "No pack was available for compatibility checks."})
+    elif not resolved_pack.is_file():
+        _compat_add_check(
+            checks,
+            "pack_exists",
+            "fail",
+            "Pack path does not exist.",
+            {"pack": str(resolved_pack)},
+        )
+        errors.append({"code": "pack_not_found", "path": str(resolved_pack), "message": "Pack path does not exist."})
+    else:
+        try:
+            pack_info = info_pack(resolved_pack)
+            pack_schema = pack_info.get("schema_version")
+            _compat_add_check(
+                checks,
+                "pack_schema",
+                "pass" if pack_schema == SCHEMA_VERSION else "fail",
+                "Pack schema is compatible with this RepoMori build.",
+                {"pack": str(resolved_pack), "expected": SCHEMA_VERSION, "actual": pack_schema},
+            )
+            if pack_schema != SCHEMA_VERSION:
+                errors.append({"code": "pack_schema_mismatch", "expected": SCHEMA_VERSION, "actual": pack_schema})
+        except Exception as exc:
+            _compat_add_check(checks, "pack_schema", "fail", f"Could not read pack metadata: {exc}", {"pack": str(resolved_pack)})
+            errors.append({"code": "pack_read_failed", "path": str(resolved_pack), "message": str(exc)})
+
+        if verify_pack_contents and pack_info is not None:
+            try:
+                pack_verification = verify_pack(resolved_pack)
+                verified = bool(pack_verification.get("verified"))
+                _compat_add_check(
+                    checks,
+                    "pack_verification",
+                    "pass" if verified else "fail",
+                    "Pack content verification completed.",
+                    {"verified": verified, "error_count": pack_verification.get("error_count")},
+                )
+                if not verified:
+                    errors.append({"code": "pack_verification_failed", "message": "Pack verification failed."})
+            except Exception as exc:
+                _compat_add_check(checks, "pack_verification", "fail", f"Could not verify pack: {exc}", {"pack": str(resolved_pack)})
+                errors.append({"code": "pack_verification_error", "message": str(exc)})
+
+    handoff_check = None
+    handoff_schemas: list[dict[str, Any]] = []
+    if handoff_path is None:
+        if require_handoff:
+            _compat_add_check(checks, "handoff_input", "warn", "No handoff directory was supplied.", {"handoff": None})
+            warnings.append({"code": "handoff_missing", "message": "No handoff directory was supplied."})
+        else:
+            _compat_add_check(
+                checks,
+                "handoff_input",
+                "pass",
+                "No handoff directory was supplied; handoff compatibility checks were skipped.",
+                {"handoff": None, "required": False},
+            )
+    elif not handoff_path.is_dir():
+        _compat_add_check(checks, "handoff_exists", "fail", "Handoff directory does not exist.", {"handoff": str(handoff_path)})
+        errors.append({"code": "handoff_not_found", "path": str(handoff_path), "message": "Handoff directory does not exist."})
+    else:
+        handoff_check = check_handoff_package(handoff_path)
+        handoff_valid = bool(handoff_check.get("valid"))
+        _compat_add_check(
+            checks,
+            "handoff_integrity",
+            "pass" if handoff_valid else "fail",
+            "Handoff artifact hashes, sizes, JSON, and copied pack references are compatible.",
+            {"valid": handoff_valid, "error_count": handoff_check.get("error_count")},
+        )
+        if not handoff_valid:
+            errors.append({"code": "handoff_integrity_failed", "message": "Handoff validation failed."})
+        handoff_schemas = _compat_handoff_schema_checks(handoff_path)
+        bad_schemas = [item for item in handoff_schemas if item.get("status") == "fail"]
+        warn_schemas = [item for item in handoff_schemas if item.get("status") == "warn"]
+        _compat_add_check(
+            checks,
+            "handoff_schemas",
+            "fail" if bad_schemas else "warn" if warn_schemas else "pass",
+            "Handoff JSON artifacts use expected RepoMori schema versions.",
+            {"checked": len(handoff_schemas), "failed": len(bad_schemas), "warned": len(warn_schemas), "artifacts": handoff_schemas},
+        )
+        for item in bad_schemas:
+            errors.append({"code": "handoff_schema_mismatch", "path": item.get("path"), "message": item.get("message")})
+        for item in warn_schemas:
+            warnings.append({"code": "handoff_schema_missing", "path": item.get("path"), "message": item.get("message")})
+
+    catalog = schema_catalog()
+    schema_versions = {item["schema_version"] for item in catalog.get("schemas", [])}
+    required_schemas = _compat_required_schemas()
+    missing_schemas = sorted(required_schemas - schema_versions)
+    _compat_add_check(
+        checks,
+        "schema_catalog",
+        "pass" if not missing_schemas else "fail",
+        "Schema catalog contains required agent-facing contracts.",
+        {"required": sorted(required_schemas), "missing": missing_schemas},
+    )
+    if missing_schemas:
+        errors.append({"code": "schema_catalog_missing", "missing": missing_schemas, "message": "Required schemas are missing."})
+
+    agent_methods = set(catalog.get("agent_methods", []))
+    required_methods = _compat_required_agent_methods()
+    missing_methods = sorted(required_methods - agent_methods)
+    _compat_add_check(
+        checks,
+        "agent_methods",
+        "pass" if not missing_methods else "fail",
+        "Agent bridge exposes required compatibility methods.",
+        {"required": sorted(required_methods), "missing": missing_methods},
+    )
+    if missing_methods:
+        errors.append({"code": "agent_methods_missing", "missing": missing_methods, "message": "Required agent methods are missing."})
+
+    mcp_tools = set(catalog.get("mcp_tools", []))
+    required_tools = _compat_required_mcp_tools()
+    missing_tools = sorted(required_tools - mcp_tools)
+    _compat_add_check(
+        checks,
+        "mcp_tools",
+        "pass" if not missing_tools else "fail",
+        "MCP bridge exposes required compatibility tools.",
+        {"required": sorted(required_tools), "missing": missing_tools},
+    )
+    if missing_tools:
+        errors.append({"code": "mcp_tools_missing", "missing": missing_tools, "message": "Required MCP tools are missing."})
+
+    status = _worst_status(*(item.get("status") for item in checks))
+    warning_count = sum(1 for item in checks if item.get("status") == "warn")
+    error_count = sum(1 for item in checks if item.get("status") == "fail")
+    return {
+        "schema_version": "repomori.compat.v1",
+        "status": status,
+        "created_at": int(started),
+        "settings": {
+            "pack": str(Path(pack).resolve()) if pack is not None else None,
+            "resolved_pack": str(resolved_pack) if resolved_pack is not None else None,
+            "handoff": str(handoff_path) if handoff_path is not None else None,
+            "snapshot_dir": str(Path(snapshot_dir).resolve()) if snapshot_dir is not None else None,
+            "verify_pack_contents": verify_pack_contents,
+            "require_handoff": require_handoff,
+        },
+        "summary": {
+            "elapsed_seconds": round(time.time() - started, 4),
+            "check_count": len(checks),
+            "error_count": error_count,
+            "warning_count": warning_count,
+            "pack_schema": pack_info.get("schema_version") if isinstance(pack_info, dict) else None,
+            "pack_path": str(resolved_pack) if resolved_pack is not None else None,
+            "handoff_valid": handoff_check.get("valid") if isinstance(handoff_check, dict) else None,
+            "schema_count": catalog.get("schema_count"),
+            "agent_method_count": len(agent_methods),
+            "mcp_tool_count": len(mcp_tools),
+        },
+        "checks": checks,
+        "warnings": warnings,
+        "errors": errors,
+        "pack": pack_info,
+        "pack_verification": pack_verification,
+        "handoff": handoff_check,
+        "handoff_schemas": handoff_schemas,
+        "schema_catalog": {
+            "schema_count": catalog.get("schema_count"),
+            "required_schemas": sorted(required_schemas),
+            "missing_schemas": missing_schemas,
+            "required_agent_methods": sorted(required_methods),
+            "missing_agent_methods": missing_methods,
+            "required_mcp_tools": sorted(required_tools),
+            "missing_mcp_tools": missing_tools,
+        },
+    }
+
+
+def format_compat_markdown(report: dict[str, Any]) -> str:
+    """Render a compact compatibility report as Markdown."""
+
+    summary = report.get("summary", {})
+    settings = report.get("settings", {})
+    lines = [
+        "# RepoMori Compatibility",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Pack: `{summary.get('pack_path')}`",
+        f"- Handoff: `{settings.get('handoff')}`",
+        f"- Pack schema: `{summary.get('pack_schema')}`",
+        f"- Checks: `{summary.get('check_count')}`",
+        f"- Warnings: `{summary.get('warning_count')}`",
+        f"- Errors: `{summary.get('error_count')}`",
+        "",
+        "## Checks",
+        "",
+    ]
+    for item in report.get("checks", []):
+        lines.append(f"- `{item.get('id')}` status=`{item.get('status')}`")
+        message = item.get("message")
+        if message:
+            lines.append(f"  - {message}")
+    handoff_schemas = report.get("handoff_schemas", [])
+    if handoff_schemas:
+        lines.extend(["", "## Handoff Schemas", ""])
+        for item in handoff_schemas:
+            lines.append(
+                f"- `{item.get('path')}` status=`{item.get('status')}` "
+                f"expected=`{item.get('expected')}` actual=`{item.get('actual')}`"
+            )
+    errors = report.get("errors", [])
+    if errors:
+        lines.extend(["", "## Errors", ""])
+        for item in errors:
+            lines.append(f"- `{item.get('code')}` {item.get('message')}")
+    warnings = report.get("warnings", [])
+    if warnings:
+        lines.extend(["", "## Warnings", ""])
+        for item in warnings:
+            lines.append(f"- `{item.get('code')}` {item.get('message')}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def run_release_health(
     repo: Path | str,
     *,
@@ -1491,6 +1758,8 @@ def run_release_health(
     timeline_limit: int = 5,
     drift_summary_limit: int = 20,
     doctor_verify_packs: bool = False,
+    compat_handoff: Path | str | None = None,
+    compat_verify_pack: bool = False,
     artifacts_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Run a snapshot + timeline release health bundle."""
@@ -1548,6 +1817,12 @@ def run_release_health(
     doctor = doctor_snapshot_dir(snapshot_path, verify_packs=doctor_verify_packs)
     chain = verify_snapshot_chain(snapshot_path)
     timeline = read_snapshot_timeline(snapshot_path, limit=timeline_limit)
+    compat = check_compatibility(
+        snapshot_dir=snapshot_path,
+        handoff=compat_handoff,
+        verify_pack_contents=compat_verify_pack,
+        require_handoff=compat_handoff is not None,
+    )
 
     snapshot_path_check = ""
     if not snapshot_path.exists():
@@ -1642,6 +1917,7 @@ def run_release_health(
         "chain": chain,
         "timeline": timeline,
         "drift_summary": drift_summary,
+        "compat": compat,
     }
     status = _release_check_summary_status(
         checks,
@@ -1655,6 +1931,7 @@ def run_release_health(
         "chain_status": chain.get("status"),
         "timeline_status": timeline_status,
         "drift_summary_status": drift_summary.get("status"),
+        "compat_status": compat.get("status"),
         "handoff_score_pass_count": timeline.get("summary", {}).get("handoff_score_pass_count"),
         "handoff_score_warn_count": timeline.get("summary", {}).get("handoff_score_warn_count"),
         "handoff_score_fail_count": timeline.get("summary", {}).get("handoff_score_fail_count"),
@@ -1683,6 +1960,8 @@ def run_release_health(
             "drift_summary_limit": drift_summary_limit,
             "timeline_limit": timeline_limit,
             "doctor_verify_packs": doctor_verify_packs,
+            "compat_handoff": str(Path(compat_handoff).resolve()) if compat_handoff is not None else None,
+            "compat_verify_pack": compat_verify_pack,
             "artifacts_dir": str(artifacts_path),
         },
         "summary": summary,
@@ -1771,7 +2050,7 @@ def format_release_health_markdown(report: dict[str, Any]) -> str:
     ]
     lines.append("")
     lines.append("## Checks")
-    for name in ("release_check", "doctor", "chain", "timeline", "drift_summary"):
+    for name in ("release_check", "doctor", "chain", "timeline", "drift_summary", "compat"):
         check = checks.get(name, {})
         if not isinstance(check, dict):
             continue
@@ -1783,6 +2062,12 @@ def format_release_health_markdown(report: dict[str, Any]) -> str:
                 detail += f" drift_policy={drift_policy}"
         elif name == "drift_summary":
             detail += f" ratio={check.get('max_non_strict_ratio', 0.0):.2f}"
+        elif name == "compat":
+            compat_summary = check.get("summary", {})
+            detail += (
+                f" warnings={compat_summary.get('warning_count', 0)}"
+                f" errors={compat_summary.get('error_count', 0)}"
+            )
         elif name == "timeline":
             chain_status = check.get("chain_status")
             if chain_status is not None:
@@ -8825,6 +9110,151 @@ def _write_json(path: Path, payload: dict[str, Any], *, compact: bool = False) -
     path.write_text(text + "\n", encoding="utf-8")
 
 
+def _compat_add_check(
+    checks: list[dict[str, Any]],
+    check_id: str,
+    status: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    checks.append(
+        {
+            "id": check_id,
+            "status": status,
+            "message": message,
+            "details": details or {},
+        }
+    )
+
+
+def _compat_latest_pack(snapshot_dir: Path | str | None) -> Path | None:
+    if snapshot_dir is None:
+        return None
+    try:
+        timeline = read_snapshot_timeline(snapshot_dir, limit=1)
+    except Exception:
+        return None
+    latest = timeline.get("latest")
+    if not isinstance(latest, dict):
+        return None
+    pack_path = latest.get("pack_path")
+    if not isinstance(pack_path, str) or not pack_path:
+        return None
+    return Path(pack_path).resolve()
+
+
+def _compat_required_schemas() -> set[str]:
+    return {
+        SCHEMA_VERSION,
+        "repomori.verify.v1",
+        "repomori.context.v1",
+        "repomori.diff_context.v1",
+        "repomori.brief.v1",
+        "repomori.agent_brief.v1",
+        "repomori.capsule.v1",
+        "repomori.eval.v1",
+        "repomori.handoff.v1",
+        "repomori.handoff_score.v1",
+        "repomori.handoff_triage.v1",
+        "repomori.handoff_quality.v1",
+        "repomori.handoff_health.v1",
+        "repomori.handoff_health_record.v1",
+        "repomori.handoff_health_summary.v1",
+        "repomori.compat.v1",
+        "repomori.memory.v1",
+        "repomori.health.v1",
+        "repomori.schema.catalog.v1",
+    }
+
+
+def _compat_required_agent_methods() -> set[str]:
+    return {
+        "schema.list",
+        "compat.check",
+        "memory.run",
+        "timeline.read",
+        "query.run",
+        "context.build",
+        "handoff.build",
+        "handoff.health",
+        "capsule.build",
+        "file.get",
+    }
+
+
+def _compat_required_mcp_tools() -> set[str]:
+    return {
+        "repomori_schema_list",
+        "repomori_compat_check",
+        "repomori_memory_run",
+        "repomori_timeline_read",
+        "repomori_query_run",
+        "repomori_context_build",
+        "repomori_handoff_build",
+        "repomori_handoff_health",
+        "repomori_capsule_build",
+        "repomori_file_get",
+    }
+
+
+def _compat_handoff_schema_checks(root: Path) -> list[dict[str, Any]]:
+    core_expected = {
+        "manifest.json": "repomori.handoff.v1",
+        "brief.json": "repomori.brief.v1",
+        "context.json": "repomori.context.v1",
+        "capsule.json": "repomori.capsule.v1",
+        "eval.json": "repomori.eval.v1",
+        "verify.json": "repomori.verify.v1",
+    }
+    optional_expected = {
+        "compare.json": "repomori.compare.v1",
+        "inspect-diff.json": "repomori.inspect_diff.v1",
+        "handoff-score.json": "repomori.handoff_score.v1",
+        "handoff-triage.json": "repomori.handoff_triage.v1",
+        "handoff-quality.json": "repomori.handoff_quality.v1",
+        "handoff-health.json": "repomori.handoff_health.v1",
+        "handoff-improvement.json": "repomori.handoff_improvement.v1",
+    }
+    results = []
+    for relative, expected in core_expected.items():
+        results.append(_compat_json_schema_check(root, relative, expected, required=True))
+    for relative, expected in optional_expected.items():
+        path = root / relative
+        if path.exists():
+            results.append(_compat_json_schema_check(root, relative, expected, required=False))
+    return results
+
+
+def _compat_json_schema_check(root: Path, relative: str, expected: str, *, required: bool) -> dict[str, Any]:
+    path = root / relative
+    if not path.is_file():
+        return {
+            "path": relative,
+            "status": "fail" if required else "warn",
+            "expected": expected,
+            "actual": None,
+            "message": "Required JSON artifact is missing." if required else "Optional JSON artifact is missing.",
+        }
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "path": relative,
+            "status": "fail",
+            "expected": expected,
+            "actual": None,
+            "message": f"Could not parse JSON artifact: {exc}",
+        }
+    actual = payload.get("schema_version") if isinstance(payload, dict) else None
+    return {
+        "path": relative,
+        "status": "pass" if actual == expected else "fail",
+        "expected": expected,
+        "actual": actual,
+        "message": "Schema version matches." if actual == expected else "Schema version mismatch.",
+    }
+
+
 def _artifact_record(root: Path, path: Path, kind: str) -> dict[str, Any]:
     data = path.read_bytes()
     return {
@@ -11176,6 +11606,7 @@ AGENT_METHODS = (
     "handoff.health",
     "capsule.build",
     "file.get",
+    "compat.check",
     "schema.list",
 )
 
@@ -11638,6 +12069,25 @@ MCP_TOOLS = (
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     },
     {
+        "name": "repomori_compat_check",
+        "title": "RepoMori Compat Check",
+        "description": "Check local pack, handoff, schema, agent, and MCP compatibility.",
+        "agent_method": "compat.check",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pack": {"type": "string"},
+                "handoff": {"type": "string"},
+                "snapshot_dir": {"type": "string"},
+                "out_dir": {"type": "string"},
+                "verify_pack_contents": {"type": "boolean"},
+                "require_handoff": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
         "name": "repomori_schema_list",
         "title": "RepoMori Schema List",
         "description": "List supported RepoMori schemas, agent methods, and MCP tool names.",
@@ -11678,6 +12128,23 @@ def _agent_dispatch(
         if schema_version is not None and not isinstance(schema_version, str):
             raise ValueError("params.schema_version must be a string when supplied.")
         return schema_catalog(schema_version)
+    if method == "compat.check":
+        pack = params.get("pack")
+        if pack is not None and not isinstance(pack, str):
+            raise ValueError("params.pack must be a string when supplied.")
+        handoff = params.get("handoff")
+        if handoff is not None and not isinstance(handoff, str):
+            raise ValueError("params.handoff must be a string when supplied.")
+        snapshot_dir = params.get("snapshot_dir") or params.get("out_dir") or settings.get("out_dir")
+        if snapshot_dir is not None and not isinstance(snapshot_dir, str):
+            raise ValueError("params.snapshot_dir/out_dir must be a string when supplied.")
+        return check_compatibility(
+            pack if isinstance(pack, str) and pack.strip() else None,
+            handoff=handoff if isinstance(handoff, str) and handoff.strip() else None,
+            snapshot_dir=snapshot_dir,
+            verify_pack_contents=bool(params.get("verify_pack_contents", False)),
+            require_handoff=bool(params.get("require_handoff", True)),
+        )
     if method == "memory.run":
         return run_memory_cycle(**_agent_memory_kwargs(params, settings))
     if method == "brief.build":
@@ -12199,6 +12666,12 @@ def _mcp_tool_text(name: str, payload: dict[str, Any]) -> str:
         lines.append(f"schemas: {payload.get('schema_count')}")
         lines.append(f"agent_methods: {len(payload.get('agent_methods', []))}")
         lines.append(f"mcp_tools: {len(payload.get('mcp_tools', []))}")
+    elif name == "repomori_compat_check":
+        summary = payload.get("summary", {})
+        lines.append(f"status: {payload.get('status')}")
+        lines.append(f"checks: {summary.get('check_count')}")
+        lines.append(f"warnings: {summary.get('warning_count')}")
+        lines.append(f"errors: {summary.get('error_count')}")
     elif "status" in payload:
         lines.append(f"status: {payload.get('status')}")
     return "\n".join(lines)

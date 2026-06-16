@@ -21,6 +21,7 @@ from .codec import (
     build_handoff_package,
     build_pack,
     check_handoff_package,
+    check_compatibility,
     compare_packs,
     diagnose_query,
     doctor_snapshot_dir,
@@ -29,6 +30,7 @@ from .codec import (
     format_agent_brief_markdown,
     format_brief_markdown,
     format_compare_markdown,
+    format_compat_markdown,
     format_context_markdown,
     format_diff_context_markdown,
     format_eval_markdown,
@@ -145,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     release_check.add_argument("--json", action="store_true", help="Print release-check JSON.")
 
-    release_health = sub.add_parser("release-health", help="Run release-check, doctor, chain, timeline, and drift-summary.")
+    release_health = sub.add_parser("release-health", help="Run release-check, doctor, chain, timeline, drift-summary, and compat.")
     release_health.add_argument("repo", type=Path, nargs="?", default=Path.cwd(), help="Repository folder to check.")
     release_health.add_argument("--snapshot-dir", type=Path, help="Snapshot directory for doctor, chain, and timeline.")
     release_health.add_argument("--baseline", type=Path, help="Scan baseline; defaults to <repo>/.repomori-scan-baseline.json when present.")
@@ -181,6 +183,12 @@ def main(argv: list[str] | None = None) -> int:
         "--doctor-verify-packs",
         action="store_true",
         help="Run full pack verification during doctor.",
+    )
+    release_health.add_argument("--compat-handoff", type=Path, help="Optional handoff directory for release-health compatibility checks.")
+    release_health.add_argument(
+        "--compat-verify-pack",
+        action="store_true",
+        help="Run full pack verification during release-health compatibility checks.",
     )
     release_health.add_argument("--json", action="store_true", help="Print release-health JSON.")
 
@@ -365,6 +373,15 @@ def main(argv: list[str] | None = None) -> int:
     schema = sub.add_parser("schema", help="Show supported RepoMori schemas and agent methods.")
     schema.add_argument("schema_version", nargs="?", help="Specific schema version to show.")
     schema.add_argument("--json", action="store_true", help="Print schema JSON.")
+
+    compat = sub.add_parser("compat", help="Check pack, handoff, schema, agent, and MCP compatibility.")
+    compat.add_argument("pack", type=Path, nargs="?", help="Pack to check; defaults to latest pack from --snapshot-dir when supplied.")
+    compat.add_argument("--handoff", type=Path, help="Optional handoff directory to validate against current contracts.")
+    compat.add_argument("--snapshot-dir", type=Path, help="Snapshot directory used to resolve the latest pack.")
+    compat.add_argument("--verify-pack", action="store_true", help="Run full pack verification during compatibility checks.")
+    compat.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    compat.add_argument("--out", type=Path, help="Write the compatibility report to this file.")
+    compat.add_argument("--json", action="store_true", help="Print JSON output.")
 
     info = sub.add_parser("info", help="Show pack metadata.")
     info.add_argument("pack", type=Path)
@@ -689,12 +706,32 @@ def main(argv: list[str] | None = None) -> int:
             timeline_limit=args.timeline_limit,
             drift_summary_limit=args.drift_summary_limit,
             doctor_verify_packs=args.doctor_verify_packs,
+            compat_handoff=args.compat_handoff,
+            compat_verify_pack=args.compat_verify_pack,
             artifacts_dir=artifacts_dir,
         )
         if args.json:
             print(json.dumps(report, indent=2))
         else:
             _print(report, args.json)
+        return 0 if report["status"] != "fail" else 1
+    if args.command == "compat":
+        report = check_compatibility(
+            args.pack,
+            handoff=args.handoff,
+            snapshot_dir=args.snapshot_dir,
+            verify_pack_contents=args.verify_pack,
+        )
+        output_format = "json" if args.json else args.format
+        if output_format == "json":
+            output = json.dumps(report, indent=2)
+        else:
+            output = format_compat_markdown(report)
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
         return 0 if report["status"] != "fail" else 1
     if args.command == "init":
         result = init_config(

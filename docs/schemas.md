@@ -17,11 +17,13 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.inspect.v1`: pack inspector report with storage, file, vocabulary, manifest, and verification summary.
 - `repomori.compare.v1`: pack comparison report for added, removed, changed, and unchanged files.
 - `repomori.inspect_diff.v1`: structural inspector diff report for storage, language, vocabulary, and changed-file manifests.
+- `repomori.verify.v1`: pack integrity verification report.
 - `repomori.context.v1`: source-backed context bundle from `context.build`.
 - `repomori.diff_context.v1`: source-backed changed-files context from `diff_context.build`.
 - `repomori.brief.v1`: question-free orientation brief from one pack.
 - `repomori.agent_brief.v1`: snapshot-directory start brief for another agent.
 - `repomori.capsule.v1`: dense machine-readable capsule without raw source.
+- `repomori.eval.v1`: source-backed pack evaluation report.
 - `repomori.handoff.v1`: handoff directory manifest.
 - `repomori.handoff_score.v1`: deterministic handoff usefulness score report.
 - `repomori.handoff_triage.v1`: prioritized checklist generated from a handoff score.
@@ -48,6 +50,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.scan.baseline.v1`: acknowledged public-safety scan findings.
 - `repomori.release_check.v1`: local release readiness report.
 - `repomori.health.v1`: release-health aggregate bundle.
+- `repomori.compat.v1`: pack, handoff, schema, agent, and MCP compatibility report.
 - `repomori.baseline_drift_report.v1`: per-run baseline drift telemetry.
 - `repomori.baseline_drift_record.v1`: one JSONL baseline drift log row.
 - `repomori.baseline_drift_summary.v1`: summarized drift-log trend report.
@@ -59,6 +62,13 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.agent.query.v1`: wrapper around query results.
 - `repomori.agent.file.v1`: exact file payload with text and base64 bytes.
 - `repomori.mcp.tools.v1`: documented MCP tool listing contract.
+
+## Compatibility Check
+
+`python -m repomori compat D:\Dev\RepoMori\.repomori-packs\latest.repomori --handoff D:\handoffs\repo --json`
+emits `repomori.compat.v1`. The check is local-only and validates pack schema,
+optional full pack verification, handoff artifact integrity and JSON schema
+versions, schema catalog entries, agent bridge methods, and MCP tool names.
 
 ## MCP Bridge
 

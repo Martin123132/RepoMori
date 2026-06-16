@@ -47,6 +47,7 @@ python -m repomori timeline-search D:\Dev\YourRepo\.repomori-packs "sqlite Store
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
 python -m repomori release-health D:\Dev\YourRepo --snapshot-dir D:\Dev\YourRepo\.repomori-packs --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
+python -m repomori compat --snapshot-dir D:\Dev\YourRepo\.repomori-packs --format markdown --out D:\Dev\YourRepo\compat.md
 python -m repomori drift-summary D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --limit 20 --json
 python -m repomori context D:\Dev\YourRepo\.repomori-packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
 ```
@@ -57,7 +58,8 @@ large files, local path traces, and license guardrail gaps. Write a baseline
 only for intentional findings you want future scans to acknowledge.
 `release-check` combines schema sanity, strict scan, unit tests, and demo smoke.
 `release-health` wraps `release-check` with doctor + chain + timeline + drift
-summary for local health snapshots after one or more memory runs.
+summary + compatibility checks for local health snapshots after one or more
+memory runs.
 Use `build --base` when you already have a recent pack and want to reuse
 unchanged file state. `memory` and `snapshot` do that automatically against the
 latest pack unless you pass `--no-incremental`. Use `inspect-diff` when an
@@ -79,6 +81,8 @@ Add `--health-log` to keep a JSONL trend history and read it back with
 `handoff-health-summary`.
 Use `archive-handoff` to create a portable zip, and `timeline-search` to ask when
 a path, symbol, or concept started appearing across snapshot packs.
+Use `compat` when you want one local report proving the latest pack, optional
+handoff directory, schema catalog, agent bridge, and MCP bridge still agree.
 
 ## Recommended Local Workflow
 

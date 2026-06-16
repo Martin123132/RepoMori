@@ -9,6 +9,7 @@
 - snapshot health (`doctor`),
 - snapshot chain verification (`chain`),
 - timeline tail (`timeline`),
+- compatibility check (`compat` over the latest pack, schema catalog, agent, and MCP bridge),
 - and baseline drift trend (`drift-summary` over the same run log).
 
 It runs offline, dependency-free, and model-free.
@@ -17,6 +18,7 @@ It runs offline, dependency-free, and model-free.
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --json
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json --json
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-log D:\Dev\RepoMori\.repomori-baseline-drift.jsonl --artifacts-dir D:\Dev\RepoMori\.repomori-health --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --compat-handoff D:\handoffs\repo --compat-verify-pack --json
 ```
 
 Use this command for a predictable post-memory check after CI or after local work:
@@ -34,7 +36,13 @@ Output schema is `repomori.health.v1`. The result includes:
 - `checks.chain` (`repomori.snapshot_chain.v1`)
 - `checks.timeline` (`repomori.timeline.v1`)
 - `checks.drift_summary` (`repomori.baseline_drift_summary.v1`)
+- `checks.compat` (`repomori.compat.v1`)
 - `artifacts` paths for optional JSON/Markdown output
+
+`compat` does not require a handoff directory during normal `release-health`
+runs. Add `--compat-handoff` when you want that handoff validated too, and add
+`--compat-verify-pack` when the run should fully verify pack contents rather
+than checking only metadata compatibility.
 
 ## Anchor freshness profile checks
 

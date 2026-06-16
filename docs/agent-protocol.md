@@ -57,6 +57,7 @@ Errors use the same envelope with `ok:false` and an `error` object.
 - `handoff.build`: writes a handoff package directory.
 - `capsule.build`: exports a capsule payload.
 - `file.get`: retrieves exact file bytes as text when decodable plus base64.
+- `compat.check`: checks pack, optional handoff, schema, agent, and MCP compatibility.
 - `schema.list`: lists schemas, agent methods, and MCP tool names.
 
 ## Pack Resolution
@@ -120,4 +121,5 @@ machine-readable `structuredContent`.
 - `repomori_handoff_build`: writes a handoff package directory.
 - `repomori_capsule_build`: exports a capsule payload.
 - `repomori_file_get`: retrieves exact file bytes.
+- `repomori_compat_check`: checks pack, optional handoff, schema, agent, and MCP compatibility.
 - `repomori_schema_list`: lists schemas, agent methods, and MCP tool names.
