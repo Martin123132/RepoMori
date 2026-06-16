@@ -132,6 +132,8 @@ jobs:
           required_artifacts=(
             "$ARTIFACTS_DIR/release-health.json"
             "$ARTIFACTS_DIR/release-health.md"
+            "$ARTIFACTS_DIR/compat.json"
+            "$ARTIFACTS_DIR/compat.md"
           )
           for artifact in "${required_artifacts[@]}"; do
             if [ ! -f "$artifact" ] || [ ! -s "$artifact" ]; then
@@ -159,5 +161,7 @@ jobs:
           path: |
             ${{ steps.run.outputs.artifacts_dir }}/release-health.json
             ${{ steps.run.outputs.artifacts_dir }}/release-health.md
+            ${{ steps.run.outputs.artifacts_dir }}/compat.json
+            ${{ steps.run.outputs.artifacts_dir }}/compat.md
             ${{ steps.run.outputs.drift_log }}
           include-hidden-files: true

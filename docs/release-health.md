@@ -43,6 +43,7 @@ Output schema is `repomori.health.v1`. The result includes:
 runs. Add `--compat-handoff` when you want that handoff validated too, and add
 `--compat-verify-pack` when the run should fully verify pack contents rather
 than checking only metadata compatibility.
+See [Compatibility Runbook](compatibility.md) for failure triage.
 
 ## Anchor freshness profile checks
 
@@ -87,6 +88,7 @@ the artifacts directory:
 
 - `release-check.json` / `release-check.md`
 - `release-health.json` / `release-health.md`
+- `compat.json` / `compat.md`
 - `baseline-drift.jsonl` (if enabled)
 
 Store these in CI so regressions can be reviewed without re-running locally.

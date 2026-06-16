@@ -660,6 +660,10 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(check_statuses["schema_catalog"], "pass")
             self.assertEqual(check_statuses["agent_methods"], "pass")
             self.assertEqual(check_statuses["mcp_tools"], "pass")
+            self.assertEqual(
+                [item["id"] for item in report["checks"]],
+                self._compat_contract_fixture()["full_compat_check_ids"],
+            )
             self.assertIn("repomori.compat.v1", report["schema_catalog"]["required_schemas"])
             self.assertIn("compat.check", report["schema_catalog"]["required_agent_methods"])
             self.assertIn("repomori_compat_check", report["schema_catalog"]["required_mcp_tools"])
@@ -1349,15 +1353,20 @@ class RepoMoriCodecTests(unittest.TestCase):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/release-health.yml").read_text(
             encoding="utf-8"
         )
+        fixture = self._compat_contract_fixture()
 
         self.assertIn("required_artifacts=(", workflow)
         self.assertIn("release-health.json", workflow)
         self.assertIn("release-health.md", workflow)
+        for artifact in fixture["release_health_compat_artifacts"]:
+            self.assertIn(artifact, workflow)
         self.assertIn("--drift-log", workflow)
         self.assertIn("\"$DRIFT_LOG\"", workflow)
         self.assertIn("${{ steps.run.outputs.drift_log }}", workflow)
         self.assertIn("${{ steps.run.outputs.artifacts_dir }}/release-health.json", workflow)
         self.assertIn("${{ steps.run.outputs.artifacts_dir }}/release-health.md", workflow)
+        self.assertIn("${{ steps.run.outputs.artifacts_dir }}/compat.json", workflow)
+        self.assertIn("${{ steps.run.outputs.artifacts_dir }}/compat.md", workflow)
         self.assertIn("if [ -n \"$DRIFT_LOG\" ] && [ ! -f \"$DRIFT_LOG\" ]", workflow)
 
     def test_workflow_contracts_for_handoff_health(self) -> None:
@@ -1413,8 +1422,16 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["summary"]["compat_status"], "pass")
             self.assertEqual(report["artifacts"]["json"], str((health_dir / "release-health.json")))
             self.assertEqual(report["artifacts"]["markdown"], str((health_dir / "release-health.md")))
+            self.assertEqual(report["artifacts"]["compat_json"], str((health_dir / "compat.json")))
+            self.assertEqual(report["artifacts"]["compat_markdown"], str((health_dir / "compat.md")))
             self.assertTrue((health_dir / "release-health.json").exists())
             self.assertTrue((health_dir / "release-health.md").exists())
+            self.assertTrue((health_dir / "compat.json").exists())
+            self.assertTrue((health_dir / "compat.md").exists())
+            compat_artifact = json.loads((health_dir / "compat.json").read_text(encoding="utf-8"))
+            self.assertEqual(compat_artifact["schema_version"], "repomori.compat.v1")
+            self.assertEqual(compat_artifact["status"], "pass")
+            self.assertIn("pack_schema=", (health_dir / "release-health.md").read_text(encoding="utf-8"))
 
     def test_run_release_health_obeys_drift_policy_without_failing_on_fail_on(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3285,6 +3302,28 @@ class RepoMoriCodecTests(unittest.TestCase):
         timeline_search_schema = schema_catalog("repomori.timeline_search.v1")
         self.assertEqual(timeline_search_schema["selected"], "repomori.timeline_search.v1")
         self.assertEqual(timeline_search_schema["schema"]["producer"], "search_snapshot_timeline")
+
+    def test_compat_contract_fixture_matches_schema_agent_and_mcp_contracts(self) -> None:
+        fixture = self._compat_contract_fixture()
+        catalog = schema_catalog()
+
+        self.assertEqual(
+            sorted(item["schema_version"] for item in catalog["schemas"]),
+            fixture["schema_versions"],
+        )
+        self.assertEqual(catalog["agent_methods"], fixture["agent_methods"])
+        self.assertEqual(catalog["mcp_tools"], fixture["mcp_tools"])
+
+        agent_help = handle_agent_request({"id": "help", "method": "agent.help"})
+        self.assertTrue(agent_help["ok"])
+        self.assertEqual(agent_help["result"]["methods"], fixture["agent_methods"])
+
+        mcp_tools = handle_mcp_request({"jsonrpc": "2.0", "id": "tools", "method": "tools/list"})
+        self.assertEqual(mcp_tools["result"]["schema_version"], "repomori.mcp.tools.v1")
+        self.assertEqual(
+            [tool["name"] for tool in mcp_tools["result"]["tools"]],
+            fixture["mcp_tools"],
+        )
 
     def test_golden_fixture_core_output_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5667,8 +5706,14 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.health.v1")
             self.assertTrue(Path(payload["artifacts"]["json"]).exists())
             self.assertTrue(Path(payload["artifacts"]["markdown"]).exists())
+            self.assertTrue(Path(payload["artifacts"]["compat_json"]).exists())
+            self.assertTrue(Path(payload["artifacts"]["compat_markdown"]).exists())
             self.assertEqual(payload["artifacts"]["json"], str(artifacts_dir / "release-health.json"))
             self.assertEqual(payload["artifacts"]["markdown"], str(artifacts_dir / "release-health.md"))
+            self.assertEqual(payload["artifacts"]["compat_json"], str(artifacts_dir / "compat.json"))
+            self.assertEqual(payload["artifacts"]["compat_markdown"], str(artifacts_dir / "compat.md"))
+            compat_artifact = json.loads((artifacts_dir / "compat.json").read_text(encoding="utf-8"))
+            self.assertEqual(compat_artifact["schema_version"], "repomori.compat.v1")
             release_check = payload["checks"]["release_check"]
             self.assertEqual(release_check["artifacts"]["drift_log"], str(artifacts_dir / "baseline-drift.jsonl"))
             self.assertTrue(Path(release_check["artifacts"]["drift_log"]).exists())
@@ -5919,6 +5964,10 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["count"], 2)
             self.assertEqual(payload["warn_count"], 1)
             self.assertEqual(payload["trend"]["non_strict_delta"], 2)
+
+    def _compat_contract_fixture(self) -> dict:
+        fixture_path = Path(__file__).resolve().parent / "fixtures" / "compat-contracts.json"
+        return json.loads(fixture_path.read_text(encoding="utf-8"))
 
     def _demo_pack(self, root: Path, *, build: bool = False) -> tuple[Path, Path]:
         repo = root / "demo"

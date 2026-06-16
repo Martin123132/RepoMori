@@ -405,6 +405,8 @@ _RELEASE_CHECK_ARTIFACT_DRIFT_LOG = "baseline-drift.jsonl"
 _RELEASE_HEALTH_ARTIFACT_DIR_NAME = ".repomori-health"
 _RELEASE_HEALTH_ARTIFACT_MARKDOWN = "release-health.md"
 _RELEASE_HEALTH_ARTIFACT_REPORT = "release-health.json"
+_RELEASE_HEALTH_COMPAT_ARTIFACT_MARKDOWN = "compat.md"
+_RELEASE_HEALTH_COMPAT_ARTIFACT_REPORT = "compat.json"
 
 EXCLUDED_DIRS = {
     ".git",
@@ -1969,6 +1971,8 @@ def run_release_health(
         "artifacts": {
             "json": str(artifacts_path / _RELEASE_HEALTH_ARTIFACT_REPORT),
             "markdown": str(artifacts_path / _RELEASE_HEALTH_ARTIFACT_MARKDOWN),
+            "compat_json": str(artifacts_path / _RELEASE_HEALTH_COMPAT_ARTIFACT_REPORT),
+            "compat_markdown": str(artifacts_path / _RELEASE_HEALTH_COMPAT_ARTIFACT_MARKDOWN),
         },
     }
 
@@ -1979,6 +1983,11 @@ def run_release_health(
         health_markdown = format_release_health_markdown(report)
         (artifacts_path / _RELEASE_HEALTH_ARTIFACT_MARKDOWN).write_text(
             health_markdown,
+            encoding="utf-8",
+        )
+        _write_json(artifacts_path / _RELEASE_HEALTH_COMPAT_ARTIFACT_REPORT, compat)
+        (artifacts_path / _RELEASE_HEALTH_COMPAT_ARTIFACT_MARKDOWN).write_text(
+            format_compat_markdown(compat),
             encoding="utf-8",
         )
 
@@ -2065,6 +2074,8 @@ def format_release_health_markdown(report: dict[str, Any]) -> str:
         elif name == "compat":
             compat_summary = check.get("summary", {})
             detail += (
+                f" pack_schema={compat_summary.get('pack_schema') or 'none'}"
+                f" handoff_valid={compat_summary.get('handoff_valid')}"
                 f" warnings={compat_summary.get('warning_count', 0)}"
                 f" errors={compat_summary.get('error_count', 0)}"
             )

@@ -447,6 +447,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [MCP setup](docs/mcp-setup.md)
 - [Agent protocol](docs/agent-protocol.md)
 - [Schemas](docs/schemas.md)
+- [Compatibility runbook](docs/compatibility.md)
 - [Public safety scan](docs/public-safety-scan.md)
 - [Release check](docs/release-check.md)
 - [Release health](docs/release-health.md)
