@@ -375,6 +375,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "fixture_path", "summary", "diffs", "guidance"],
     },
     {
+        "schema_version": "repomori.cli_commands.v1",
+        "kind": "report",
+        "title": "RepoMori CLI command inventory",
+        "producer": "build_cli_command_inventory",
+        "required_fields": ["schema_version", "status", "prog", "summary", "commands"],
+    },
+    {
         "schema_version": "repomori.baseline_drift_report.v1",
         "kind": "report",
         "title": "Baseline drift telemetry report",
@@ -9345,6 +9352,7 @@ def _compat_required_schemas() -> set[str]:
         "repomori.handoff_health_summary.v1",
         "repomori.compat.v1",
         "repomori.contract_check.v1",
+        "repomori.cli_commands.v1",
         "repomori.memory.v1",
         "repomori.health.v1",
         "repomori.schema.catalog.v1",

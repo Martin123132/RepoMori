@@ -12,6 +12,7 @@
     "repomori.baseline_drift_summary.v1",
     "repomori.brief.v1",
     "repomori.capsule.v1",
+    "repomori.cli_commands.v1",
     "repomori.compare.v1",
     "repomori.compat.v1",
     "repomori.config.v1",

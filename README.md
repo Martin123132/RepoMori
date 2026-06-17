@@ -139,6 +139,7 @@ repomori memory [repo] [--out-dir dir] [--config file] [--profile name] [--no-ha
 repomori agent [--config file] [--profile name]
 repomori mcp [--config file] [--profile name]
 repomori schema [schema-version] [--json]
+repomori commands [--format markdown|json] [--out file] [--json]
 repomori compat [pack] [--snapshot-dir dir] [--handoff dir] [--verify-pack] [--format markdown|json] [--out file] [--json]
 repomori contract-check [--fixture file] [--format markdown|json] [--out file] [--json]
 repomori snapshot <repo> --out-dir <dir> [--handoff question] [--no-incremental] [--no-compare] [--json]
@@ -174,6 +175,9 @@ repomori handoff-health <dir> [--profile safe|ci|strict] [--improve-pack pack] [
 repomori bench <repo> --out <dir> [--force] [--json]
 repomori get <pack> <path> [--out file]
 ```
+
+See [docs/cli-reference.md](docs/cli-reference.md) for the generated full
+command reference.
 
 `anchor` and `verify-anchor` expect an existing snapshot directory. If this is your first
 run for a repository, start with `memory` (for example with `--anchor-out ... --anchor-verify`)
@@ -461,6 +465,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 ## Docs
 
 - [Quickstart](docs/quickstart.md)
+- [CLI reference](docs/cli-reference.md)
 - [MCP setup](docs/mcp-setup.md)
 - [Agent protocol](docs/agent-protocol.md)
 - [Schemas](docs/schemas.md)

@@ -83,6 +83,7 @@ from .codec import (
     verify_pack,
     write_scan_baseline,
 )
+from .cli import build_cli_command_inventory, build_parser, format_cli_reference_markdown
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -166,4 +167,7 @@ __all__ = [
     "verify_snapshot_anchor",
     "verify_pack",
     "write_scan_baseline",
+    "build_cli_command_inventory",
+    "build_parser",
+    "format_cli_reference_markdown",
 ]

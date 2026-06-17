@@ -52,6 +52,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.health.v1`: release-health aggregate bundle.
 - `repomori.compat.v1`: pack, handoff, schema, agent, and MCP compatibility report.
 - `repomori.contract_check.v1`: contract fixture diff report for schema, agent, MCP, and artifact names.
+- `repomori.cli_commands.v1`: generated CLI command inventory.
 - `repomori.baseline_drift_report.v1`: per-run baseline drift telemetry.
 - `repomori.baseline_drift_record.v1`: one JSONL baseline drift log row.
 - `repomori.baseline_drift_summary.v1`: summarized drift-log trend report.

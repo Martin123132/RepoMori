@@ -44,6 +44,9 @@ jobs:
           repomori --help >/dev/null
           python -m repomori schema --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.schema.catalog.v1'; print('python -m repomori schema smoke passed')"
           repomori schema --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.schema.catalog.v1'; print('console script schema smoke passed')"
+          repomori commands --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.cli_commands.v1'; assert 'commands' in payload['summary']['commands']; print('console script commands smoke passed')"
+          repomori commands --format markdown --out "$WORK_DIR/cli-reference.md"
+          test -s "$WORK_DIR/cli-reference.md"
           repomori demo --out "$WORK_DIR/demo" --force --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.demo.v1'; assert payload['status'] == 'pass'; print('console script demo smoke passed')"
           repomori contract-check --fixture "$REPO_ROOT/tests/fixtures/compat-contracts.json" --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.contract_check.v1'; assert payload['status'] == 'pass'; print('console script contract-check smoke passed')"
           popd

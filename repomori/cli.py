@@ -85,12 +85,25 @@ from .codec import (
 )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+class _RepoMoriHelpFormatter(argparse.HelpFormatter):
+    def __init__(self, prog):
+        super().__init__(prog, max_help_position=32, width=100)
+
+
+class _RepoMoriArgumentParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("formatter_class", _RepoMoriHelpFormatter)
+        super().__init__(*args, **kwargs)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the RepoMori CLI parser without executing a command."""
+
+    parser = _RepoMoriArgumentParser(
         prog="repomori",
         description="Build and query machine-readable repository packs.",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=_RepoMoriArgumentParser)
 
     build = sub.add_parser("build", help="Build a .repomori pack from a repository.")
     build.add_argument("repo", type=Path)
@@ -384,6 +397,11 @@ def main(argv: list[str] | None = None) -> int:
     schema.add_argument("schema_version", nargs="?", help="Specific schema version to show.")
     schema.add_argument("--json", action="store_true", help="Print schema JSON.")
 
+    commands = sub.add_parser("commands", help="Show the CLI command inventory and generated reference.")
+    commands.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    commands.add_argument("--out", type=Path, help="Write the command reference to this file.")
+    commands.add_argument("--json", action="store_true", help="Print JSON output.")
+
     compat = sub.add_parser("compat", help="Check pack, handoff, schema, agent, and MCP compatibility.")
     compat.add_argument("pack", type=Path, nargs="?", help="Pack to check; defaults to latest pack from --snapshot-dir when supplied.")
     compat.add_argument("--handoff", type=Path, help="Optional handoff directory to validate against current contracts.")
@@ -641,6 +659,11 @@ def main(argv: list[str] | None = None) -> int:
     get.add_argument("path")
     get.add_argument("--out", type=Path, help="Write restored bytes to this file.")
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "build":
         result = build_pack(
@@ -1054,6 +1077,20 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"- {schema['schema_version']} [{schema['kind']}] {schema['title']}")
             print("agent methods: " + ", ".join(report["agent_methods"]))
         return 0
+    if args.command == "commands":
+        report = build_cli_command_inventory()
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_cli_reference_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0
     if args.command == "info":
         _print(info_pack(args.pack), args.json)
         return 0
@@ -1441,6 +1478,189 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.buffer.write(data)
         return 0
     return 2
+
+
+def build_cli_command_inventory() -> dict:
+    """Return a machine-readable inventory of the current CLI parser."""
+
+    parser = build_parser()
+    subcommands = _parser_subcommands(parser)
+    help_by_command = _parser_subcommand_help(parser)
+    commands = []
+    for name, command_parser in subcommands.items():
+        commands.append(
+            {
+                "name": name,
+                "help": help_by_command.get(name, ""),
+                "usage": command_parser.format_usage().strip().removeprefix("usage: "),
+                "arguments": [
+                    _action_inventory(action)
+                    for action in command_parser._actions
+                    if _include_inventory_action(action)
+                ],
+            }
+        )
+    return {
+        "schema_version": "repomori.cli_commands.v1",
+        "status": "pass",
+        "prog": parser.prog,
+        "description": parser.description,
+        "summary": {
+            "command_count": len(commands),
+            "commands": [item["name"] for item in commands],
+        },
+        "commands": commands,
+    }
+
+
+def format_cli_reference_markdown(inventory: dict) -> str:
+    """Render CLI command inventory as Markdown."""
+
+    summary = inventory.get("summary", {})
+    lines = [
+        "# RepoMori CLI Reference",
+        "",
+        "Generated from the live `argparse` command surface.",
+        "",
+        f"- Schema: `{inventory.get('schema_version')}`",
+        f"- Commands: `{summary.get('command_count', 0)}`",
+        "",
+        "## Commands",
+        "",
+    ]
+    for command in inventory.get("commands", []):
+        lines.extend(
+            [
+                f"### `{command.get('name')}`",
+                "",
+                _markdown_text(command.get("help") or ""),
+                "",
+                "```text",
+                str(command.get("usage") or ""),
+                "```",
+                "",
+            ]
+        )
+        arguments = command.get("arguments", [])
+        if arguments:
+            lines.extend(
+                [
+                    "| Name | Kind | Required | Choices | Default | Help |",
+                    "| --- | --- | --- | --- | --- | --- |",
+                ]
+            )
+            for argument in arguments:
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            _markdown_table_text(_argument_display_name(argument)),
+                            _markdown_table_text(argument.get("kind")),
+                            _markdown_table_text("yes" if argument.get("required") else "no"),
+                            _markdown_table_text(", ".join(argument.get("choices", []))),
+                            _markdown_table_text(argument.get("default", "")),
+                            _markdown_table_text(argument.get("help", "")),
+                        ]
+                    )
+                    + " |"
+                )
+        else:
+            lines.append("_No command-specific arguments or options._")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _parser_subcommands(parser: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return dict(action.choices)
+    return {}
+
+
+def _parser_subcommand_help(parser: argparse.ArgumentParser) -> dict[str, str]:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return {
+                choice.dest: choice.help or ""
+                for choice in getattr(action, "_choices_actions", [])
+            }
+    return {}
+
+
+def _include_inventory_action(action: argparse.Action) -> bool:
+    return not isinstance(action, (argparse._HelpAction, argparse._SubParsersAction))
+
+
+def _action_inventory(action: argparse.Action) -> dict:
+    row = {
+        "dest": action.dest,
+        "kind": "option" if action.option_strings else "argument",
+        "option_strings": list(action.option_strings),
+        "required": bool(getattr(action, "required", False))
+        if action.option_strings
+        else action.nargs not in ("?", "*"),
+        "help": "" if action.help is None else str(action.help),
+        "action": _action_name(action),
+    }
+    if action.metavar is not None:
+        row["metavar"] = str(action.metavar)
+    if action.nargs is not None:
+        row["nargs"] = str(action.nargs)
+    if action.choices is not None:
+        row["choices"] = [str(item) for item in action.choices]
+    action_type = _action_type_name(action)
+    if action_type is not None:
+        row["type"] = action_type
+    default = _stable_default(action.default)
+    if default is not None:
+        row["default"] = default
+    return row
+
+
+def _action_name(action: argparse.Action) -> str:
+    name = action.__class__.__name__
+    mapping = {
+        "_AppendAction": "append",
+        "_StoreAction": "store",
+        "_StoreFalseAction": "store_false",
+        "_StoreTrueAction": "store_true",
+    }
+    return mapping.get(name, name.removeprefix("_").removesuffix("Action").lower())
+
+
+def _action_type_name(action: argparse.Action) -> str | None:
+    action_type = getattr(action, "type", None)
+    if action_type is None:
+        return None
+    return getattr(action_type, "__name__", str(action_type))
+
+
+def _stable_default(value):
+    if value is argparse.SUPPRESS or value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return str(value) if not value.is_absolute() else None
+    if isinstance(value, (tuple, list)):
+        return [str(item) for item in value]
+    return str(value)
+
+
+def _argument_display_name(argument: dict) -> str:
+    options = argument.get("option_strings") or []
+    if options:
+        return ", ".join(options)
+    return str(argument.get("dest", ""))
+
+
+def _markdown_text(value) -> str:
+    return str(value).replace("\n", " ").strip()
+
+
+def _markdown_table_text(value) -> str:
+    text = _markdown_text(value)
+    return text.replace("|", "\\|") if text else ""
 
 
 def _print(value, as_json: bool) -> None:

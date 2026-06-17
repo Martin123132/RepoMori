@@ -1393,6 +1393,7 @@ class RepoMoriCodecTests(unittest.TestCase):
 
         self.assertIn("package-smoke:", workflow)
         self.assertIn("python -m pip install .", workflow)
+        self.assertIn("repomori commands --json", workflow)
         self.assertIn("repomori demo --out", workflow)
         self.assertIn("repomori contract-check --fixture", workflow)
         self.assertIn('generated_dirs = {', workflow)
@@ -3219,6 +3220,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.handoff_health_summary.v1", schema_versions)
         self.assertIn("repomori.compat.v1", schema_versions)
         self.assertIn("repomori.contract_check.v1", schema_versions)
+        self.assertIn("repomori.cli_commands.v1", schema_versions)
         self.assertIn("repomori.timeline_search.v1", schema_versions)
         self.assertIn("repomori.inspect.v1", schema_versions)
         self.assertIn("repomori.compare.v1", schema_versions)
@@ -3304,6 +3306,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         contract = schema_catalog("repomori.contract_check.v1")
         self.assertEqual(contract["selected"], "repomori.contract_check.v1")
         self.assertEqual(contract["schema"]["producer"], "check_contract_fixture")
+
+        cli_commands = schema_catalog("repomori.cli_commands.v1")
+        self.assertEqual(cli_commands["selected"], "repomori.cli_commands.v1")
+        self.assertEqual(cli_commands["schema"]["producer"], "build_cli_command_inventory")
 
         chain = schema_catalog("repomori.snapshot_chain.v1")
         self.assertEqual(chain["selected"], "repomori.snapshot_chain.v1")
@@ -5332,6 +5338,54 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "repomori.schema.catalog.v1")
         self.assertEqual(payload["selected"], "repomori.memory.v1")
         self.assertEqual(payload["schema"]["producer"], "run_memory_cycle")
+
+    def test_cli_command_inventory_matches_parser(self) -> None:
+        parser = cli.build_parser()
+        inventory = cli.build_cli_command_inventory()
+        command_names = inventory["summary"]["commands"]
+
+        self.assertEqual(inventory["schema_version"], "repomori.cli_commands.v1")
+        self.assertEqual(inventory["status"], "pass")
+        self.assertEqual(inventory["summary"]["command_count"], len(command_names))
+        self.assertIn("commands", command_names)
+        self.assertIn("memory", command_names)
+        self.assertIn("release-health", command_names)
+        self.assertIn("contract-check", command_names)
+        self.assertEqual(parser.prog, inventory["prog"])
+
+        memory = next(command for command in inventory["commands"] if command["name"] == "memory")
+        memory_options = {
+            option
+            for argument in memory["arguments"]
+            for option in argument.get("option_strings", [])
+        }
+        self.assertIn("--anchor-freshness", memory_options)
+        self.assertIn("--diff-context", memory_options)
+
+    def test_cli_commands_json_is_parseable(self) -> None:
+        output = subprocess.check_output(
+            [
+                sys.executable,
+                "-m",
+                "repomori",
+                "commands",
+                "--json",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+        )
+
+        payload = json.loads(output)
+        self.assertEqual(payload["schema_version"], "repomori.cli_commands.v1")
+        self.assertIn("commands", payload["summary"]["commands"])
+        self.assertTrue(any(command["name"] == "context" for command in payload["commands"]))
+
+    def test_cli_reference_markdown_is_current(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        expected = cli.format_cli_reference_markdown(cli.build_cli_command_inventory())
+        actual = (repo / "docs" / "cli-reference.md").read_text(encoding="utf-8")
+
+        self.assertEqual(actual, expected)
 
     def test_cli_scan_json_and_fail_on_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
