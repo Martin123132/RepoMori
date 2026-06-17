@@ -48,6 +48,7 @@ python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.rep
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
 python -m repomori release-health D:\Dev\YourRepo --snapshot-dir D:\Dev\YourRepo\.repomori-packs --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori compat --snapshot-dir D:\Dev\YourRepo\.repomori-packs --format markdown --out D:\Dev\YourRepo\compat.md
+python -m repomori contract-check --fixture D:\Dev\YourRepo\tests\fixtures\compat-contracts.json --json
 python -m repomori drift-summary D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --limit 20 --json
 python -m repomori context D:\Dev\YourRepo\.repomori-packs\latest.repomori "where is storage handled?" --out D:\Temp\context.md
 ```
@@ -83,6 +84,8 @@ Use `archive-handoff` to create a portable zip, and `timeline-search` to ask whe
 a path, symbol, or concept started appearing across snapshot packs.
 Use `compat` when you want one local report proving the latest pack, optional
 handoff directory, schema catalog, agent bridge, and MCP bridge still agree.
+Use `contract-check` when you want a fixture-backed diff of public schema,
+agent, MCP, compat, and release-health artifact contracts.
 
 ## Recommended Local Workflow
 

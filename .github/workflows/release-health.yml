@@ -25,6 +25,11 @@ on:
         required: false
         default: ""
         type: string
+      contract_fixture:
+        description: "Optional contract fixture path."
+        required: false
+        default: ""
+        type: string
       drift_log:
         description: "Optional drift log output path."
         required: false
@@ -65,6 +70,7 @@ jobs:
             SNAPSHOT_DIR="${{ github.event.inputs.snapshot_dir }}"
             BASELINE_INPUT="${{ github.event.inputs.baseline }}"
             DRIFT_POLICY_INPUT="${{ github.event.inputs.drift_policy }}"
+            CONTRACT_FIXTURE_INPUT="${{ github.event.inputs.contract_fixture }}"
             DRIFT_LOG_INPUT="${{ github.event.inputs.drift_log }}"
             ARTIFACTS_DIR_INPUT="${{ github.event.inputs.artifacts_dir }}"
             FAIL_ON="${{ github.event.inputs.fail_on }}"
@@ -73,6 +79,7 @@ jobs:
             SNAPSHOT_DIR=""
             BASELINE_INPUT=""
             DRIFT_POLICY_INPUT=""
+            CONTRACT_FIXTURE_INPUT=""
             DRIFT_LOG_INPUT=""
             ARTIFACTS_DIR_INPUT=""
             FAIL_ON="low"
@@ -118,6 +125,9 @@ jobs:
           if [ -n "$DRIFT_POLICY_INPUT" ]; then
             ARGS+=("--drift-policy" "$DRIFT_POLICY_INPUT")
           fi
+          if [ -n "$CONTRACT_FIXTURE_INPUT" ]; then
+            ARGS+=("--contract-fixture" "$CONTRACT_FIXTURE_INPUT")
+          fi
 
           RELEASE_HEALTH_RC=0
           set +e
@@ -134,6 +144,8 @@ jobs:
             "$ARTIFACTS_DIR/release-health.md"
             "$ARTIFACTS_DIR/compat.json"
             "$ARTIFACTS_DIR/compat.md"
+            "$ARTIFACTS_DIR/contract-check.json"
+            "$ARTIFACTS_DIR/contract-check.md"
           )
           for artifact in "${required_artifacts[@]}"; do
             if [ ! -f "$artifact" ] || [ ! -s "$artifact" ]; then
@@ -163,5 +175,7 @@ jobs:
             ${{ steps.run.outputs.artifacts_dir }}/release-health.md
             ${{ steps.run.outputs.artifacts_dir }}/compat.json
             ${{ steps.run.outputs.artifacts_dir }}/compat.md
+            ${{ steps.run.outputs.artifacts_dir }}/contract-check.json
+            ${{ steps.run.outputs.artifacts_dir }}/contract-check.md
             ${{ steps.run.outputs.drift_log }}
           include-hidden-files: true

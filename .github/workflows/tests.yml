@@ -81,6 +81,8 @@ jobs:
                       fail("release-health command contract missing --drift-log", path=str(path))
                   if "release-health.json" not in text or "release-health.md" not in text:
                       fail("release-health required artifacts are not declared", path=str(path))
+                  if "compat.json" not in text or "contract-check.json" not in text:
+                      fail("release-health contract artifacts are not declared", path=str(path))
               if path.name == "handoff-health.yml":
                   if "workflow_dispatch" not in text or "workflow_call" not in text:
                       fail("handoff-health workflow trigger contract changed", path=str(path))
@@ -189,12 +191,20 @@ jobs:
             echo "::error::workflow self-check: release-health markdown artifact was not created."
             exit 1
           fi
+          if [ ! -f "$HEALTH_OUT/compat.json" ] || [ ! -s "$HEALTH_OUT/compat.json" ]; then
+            echo "::error::workflow self-check: release-health compat JSON artifact was not created."
+            exit 1
+          fi
+          if [ ! -f "$HEALTH_OUT/contract-check.json" ] || [ ! -s "$HEALTH_OUT/contract-check.json" ]; then
+            echo "::error::workflow self-check: release-health contract-check JSON artifact was not created."
+            exit 1
+          fi
           if [ ! -f "$DRIFT_LOG" ] || [ ! -s "$DRIFT_LOG" ]; then
             echo "::error::workflow self-check: release-health drift log was not written."
             exit 1
           fi
 
-          RELEASE_HEALTH_PATH="$HEALTH_OUT/release-health.json" python -c "import json, os; from pathlib import Path; payload=json.loads(Path(os.environ['RELEASE_HEALTH_PATH']).read_text(encoding='utf-8')); assert payload.get('schema_version') == 'repomori.health.v1', 'release-health schema_version was unexpected'; assert 'checks' in payload, 'release-health payload is missing checks'; assert payload.get('artifacts', {}).get('json') is not None, 'release-health artifacts.json path missing'; print('release-health contract smoke passed')"
+          RELEASE_HEALTH_PATH="$HEALTH_OUT/release-health.json" CONTRACT_PATH="$HEALTH_OUT/contract-check.json" python -c "import json, os; from pathlib import Path; payload=json.loads(Path(os.environ['RELEASE_HEALTH_PATH']).read_text(encoding='utf-8')); contract=json.loads(Path(os.environ['CONTRACT_PATH']).read_text(encoding='utf-8')); assert payload.get('schema_version') == 'repomori.health.v1', 'release-health schema_version was unexpected'; assert 'checks' in payload, 'release-health payload is missing checks'; assert 'contract' in payload['checks'], 'release-health payload is missing contract check'; assert payload.get('artifacts', {}).get('json') is not None, 'release-health artifacts.json path missing'; assert contract.get('schema_version') == 'repomori.contract_check.v1', 'contract-check schema_version was unexpected'; print('release-health contract smoke passed')"
       - name: Archive workflow self-check artifacts
         if: always()
         uses: actions/upload-artifact@v7

@@ -10,6 +10,7 @@
 - snapshot chain verification (`chain`),
 - timeline tail (`timeline`),
 - compatibility check (`compat` over the latest pack, schema catalog, agent, and MCP bridge),
+- contract fixture diff (`contract` over public schema, agent, MCP, and artifact names),
 - and baseline drift trend (`drift-summary` over the same run log).
 
 It runs offline, dependency-free, and model-free.
@@ -19,6 +20,7 @@ python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json --json
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-log D:\Dev\RepoMori\.repomori-baseline-drift.jsonl --artifacts-dir D:\Dev\RepoMori\.repomori-health --json
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --compat-handoff D:\handoffs\repo --compat-verify-pack --json
+python -m repomori release-health D:\Dev\RepoMori --contract-fixture D:\Dev\RepoMori\tests\fixtures\compat-contracts.json --json
 ```
 
 Use this command for a predictable post-memory check after CI or after local work:
@@ -37,6 +39,7 @@ Output schema is `repomori.health.v1`. The result includes:
 - `checks.timeline` (`repomori.timeline.v1`)
 - `checks.drift_summary` (`repomori.baseline_drift_summary.v1`)
 - `checks.compat` (`repomori.compat.v1`)
+- `checks.contract` (`repomori.contract_check.v1`)
 - `artifacts` paths for optional JSON/Markdown output
 
 `compat` does not require a handoff directory during normal `release-health`
@@ -89,6 +92,7 @@ the artifacts directory:
 - `release-check.json` / `release-check.md`
 - `release-health.json` / `release-health.md`
 - `compat.json` / `compat.md`
+- `contract-check.json` / `contract-check.md`
 - `baseline-drift.jsonl` (if enabled)
 
 Store these in CI so regressions can be reviewed without re-running locally.

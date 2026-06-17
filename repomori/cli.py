@@ -22,6 +22,7 @@ from .codec import (
     build_pack,
     check_handoff_package,
     check_compatibility,
+    check_contract_fixture,
     compare_packs,
     diagnose_query,
     doctor_snapshot_dir,
@@ -31,6 +32,7 @@ from .codec import (
     format_brief_markdown,
     format_compare_markdown,
     format_compat_markdown,
+    format_contract_check_markdown,
     format_context_markdown,
     format_diff_context_markdown,
     format_eval_markdown,
@@ -147,7 +149,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     release_check.add_argument("--json", action="store_true", help="Print release-check JSON.")
 
-    release_health = sub.add_parser("release-health", help="Run release-check, doctor, chain, timeline, drift-summary, and compat.")
+    release_health = sub.add_parser(
+        "release-health",
+        help="Run release-check, doctor, chain, timeline, drift-summary, compat, and contract checks.",
+    )
     release_health.add_argument("repo", type=Path, nargs="?", default=Path.cwd(), help="Repository folder to check.")
     release_health.add_argument("--snapshot-dir", type=Path, help="Snapshot directory for doctor, chain, and timeline.")
     release_health.add_argument("--baseline", type=Path, help="Scan baseline; defaults to <repo>/.repomori-scan-baseline.json when present.")
@@ -189,6 +194,11 @@ def main(argv: list[str] | None = None) -> int:
         "--compat-verify-pack",
         action="store_true",
         help="Run full pack verification during release-health compatibility checks.",
+    )
+    release_health.add_argument(
+        "--contract-fixture",
+        type=Path,
+        help="Optional contract fixture for release-health contract drift checks.",
     )
     release_health.add_argument("--json", action="store_true", help="Print release-health JSON.")
 
@@ -382,6 +392,17 @@ def main(argv: list[str] | None = None) -> int:
     compat.add_argument("--format", choices=["markdown", "json"], default="markdown")
     compat.add_argument("--out", type=Path, help="Write the compatibility report to this file.")
     compat.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    contract_check = sub.add_parser("contract-check", help="Compare current schema, agent, and MCP contracts with a fixture.")
+    contract_check.add_argument(
+        "--fixture",
+        type=Path,
+        default=Path("tests/fixtures/compat-contracts.json"),
+        help="Contract fixture JSON file.",
+    )
+    contract_check.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    contract_check.add_argument("--out", type=Path, help="Write the contract diff report to this file.")
+    contract_check.add_argument("--json", action="store_true", help="Print JSON output.")
 
     info = sub.add_parser("info", help="Show pack metadata.")
     info.add_argument("pack", type=Path)
@@ -708,6 +729,7 @@ def main(argv: list[str] | None = None) -> int:
             doctor_verify_packs=args.doctor_verify_packs,
             compat_handoff=args.compat_handoff,
             compat_verify_pack=args.compat_verify_pack,
+            contract_fixture=args.contract_fixture,
             artifacts_dir=artifacts_dir,
         )
         if args.json:
@@ -727,6 +749,19 @@ def main(argv: list[str] | None = None) -> int:
             output = json.dumps(report, indent=2)
         else:
             output = format_compat_markdown(report)
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
+    if args.command == "contract-check":
+        report = check_contract_fixture(args.fixture, required=True)
+        output_format = "json" if args.json else args.format
+        if output_format == "json":
+            output = json.dumps(report, indent=2)
+        else:
+            output = format_contract_check_markdown(report)
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)
             args.out.write_text(output, encoding="utf-8")

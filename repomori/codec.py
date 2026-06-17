@@ -368,6 +368,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "summary", "checks", "schema_catalog"],
     },
     {
+        "schema_version": "repomori.contract_check.v1",
+        "kind": "report",
+        "title": "RepoMori public contract fixture diff",
+        "producer": "check_contract_fixture",
+        "required_fields": ["schema_version", "status", "fixture_path", "summary", "diffs", "guidance"],
+    },
+    {
         "schema_version": "repomori.baseline_drift_report.v1",
         "kind": "report",
         "title": "Baseline drift telemetry report",
@@ -407,6 +414,8 @@ _RELEASE_HEALTH_ARTIFACT_MARKDOWN = "release-health.md"
 _RELEASE_HEALTH_ARTIFACT_REPORT = "release-health.json"
 _RELEASE_HEALTH_COMPAT_ARTIFACT_MARKDOWN = "compat.md"
 _RELEASE_HEALTH_COMPAT_ARTIFACT_REPORT = "compat.json"
+_RELEASE_HEALTH_CONTRACT_ARTIFACT_MARKDOWN = "contract-check.md"
+_RELEASE_HEALTH_CONTRACT_ARTIFACT_REPORT = "contract-check.json"
 
 EXCLUDED_DIRS = {
     ".git",
@@ -1743,6 +1752,143 @@ def format_compat_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def check_contract_fixture(
+    fixture: Path | str | None,
+    *,
+    required: bool = True,
+) -> dict[str, Any]:
+    """Compare the current public contracts with a checked-in contract fixture."""
+
+    started = time.time()
+    fixture_path = Path(fixture).resolve() if fixture is not None else None
+    warnings: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    if fixture_path is None:
+        message = "No contract fixture was supplied; contract check skipped."
+        if required:
+            errors.append({"code": "fixture_missing", "message": message})
+        else:
+            warnings.append({"code": "fixture_skipped", "message": message})
+        return _contract_check_report(
+            fixture_path,
+            expected={},
+            actual=_current_contract_snapshot(),
+            diffs={},
+            started=started,
+            status="fail" if required else "pass",
+            warnings=warnings,
+            errors=errors,
+            skipped=not required,
+        )
+    if not fixture_path.is_file():
+        message = f"Contract fixture not found: {fixture_path}"
+        errors.append({"code": "fixture_not_found", "path": str(fixture_path), "message": message})
+        return _contract_check_report(
+            fixture_path,
+            expected={},
+            actual=_current_contract_snapshot(),
+            diffs={},
+            started=started,
+            status="fail",
+            warnings=warnings,
+            errors=errors,
+            skipped=False,
+        )
+    try:
+        expected = json.loads(fixture_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append({"code": "fixture_read_failed", "path": str(fixture_path), "message": str(exc)})
+        return _contract_check_report(
+            fixture_path,
+            expected={},
+            actual=_current_contract_snapshot(),
+            diffs={},
+            started=started,
+            status="fail",
+            warnings=warnings,
+            errors=errors,
+            skipped=False,
+        )
+    if not isinstance(expected, dict):
+        errors.append({"code": "fixture_invalid", "path": str(fixture_path), "message": "Contract fixture must be a JSON object."})
+        expected = {}
+
+    actual = _current_contract_snapshot()
+    diffs: dict[str, Any] = {}
+    for key in (
+        "schema_versions",
+        "agent_methods",
+        "mcp_tools",
+        "full_compat_check_ids",
+        "release_health_compat_artifacts",
+    ):
+        diffs[key] = _contract_sequence_diff(expected.get(key), actual.get(key))
+    change_count = sum(item["change_count"] for item in diffs.values())
+    if change_count:
+        errors.append(
+            {
+                "code": "contract_drift",
+                "message": f"Public contract fixture differs from current RepoMori contracts ({change_count} changes).",
+            }
+        )
+    return _contract_check_report(
+        fixture_path,
+        expected=expected,
+        actual=actual,
+        diffs=diffs,
+        started=started,
+        status="fail" if errors else "pass",
+        warnings=warnings,
+        errors=errors,
+        skipped=False,
+    )
+
+
+def format_contract_check_markdown(report: dict[str, Any]) -> str:
+    """Render a contract fixture diff as Markdown."""
+
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Contract Check",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Fixture: `{report.get('fixture_path')}`",
+        f"- Skipped: `{summary.get('skipped')}`",
+        f"- Changes: `{summary.get('change_count', 0)}`",
+        f"- Added: `{summary.get('added_count', 0)}`",
+        f"- Removed: `{summary.get('removed_count', 0)}`",
+        "",
+        "## Diffs",
+        "",
+    ]
+    for name, diff in report.get("diffs", {}).items():
+        lines.append(
+            f"- `{name}` status=`{diff.get('status')}` "
+            f"expected=`{diff.get('expected_count')}` actual=`{diff.get('actual_count')}` "
+            f"added=`{len(diff.get('added', []))}` removed=`{len(diff.get('removed', []))}`"
+        )
+        for value in diff.get("removed", []):
+            lines.append(f"  - removed: `{value}`")
+        for value in diff.get("added", []):
+            lines.append(f"  - added: `{value}`")
+    guidance = report.get("guidance", [])
+    if guidance:
+        lines.extend(["", "## Guidance", ""])
+        for item in guidance:
+            lines.append(f"- {item}")
+    errors = report.get("errors", [])
+    if errors:
+        lines.extend(["", "## Errors", ""])
+        for item in errors:
+            lines.append(f"- `{item.get('code')}` {item.get('message')}")
+    warnings = report.get("warnings", [])
+    if warnings:
+        lines.extend(["", "## Warnings", ""])
+        for item in warnings:
+            lines.append(f"- `{item.get('code')}` {item.get('message')}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def run_release_health(
     repo: Path | str,
     *,
@@ -1762,6 +1908,7 @@ def run_release_health(
     doctor_verify_packs: bool = False,
     compat_handoff: Path | str | None = None,
     compat_verify_pack: bool = False,
+    contract_fixture: Path | str | None = None,
     artifacts_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Run a snapshot + timeline release health bundle."""
@@ -1824,6 +1971,15 @@ def run_release_health(
         handoff=compat_handoff,
         verify_pack_contents=compat_verify_pack,
         require_handoff=compat_handoff is not None,
+    )
+    contract_fixture_path = (
+        Path(contract_fixture).resolve()
+        if contract_fixture is not None
+        else _default_contract_fixture(repo_path)
+    )
+    contract = check_contract_fixture(
+        contract_fixture_path,
+        required=contract_fixture is not None or contract_fixture_path is not None,
     )
 
     snapshot_path_check = ""
@@ -1920,6 +2076,7 @@ def run_release_health(
         "timeline": timeline,
         "drift_summary": drift_summary,
         "compat": compat,
+        "contract": contract,
     }
     status = _release_check_summary_status(
         checks,
@@ -1934,6 +2091,7 @@ def run_release_health(
         "timeline_status": timeline_status,
         "drift_summary_status": drift_summary.get("status"),
         "compat_status": compat.get("status"),
+        "contract_status": contract.get("status"),
         "handoff_score_pass_count": timeline.get("summary", {}).get("handoff_score_pass_count"),
         "handoff_score_warn_count": timeline.get("summary", {}).get("handoff_score_warn_count"),
         "handoff_score_fail_count": timeline.get("summary", {}).get("handoff_score_fail_count"),
@@ -1964,6 +2122,7 @@ def run_release_health(
             "doctor_verify_packs": doctor_verify_packs,
             "compat_handoff": str(Path(compat_handoff).resolve()) if compat_handoff is not None else None,
             "compat_verify_pack": compat_verify_pack,
+            "contract_fixture": str(contract_fixture_path) if contract_fixture_path is not None else None,
             "artifacts_dir": str(artifacts_path),
         },
         "summary": summary,
@@ -1973,6 +2132,8 @@ def run_release_health(
             "markdown": str(artifacts_path / _RELEASE_HEALTH_ARTIFACT_MARKDOWN),
             "compat_json": str(artifacts_path / _RELEASE_HEALTH_COMPAT_ARTIFACT_REPORT),
             "compat_markdown": str(artifacts_path / _RELEASE_HEALTH_COMPAT_ARTIFACT_MARKDOWN),
+            "contract_json": str(artifacts_path / _RELEASE_HEALTH_CONTRACT_ARTIFACT_REPORT),
+            "contract_markdown": str(artifacts_path / _RELEASE_HEALTH_CONTRACT_ARTIFACT_MARKDOWN),
         },
     }
 
@@ -1988,6 +2149,11 @@ def run_release_health(
         _write_json(artifacts_path / _RELEASE_HEALTH_COMPAT_ARTIFACT_REPORT, compat)
         (artifacts_path / _RELEASE_HEALTH_COMPAT_ARTIFACT_MARKDOWN).write_text(
             format_compat_markdown(compat),
+            encoding="utf-8",
+        )
+        _write_json(artifacts_path / _RELEASE_HEALTH_CONTRACT_ARTIFACT_REPORT, contract)
+        (artifacts_path / _RELEASE_HEALTH_CONTRACT_ARTIFACT_MARKDOWN).write_text(
+            format_contract_check_markdown(contract),
             encoding="utf-8",
         )
 
@@ -2059,7 +2225,7 @@ def format_release_health_markdown(report: dict[str, Any]) -> str:
     ]
     lines.append("")
     lines.append("## Checks")
-    for name in ("release_check", "doctor", "chain", "timeline", "drift_summary", "compat"):
+    for name in ("release_check", "doctor", "chain", "timeline", "drift_summary", "compat", "contract"):
         check = checks.get(name, {})
         if not isinstance(check, dict):
             continue
@@ -2078,6 +2244,12 @@ def format_release_health_markdown(report: dict[str, Any]) -> str:
                 f" handoff_valid={compat_summary.get('handoff_valid')}"
                 f" warnings={compat_summary.get('warning_count', 0)}"
                 f" errors={compat_summary.get('error_count', 0)}"
+            )
+        elif name == "contract":
+            contract_summary = check.get("summary", {})
+            detail += (
+                f" changes={contract_summary.get('change_count', 0)}"
+                f" skipped={contract_summary.get('skipped')}"
             )
         elif name == "timeline":
             chain_status = check.get("chain_status")
@@ -9172,6 +9344,7 @@ def _compat_required_schemas() -> set[str]:
         "repomori.handoff_health_record.v1",
         "repomori.handoff_health_summary.v1",
         "repomori.compat.v1",
+        "repomori.contract_check.v1",
         "repomori.memory.v1",
         "repomori.health.v1",
         "repomori.schema.catalog.v1",
@@ -9206,6 +9379,121 @@ def _compat_required_mcp_tools() -> set[str]:
         "repomori_capsule_build",
         "repomori_file_get",
     }
+
+
+def _compat_full_check_ids() -> list[str]:
+    return [
+        "pack_schema",
+        "pack_verification",
+        "handoff_integrity",
+        "handoff_schemas",
+        "schema_catalog",
+        "agent_methods",
+        "mcp_tools",
+    ]
+
+
+def _release_health_contract_artifacts() -> list[str]:
+    return [
+        _RELEASE_HEALTH_COMPAT_ARTIFACT_REPORT,
+        _RELEASE_HEALTH_COMPAT_ARTIFACT_MARKDOWN,
+        _RELEASE_HEALTH_CONTRACT_ARTIFACT_REPORT,
+        _RELEASE_HEALTH_CONTRACT_ARTIFACT_MARKDOWN,
+    ]
+
+
+def _current_contract_snapshot() -> dict[str, Any]:
+    catalog = schema_catalog()
+    return {
+        "schema_versions": sorted(item["schema_version"] for item in catalog.get("schemas", [])),
+        "agent_methods": list(catalog.get("agent_methods", [])),
+        "mcp_tools": list(catalog.get("mcp_tools", [])),
+        "full_compat_check_ids": _compat_full_check_ids(),
+        "release_health_compat_artifacts": _release_health_contract_artifacts(),
+    }
+
+
+def _contract_sequence_diff(expected_value: Any, actual_value: Any) -> dict[str, Any]:
+    expected = [str(item) for item in expected_value] if isinstance(expected_value, list) else []
+    actual = [str(item) for item in actual_value] if isinstance(actual_value, list) else []
+    expected_set = set(expected)
+    actual_set = set(actual)
+    added = [item for item in actual if item not in expected_set]
+    removed = [item for item in expected if item not in actual_set]
+    order_changed = not added and not removed and expected != actual
+    return {
+        "status": "pass" if not added and not removed and not order_changed else "fail",
+        "expected_count": len(expected),
+        "actual_count": len(actual),
+        "added": added,
+        "removed": removed,
+        "order_changed": order_changed,
+        "expected": expected,
+        "actual": actual,
+        "change_count": len(added) + len(removed) + (1 if order_changed else 0),
+    }
+
+
+def _contract_check_report(
+    fixture_path: Path | None,
+    *,
+    expected: dict[str, Any],
+    actual: dict[str, Any],
+    diffs: dict[str, Any],
+    started: float,
+    status: str,
+    warnings: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    skipped: bool,
+) -> dict[str, Any]:
+    added_count = sum(len(diff.get("added", [])) for diff in diffs.values())
+    removed_count = sum(len(diff.get("removed", [])) for diff in diffs.values())
+    order_change_count = sum(1 for diff in diffs.values() if diff.get("order_changed"))
+    change_count = added_count + removed_count + order_change_count
+    guidance = []
+    if skipped:
+        guidance.append("No fixture was supplied; provide --fixture to compare public contracts.")
+    elif change_count:
+        guidance.append("Review added/removed contract names and update code, docs, tests, and fixture together when intentional.")
+        guidance.append("Restore removed names or add aliases when compatibility should be preserved.")
+    else:
+        guidance.append("Contract fixture matches current schema, agent, MCP, and artifact contracts.")
+    return {
+        "schema_version": "repomori.contract_check.v1",
+        "status": status,
+        "created_at": int(started),
+        "fixture_path": str(fixture_path) if fixture_path is not None else None,
+        "summary": {
+            "elapsed_seconds": round(time.time() - started, 4),
+            "skipped": skipped,
+            "change_count": change_count,
+            "added_count": added_count,
+            "removed_count": removed_count,
+            "order_change_count": order_change_count,
+            "warning_count": len(warnings),
+            "error_count": len(errors),
+        },
+        "expected": {
+            key: expected.get(key)
+            for key in (
+                "schema_versions",
+                "agent_methods",
+                "mcp_tools",
+                "full_compat_check_ids",
+                "release_health_compat_artifacts",
+            )
+        },
+        "actual": actual,
+        "diffs": diffs,
+        "guidance": guidance,
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
+def _default_contract_fixture(repo_path: Path) -> Path | None:
+    fixture = repo_path / "tests" / "fixtures" / "compat-contracts.json"
+    return fixture if fixture.is_file() else None
 
 
 def _compat_handoff_schema_checks(root: Path) -> list[dict[str, Any]]:

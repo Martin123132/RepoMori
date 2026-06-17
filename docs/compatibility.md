@@ -6,6 +6,7 @@ contracts still agree.
 ```powershell
 python -m repomori compat D:\Dev\RepoMori\.repomori-packs\latest.repomori --handoff D:\handoffs\repo --verify-pack --json
 python -m repomori compat --snapshot-dir D:\Dev\RepoMori\.repomori-packs --format markdown --out D:\Dev\RepoMori\compat.md
+python -m repomori contract-check --fixture D:\Dev\RepoMori\tests\fixtures\compat-contracts.json --format markdown --out D:\Dev\RepoMori\contract-diff.md
 ```
 
 It is local-only: no model calls, no provider config, and no network calls.
@@ -40,6 +41,18 @@ public schema versions, agent methods, MCP tool names, and full compat check
 order. If a deliberate contract change is made, update the code, docs, and this
 fixture together so CI records the decision instead of silently drifting.
 
+`contract-check` compares that fixture with the current runtime and explains:
+
+- added or removed schema versions
+- added or removed agent methods
+- added or removed MCP tools
+- compat check order changes
+- release-health contract artifact changes
+
+If `contract-check` fails, decide whether the change is intentional. Restore the
+removed name or add a compatibility alias when old agents should keep working.
+When the change is intentional, update the fixture and docs in the same commit.
+
 ## Release Health Artifacts
 
 When `release-health` writes artifacts, it now emits:
@@ -48,7 +61,10 @@ When `release-health` writes artifacts, it now emits:
 - `release-health.md`
 - `compat.json`
 - `compat.md`
+- `contract-check.json`
+- `contract-check.md`
 - `baseline-drift.jsonl` when drift logging is enabled
 
-Open `compat.md` first for a short summary, then `compat.json` for exact failing
-checks and artifact paths.
+Open `contract-check.md` first for public contract drift, then `compat.md` for
+runtime pack/handoff/bridge compatibility. The JSON files contain exact diff
+lists and artifact paths.
