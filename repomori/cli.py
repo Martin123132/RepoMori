@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import textwrap
 from pathlib import Path
 
 from .codec import (
@@ -1492,7 +1493,7 @@ def build_cli_command_inventory() -> dict:
             {
                 "name": name,
                 "help": help_by_command.get(name, ""),
-                "usage": command_parser.format_usage().strip().removeprefix("usage: "),
+                "usage": _command_usage(name, command_parser),
                 "arguments": [
                     _action_inventory(action)
                     for action in command_parser._actions
@@ -1536,7 +1537,7 @@ def format_cli_reference_markdown(inventory: dict) -> str:
                 _markdown_text(command.get("help") or ""),
                 "",
                 "```text",
-                str(command.get("usage") or ""),
+                _markdown_usage(command.get("usage") or ""),
                 "```",
                 "",
             ]
@@ -1589,6 +1590,49 @@ def _parser_subcommand_help(parser: argparse.ArgumentParser) -> dict[str, str]:
 
 def _include_inventory_action(action: argparse.Action) -> bool:
     return not isinstance(action, (argparse._HelpAction, argparse._SubParsersAction))
+
+
+def _command_usage(name: str, parser: argparse.ArgumentParser) -> str:
+    option_tokens = []
+    positional_tokens = []
+    for action in parser._actions:
+        if not _include_inventory_action(action):
+            continue
+        if action.option_strings:
+            option_tokens.append(_option_usage(action))
+        else:
+            positional_tokens.append(_positional_usage(action))
+    return " ".join(["repomori", name, *option_tokens, *positional_tokens])
+
+
+def _option_usage(action: argparse.Action) -> str:
+    option = next((item for item in action.option_strings if item.startswith("--")), action.option_strings[0])
+    if isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction)):
+        token = option
+    else:
+        token = f"{option} {_metavar_for_action(action)}"
+    return token if getattr(action, "required", False) else f"[{token}]"
+
+
+def _positional_usage(action: argparse.Action) -> str:
+    token = _metavar_for_action(action).lower()
+    if action.nargs == "?":
+        return f"[{token}]"
+    if action.nargs == "*":
+        return f"[{token} ...]"
+    if action.nargs == "+":
+        return f"{token} ..."
+    return token
+
+
+def _metavar_for_action(action: argparse.Action) -> str:
+    if action.metavar is not None:
+        if isinstance(action.metavar, tuple):
+            return " ".join(str(item) for item in action.metavar)
+        return str(action.metavar)
+    if action.choices is not None:
+        return "{" + ",".join(str(item) for item in action.choices) + "}"
+    return str(action.dest).upper().replace("-", "_")
 
 
 def _action_inventory(action: argparse.Action) -> dict:
@@ -1656,6 +1700,16 @@ def _argument_display_name(argument: dict) -> str:
 
 def _markdown_text(value) -> str:
     return str(value).replace("\n", " ").strip()
+
+
+def _markdown_usage(value) -> str:
+    return textwrap.fill(
+        str(value),
+        width=100,
+        subsequent_indent=" " * 8,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
 
 
 def _markdown_table_text(value) -> str:

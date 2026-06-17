@@ -12,7 +12,7 @@ Generated from the live `argparse` command surface.
 Build a .repomori pack from a repository.
 
 ```text
-repomori build [-h] [--chunk-size CHUNK_SIZE] [--base BASE] [--force] [--json] repo pack
+repomori build [--chunk-size CHUNK_SIZE] [--base BASE] [--force] [--json] repo pack
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -29,8 +29,7 @@ repomori build [-h] [--chunk-size CHUNK_SIZE] [--base BASE] [--force] [--json] r
 Create and run a complete local quickstart demo.
 
 ```text
-repomori demo [-h] --out OUT [--force] [--question QUESTION] [--chunk-size CHUNK_SIZE]
-                     [--json]
+repomori demo --out OUT [--force] [--question QUESTION] [--chunk-size CHUNK_SIZE] [--json]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -46,10 +45,9 @@ repomori demo [-h] --out OUT [--force] [--question QUESTION] [--chunk-size CHUNK
 Scan a repository for public-release and packing risks.
 
 ```text
-repomori scan [-h] [--max-file-bytes MAX_FILE_BYTES] [--include-hidden] [--public-release]
-                     [--ignore-code IGNORE_CODE] [--baseline BASELINE]
-                     [--write-baseline WRITE_BASELINE] [--fail-on {info,low,medium,high}] [--json]
-                     repo
+repomori scan [--max-file-bytes MAX_FILE_BYTES] [--include-hidden] [--public-release] [--ignore-code
+        IGNORE_CODE] [--baseline BASELINE] [--write-baseline WRITE_BASELINE] [--fail-on
+        {info,low,medium,high}] [--json] repo
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -69,12 +67,10 @@ repomori scan [-h] [--max-file-bytes MAX_FILE_BYTES] [--include-hidden] [--publi
 Run local release readiness checks.
 
 ```text
-repomori release-check [-h] [--baseline BASELINE] [--fail-on {info,low,medium,high}]
-                              [--no-public-release] [--skip-tests] [--skip-demo]
-                              [--demo-out DEMO_OUT] [--keep-demo] [--tests-dir TESTS_DIR]
-                              [--drift-log DRIFT_LOG] [--drift-policy DRIFT_POLICY]
-                              [--artifacts-dir ARTIFACTS_DIR] [--json]
-                              [repo]
+repomori release-check [--baseline BASELINE] [--fail-on {info,low,medium,high}]
+        [--no-public-release] [--skip-tests] [--skip-demo] [--demo-out DEMO_OUT] [--keep-demo]
+        [--tests-dir TESTS_DIR] [--drift-log DRIFT_LOG] [--drift-policy DRIFT_POLICY]
+        [--artifacts-dir ARTIFACTS_DIR] [--json] [repo]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -98,16 +94,12 @@ repomori release-check [-h] [--baseline BASELINE] [--fail-on {info,low,medium,hi
 Run release-check, doctor, chain, timeline, drift-summary, compat, and contract checks.
 
 ```text
-repomori release-health [-h] [--snapshot-dir SNAPSHOT_DIR] [--baseline BASELINE]
-                               [--fail-on {info,low,medium,high}] [--no-public-release]
-                               [--skip-tests] [--skip-demo] [--demo-out DEMO_OUT] [--keep-demo]
-                               [--tests-dir TESTS_DIR] [--drift-log DRIFT_LOG]
-                               [--drift-policy DRIFT_POLICY] [--artifacts-dir ARTIFACTS_DIR]
-                               [--timeline-limit TIMELINE_LIMIT]
-                               [--drift-summary-limit DRIFT_SUMMARY_LIMIT] [--doctor-verify-packs]
-                               [--compat-handoff COMPAT_HANDOFF] [--compat-verify-pack]
-                               [--contract-fixture CONTRACT_FIXTURE] [--json]
-                               [repo]
+repomori release-health [--snapshot-dir SNAPSHOT_DIR] [--baseline BASELINE] [--fail-on
+        {info,low,medium,high}] [--no-public-release] [--skip-tests] [--skip-demo] [--demo-out
+        DEMO_OUT] [--keep-demo] [--tests-dir TESTS_DIR] [--drift-log DRIFT_LOG] [--drift-policy
+        DRIFT_POLICY] [--artifacts-dir ARTIFACTS_DIR] [--timeline-limit TIMELINE_LIMIT]
+        [--drift-summary-limit DRIFT_SUMMARY_LIMIT] [--doctor-verify-packs] [--compat-handoff
+        COMPAT_HANDOFF] [--compat-verify-pack] [--contract-fixture CONTRACT_FIXTURE] [--json] [repo]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -138,18 +130,15 @@ repomori release-health [-h] [--snapshot-dir SNAPSHOT_DIR] [--baseline BASELINE]
 Write a RepoMori config file.
 
 ```text
-repomori init [-h] --out-dir OUT_DIR [--config CONFIG] [--profile PROFILE] [--force]
-                     [--handoff-question HANDOFF_QUESTION] [--no-handoff] [--keep KEEP]
-                     [--prune-apply] [--verify-packs] [--timeline-limit TIMELINE_LIMIT]
-                     [--chunk-size CHUNK_SIZE] [--incremental | --no-incremental] [--no-compare]
-                     [--compare-limit COMPARE_LIMIT] [--anchor-freshness {safe,strict,legacy}]
-                     [--diff-context] [--diff-context-question DIFF_CONTEXT_QUESTION]
-                     [--diff-context-max-files DIFF_CONTEXT_MAX_FILES]
-                     [--diff-context-snippet-lines DIFF_CONTEXT_SNIPPET_LINES]
-                     [--diff-context-snippets-per-file DIFF_CONTEXT_SNIPPETS_PER_FILE]
-                     [--diff-context-max-bytes DIFF_CONTEXT_MAX_BYTES] [--diff-context-no-source]
-                     [--json]
-                     repo
+repomori init --out-dir OUT_DIR [--config CONFIG] [--profile PROFILE] [--force] [--handoff-question
+        HANDOFF_QUESTION] [--no-handoff] [--keep KEEP] [--prune-apply] [--verify-packs]
+        [--timeline-limit TIMELINE_LIMIT] [--chunk-size CHUNK_SIZE] [--incremental]
+        [--no-incremental] [--no-compare] [--compare-limit COMPARE_LIMIT] [--anchor-freshness
+        {safe,strict,legacy}] [--diff-context] [--diff-context-question DIFF_CONTEXT_QUESTION]
+        [--diff-context-max-files DIFF_CONTEXT_MAX_FILES] [--diff-context-snippet-lines
+        DIFF_CONTEXT_SNIPPET_LINES] [--diff-context-snippets-per-file
+        DIFF_CONTEXT_SNIPPETS_PER_FILE] [--diff-context-max-bytes DIFF_CONTEXT_MAX_BYTES]
+        [--diff-context-no-source] [--json] repo
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -185,10 +174,9 @@ repomori init [-h] --out-dir OUT_DIR [--config CONFIG] [--profile PROFILE] [--fo
 Build a timestamped pack snapshot.
 
 ```text
-repomori snapshot [-h] --out-dir OUT_DIR [--chunk-size CHUNK_SIZE] [--incremental |
-                         --no-incremental] [--no-compare] [--compare-limit COMPARE_LIMIT]
-                         [--handoff HANDOFF] [--handoff-out HANDOFF_OUT] [--handoff-force] [--json]
-                         repo
+repomori snapshot --out-dir OUT_DIR [--chunk-size CHUNK_SIZE] [--incremental] [--no-incremental]
+        [--no-compare] [--compare-limit COMPARE_LIMIT] [--handoff HANDOFF] [--handoff-out
+        HANDOFF_OUT] [--handoff-force] [--json] repo
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -210,7 +198,7 @@ repomori snapshot [-h] --out-dir OUT_DIR [--chunk-size CHUNK_SIZE] [--incrementa
 Read a snapshot index timeline.
 
 ```text
-repomori timeline [-h] [--limit LIMIT] [--format {markdown,json}] [--out OUT] out_dir
+repomori timeline [--limit LIMIT] [--format {markdown,json}] [--out OUT] out_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -225,9 +213,8 @@ repomori timeline [-h] [--limit LIMIT] [--format {markdown,json}] [--out OUT] ou
 Query indexed snapshot packs for a path, symbol, or concept.
 
 ```text
-repomori timeline-search [-h] [--limit LIMIT] [--per-snapshot-limit PER_SNAPSHOT_LIMIT]
-                                [--format {markdown,json}] [--out OUT] [--json]
-                                out_dir text
+repomori timeline-search [--limit LIMIT] [--per-snapshot-limit PER_SNAPSHOT_LIMIT] [--format
+        {markdown,json}] [--out OUT] [--json] out_dir text
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -245,7 +232,7 @@ repomori timeline-search [-h] [--limit LIMIT] [--per-snapshot-limit PER_SNAPSHOT
 Summarize baseline drift telemetry from a JSONL log.
 
 ```text
-repomori drift-summary [-h] [--limit LIMIT] [--json] log
+repomori drift-summary [--limit LIMIT] [--json] log
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -259,9 +246,7 @@ repomori drift-summary [-h] [--limit LIMIT] [--json] log
 Summarize handoff-health telemetry from a JSONL log.
 
 ```text
-repomori handoff-health-summary [-h] [--limit LIMIT] [--format {markdown,json}] [--out OUT]
-                                       [--json]
-                                       log
+repomori handoff-health-summary [--limit LIMIT] [--format {markdown,json}] [--out OUT] [--json] log
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -277,7 +262,7 @@ repomori handoff-health-summary [-h] [--limit LIMIT] [--format {markdown,json}] 
 Read snapshot reuse and storage statistics.
 
 ```text
-repomori stats [-h] [--limit LIMIT] [--format {markdown,json}] [--out OUT] out_dir
+repomori stats [--limit LIMIT] [--format {markdown,json}] [--out OUT] out_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -292,7 +277,7 @@ repomori stats [-h] [--limit LIMIT] [--format {markdown,json}] [--out OUT] out_d
 Verify snapshot timeline hash chain.
 
 ```text
-repomori chain [-h] [--format {markdown,json}] [--out OUT] [--json] out_dir
+repomori chain [--format {markdown,json}] [--out OUT] [--json] out_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -307,7 +292,7 @@ repomori chain [-h] [--format {markdown,json}] [--out OUT] [--json] out_dir
 Export a snapshot timeline anchor proof.
 
 ```text
-repomori anchor [-h] [--format {json,markdown}] [--out OUT] [--json] out_dir
+repomori anchor [--format {json,markdown}] [--out OUT] [--json] out_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -322,8 +307,8 @@ repomori anchor [-h] [--format {json,markdown}] [--out OUT] [--json] out_dir
 Verify a snapshot timeline anchor proof.
 
 ```text
-repomori verify-anchor [-h] [--no-current] [--format {markdown,json}] [--out OUT] [--json]
-                              anchor [out_dir]
+repomori verify-anchor [--no-current] [--format {markdown,json}] [--out OUT] [--json] anchor
+        [out_dir]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -340,7 +325,7 @@ repomori verify-anchor [-h] [--no-current] [--format {markdown,json}] [--out OUT
 Check snapshot directory health.
 
 ```text
-repomori doctor [-h] [--verify-packs] [--json] [--out OUT] out_dir
+repomori doctor [--verify-packs] [--json] [--out OUT] out_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -355,7 +340,7 @@ repomori doctor [-h] [--verify-packs] [--json] [--out OUT] out_dir
 Plan or apply safe snapshot cleanup.
 
 ```text
-repomori prune [-h] [--keep KEEP] [--apply] [--json] out_dir
+repomori prune [--keep KEEP] [--apply] [--json] out_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -370,23 +355,18 @@ repomori prune [-h] [--keep KEEP] [--apply] [--json] out_dir
 Run snapshot, handoff, doctor, prune, and timeline.
 
 ```text
-repomori memory [-h] [--out-dir OUT_DIR] [--config CONFIG] [--profile PROFILE]
-                       [--anchor-out ANCHOR_OUT] [--anchor-verify]
-                       [--anchor-freshness {safe,strict,legacy}] [--allow-unverified-anchor]
-                       [--anchor-log ANCHOR_LOG] [--handoff-question HANDOFF_QUESTION]
-                       [--no-handoff | --with-handoff] [--handoff-quality-profile {safe,ci,strict}]
-                       [--handoff-quality-target HANDOFF_QUALITY_TARGET] [--keep KEEP]
-                       [--prune-apply | --prune-dry-run] [--verify-packs | --no-verify-packs]
-                       [--timeline-limit TIMELINE_LIMIT] [--chunk-size CHUNK_SIZE] [--incremental |
-                       --no-incremental] [--no-compare | --compare] [--compare-limit COMPARE_LIMIT]
-                       [--diff-context | --no-diff-context]
-                       [--diff-context-question DIFF_CONTEXT_QUESTION]
-                       [--diff-context-max-files DIFF_CONTEXT_MAX_FILES]
-                       [--diff-context-snippet-lines DIFF_CONTEXT_SNIPPET_LINES]
-                       [--diff-context-snippets-per-file DIFF_CONTEXT_SNIPPETS_PER_FILE]
-                       [--diff-context-max-bytes DIFF_CONTEXT_MAX_BYTES] [--diff-context-source |
-                       --diff-context-no-source] [--json]
-                       [repo]
+repomori memory [--out-dir OUT_DIR] [--config CONFIG] [--profile PROFILE] [--anchor-out ANCHOR_OUT]
+        [--anchor-verify] [--anchor-freshness {safe,strict,legacy}] [--allow-unverified-anchor]
+        [--anchor-log ANCHOR_LOG] [--handoff-question HANDOFF_QUESTION] [--no-handoff]
+        [--with-handoff] [--handoff-quality-profile {safe,ci,strict}] [--handoff-quality-target
+        HANDOFF_QUALITY_TARGET] [--keep KEEP] [--prune-apply] [--prune-dry-run] [--verify-packs]
+        [--no-verify-packs] [--timeline-limit TIMELINE_LIMIT] [--chunk-size CHUNK_SIZE]
+        [--incremental] [--no-incremental] [--no-compare] [--compare] [--compare-limit
+        COMPARE_LIMIT] [--diff-context] [--no-diff-context] [--diff-context-question
+        DIFF_CONTEXT_QUESTION] [--diff-context-max-files DIFF_CONTEXT_MAX_FILES]
+        [--diff-context-snippet-lines DIFF_CONTEXT_SNIPPET_LINES] [--diff-context-snippets-per-file
+        DIFF_CONTEXT_SNIPPETS_PER_FILE] [--diff-context-max-bytes DIFF_CONTEXT_MAX_BYTES]
+        [--diff-context-source] [--diff-context-no-source] [--json] [repo]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -433,7 +413,7 @@ repomori memory [-h] [--out-dir OUT_DIR] [--config CONFIG] [--profile PROFILE]
 Run the JSON-lines agent bridge on stdio.
 
 ```text
-repomori agent [-h] [--config CONFIG] [--profile PROFILE]
+repomori agent [--config CONFIG] [--profile PROFILE]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -446,7 +426,7 @@ repomori agent [-h] [--config CONFIG] [--profile PROFILE]
 Run the dependency-free MCP stdio bridge.
 
 ```text
-repomori mcp [-h] [--config CONFIG] [--profile PROFILE]
+repomori mcp [--config CONFIG] [--profile PROFILE]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -459,7 +439,7 @@ repomori mcp [-h] [--config CONFIG] [--profile PROFILE]
 Show supported RepoMori schemas and agent methods.
 
 ```text
-repomori schema [-h] [--json] [schema_version]
+repomori schema [--json] [schema_version]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -472,7 +452,7 @@ repomori schema [-h] [--json] [schema_version]
 Show the CLI command inventory and generated reference.
 
 ```text
-repomori commands [-h] [--format {markdown,json}] [--out OUT] [--json]
+repomori commands [--format {markdown,json}] [--out OUT] [--json]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -486,9 +466,8 @@ repomori commands [-h] [--format {markdown,json}] [--out OUT] [--json]
 Check pack, handoff, schema, agent, and MCP compatibility.
 
 ```text
-repomori compat [-h] [--handoff HANDOFF] [--snapshot-dir SNAPSHOT_DIR] [--verify-pack]
-                       [--format {markdown,json}] [--out OUT] [--json]
-                       [pack]
+repomori compat [--handoff HANDOFF] [--snapshot-dir SNAPSHOT_DIR] [--verify-pack] [--format
+        {markdown,json}] [--out OUT] [--json] [pack]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -506,8 +485,7 @@ repomori compat [-h] [--handoff HANDOFF] [--snapshot-dir SNAPSHOT_DIR] [--verify
 Compare current schema, agent, and MCP contracts with a fixture.
 
 ```text
-repomori contract-check [-h] [--fixture FIXTURE] [--format {markdown,json}] [--out OUT]
-                               [--json]
+repomori contract-check [--fixture FIXTURE] [--format {markdown,json}] [--out OUT] [--json]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -522,7 +500,7 @@ repomori contract-check [-h] [--fixture FIXTURE] [--format {markdown,json}] [--o
 Show pack metadata.
 
 ```text
-repomori info [-h] [--json] pack
+repomori info [--json] pack
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -535,10 +513,8 @@ repomori info [-h] [--json] pack
 Inspect pack contents, storage, indexes, and vocabulary.
 
 ```text
-repomori inspect [-h] [--max-files MAX_FILES] [--top-terms TOP_TERMS]
-                        [--top-symbols TOP_SYMBOLS] [--verify] [--format {markdown,json}]
-                        [--out OUT] [--json]
-                        pack
+repomori inspect [--max-files MAX_FILES] [--top-terms TOP_TERMS] [--top-symbols TOP_SYMBOLS]
+        [--verify] [--format {markdown,json}] [--out OUT] [--json] pack
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -557,10 +533,8 @@ repomori inspect [-h] [--max-files MAX_FILES] [--top-terms TOP_TERMS]
 Inspect structural changes between two packs.
 
 ```text
-repomori inspect-diff [-h] [--max-files MAX_FILES] [--top-terms TOP_TERMS]
-                             [--top-symbols TOP_SYMBOLS] [--verify] [--format {markdown,json}]
-                             [--out OUT] [--json]
-                             base_pack target_pack
+repomori inspect-diff [--max-files MAX_FILES] [--top-terms TOP_TERMS] [--top-symbols TOP_SYMBOLS]
+        [--verify] [--format {markdown,json}] [--out OUT] [--json] base_pack target_pack
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -580,7 +554,7 @@ repomori inspect-diff [-h] [--max-files MAX_FILES] [--top-terms TOP_TERMS]
 List files stored in a pack.
 
 ```text
-repomori tree [-h] [--limit LIMIT] [--json] pack
+repomori tree [--limit LIMIT] [--json] pack
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -594,7 +568,7 @@ repomori tree [-h] [--limit LIMIT] [--json] pack
 Search the machine-readable pack index.
 
 ```text
-repomori query [-h] [--limit LIMIT] [--json] pack text
+repomori query [--limit LIMIT] [--json] pack text
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -609,10 +583,8 @@ repomori query [-h] [--limit LIMIT] [--json] pack text
 Explain query ranking and snippet selection.
 
 ```text
-repomori diagnose [-h] [--limit LIMIT] [--max-files MAX_FILES]
-                         [--snippet-lines SNIPPET_LINES] [--snippets-per-file SNIPPETS_PER_FILE]
-                         [--max-bytes MAX_BYTES] [--json]
-                         pack question
+repomori diagnose [--limit LIMIT] [--max-files MAX_FILES] [--snippet-lines SNIPPET_LINES]
+        [--snippets-per-file SNIPPETS_PER_FILE] [--max-bytes MAX_BYTES] [--json] pack question
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -631,9 +603,8 @@ repomori diagnose [-h] [--limit LIMIT] [--max-files MAX_FILES]
 Compare two .repomori packs.
 
 ```text
-repomori compare [-h] [--limit LIMIT] [--include-unchanged] [--format {markdown,json}]
-                        [--out OUT]
-                        base_pack target_pack
+repomori compare [--limit LIMIT] [--include-unchanged] [--format {markdown,json}] [--out OUT]
+        base_pack target_pack
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -650,11 +621,9 @@ repomori compare [-h] [--limit LIMIT] [--include-unchanged] [--format {markdown,
 Build a pack orientation brief or snapshot-directory agent brief.
 
 ```text
-repomori brief [-h] [--max-files MAX_FILES] [--top-terms TOP_TERMS]
-                      [--top-symbols TOP_SYMBOLS] [--timeline-limit TIMELINE_LIMIT]
-                      [--stats-limit STATS_LIMIT] [--verify-packs] [--format {markdown,json}]
-                      [--out OUT]
-                      target
+repomori brief [--max-files MAX_FILES] [--top-terms TOP_TERMS] [--top-symbols TOP_SYMBOLS]
+        [--timeline-limit TIMELINE_LIMIT] [--stats-limit STATS_LIMIT] [--verify-packs] [--format
+        {markdown,json}] [--out OUT] target
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -674,10 +643,9 @@ repomori brief [-h] [--max-files MAX_FILES] [--top-terms TOP_TERMS]
 Build source-backed agent context.
 
 ```text
-repomori context [-h] [--limit LIMIT] [--max-files MAX_FILES] [--snippet-lines SNIPPET_LINES]
-                        [--snippets-per-file SNIPPETS_PER_FILE] [--max-bytes MAX_BYTES]
-                        [--no-source] [--format {markdown,json}] [--out OUT]
-                        pack question
+repomori context [--limit LIMIT] [--max-files MAX_FILES] [--snippet-lines SNIPPET_LINES]
+        [--snippets-per-file SNIPPETS_PER_FILE] [--max-bytes MAX_BYTES] [--no-source] [--format
+        {markdown,json}] [--out OUT] pack question
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -698,11 +666,9 @@ repomori context [-h] [--limit LIMIT] [--max-files MAX_FILES] [--snippet-lines S
 Build source-backed changed-files context.
 
 ```text
-repomori diff-context [-h] [--limit LIMIT] [--max-files MAX_FILES]
-                             [--snippet-lines SNIPPET_LINES] [--snippets-per-file SNIPPETS_PER_FILE]
-                             [--max-bytes MAX_BYTES] [--no-source] [--format {markdown,json}]
-                             [--out OUT]
-                             base_pack target_pack [question]
+repomori diff-context [--limit LIMIT] [--max-files MAX_FILES] [--snippet-lines SNIPPET_LINES]
+        [--snippets-per-file SNIPPETS_PER_FILE] [--max-bytes MAX_BYTES] [--no-source] [--format
+        {markdown,json}] [--out OUT] base_pack target_pack [question]
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -724,7 +690,7 @@ repomori diff-context [-h] [--limit LIMIT] [--max-files MAX_FILES]
 Verify pack chunks, hashes, and source recovery.
 
 ```text
-repomori verify [-h] [--json] pack
+repomori verify [--json] pack
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -737,11 +703,9 @@ repomori verify [-h] [--json] pack
 Evaluate context usefulness for a pack.
 
 ```text
-repomori eval [-h] [--question QUESTION] [--questions-file QUESTIONS_FILE] [--limit LIMIT]
-                     [--max-files MAX_FILES] [--snippet-lines SNIPPET_LINES]
-                     [--snippets-per-file SNIPPETS_PER_FILE] [--max-bytes MAX_BYTES] [--no-source]
-                     [--format {markdown,json}] [--out OUT]
-                     pack
+repomori eval [--question QUESTION] [--questions-file QUESTIONS_FILE] [--limit LIMIT] [--max-files
+        MAX_FILES] [--snippet-lines SNIPPET_LINES] [--snippets-per-file SNIPPETS_PER_FILE]
+        [--max-bytes MAX_BYTES] [--no-source] [--format {markdown,json}] [--out OUT] pack
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -763,7 +727,7 @@ repomori eval [-h] [--question QUESTION] [--questions-file QUESTIONS_FILE] [--li
 Export a dense machine-readable capsule.
 
 ```text
-repomori capsule [-h] [--max-files MAX_FILES] [--top-terms TOP_TERMS] [--out OUT] pack
+repomori capsule [--max-files MAX_FILES] [--top-terms TOP_TERMS] [--out OUT] pack
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -778,12 +742,11 @@ repomori capsule [-h] [--max-files MAX_FILES] [--top-terms TOP_TERMS] [--out OUT
 Build an agent handoff package directory.
 
 ```text
-repomori handoff [-h] --out OUT [--base-pack BASE_PACK] [--force] [--copy-pack]
-                        [--allow-unverified] [--max-files MAX_FILES] [--max-bytes MAX_BYTES]
-                        [--snippet-lines SNIPPET_LINES] [--snippets-per-file SNIPPETS_PER_FILE]
-                        [--capsule-max-files CAPSULE_MAX_FILES] [--top-terms TOP_TERMS]
-                        [--eval-question EVAL_QUESTION] [--questions-file QUESTIONS_FILE] [--json]
-                        pack question
+repomori handoff --out OUT [--base-pack BASE_PACK] [--force] [--copy-pack] [--allow-unverified]
+        [--max-files MAX_FILES] [--max-bytes MAX_BYTES] [--snippet-lines SNIPPET_LINES]
+        [--snippets-per-file SNIPPETS_PER_FILE] [--capsule-max-files CAPSULE_MAX_FILES] [--top-terms
+        TOP_TERMS] [--eval-question EVAL_QUESTION] [--questions-file QUESTIONS_FILE] [--json] pack
+        question
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -810,7 +773,7 @@ repomori handoff [-h] --out OUT [--base-pack BASE_PACK] [--force] [--copy-pack]
 Validate a handoff package directory.
 
 ```text
-repomori check-handoff [-h] [--json] handoff_dir
+repomori check-handoff [--json] handoff_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -823,7 +786,7 @@ repomori check-handoff [-h] [--json] handoff_dir
 Score a handoff package for agent usefulness.
 
 ```text
-repomori score-handoff [-h] [--format {markdown,json}] [--out OUT] [--json] handoff_dir
+repomori score-handoff [--format {markdown,json}] [--out OUT] [--json] handoff_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -838,8 +801,8 @@ repomori score-handoff [-h] [--format {markdown,json}] [--out OUT] [--json] hand
 Turn a handoff score into a prioritized fix checklist.
 
 ```text
-repomori handoff-triage [-h] [--limit LIMIT] [--format {markdown,json}] [--out OUT] [--json]
-                               score_or_handoff
+repomori handoff-triage [--limit LIMIT] [--format {markdown,json}] [--out OUT] [--json]
+        score_or_handoff
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -855,9 +818,8 @@ repomori handoff-triage [-h] [--limit LIMIT] [--format {markdown,json}] [--out O
 Apply a safe/ci/strict quality gate to a handoff score.
 
 ```text
-repomori handoff-quality [-h] [--profile {safe,ci,strict}] [--target-score TARGET_SCORE]
-                                [--format {markdown,json}] [--out OUT] [--json]
-                                score_or_handoff
+repomori handoff-quality [--profile {safe,ci,strict}] [--target-score TARGET_SCORE] [--format
+        {markdown,json}] [--out OUT] [--json] score_or_handoff
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -874,16 +836,12 @@ repomori handoff-quality [-h] [--profile {safe,ci,strict}] [--target-score TARGE
 Build, score, triage, and retry a handoff with richer local settings.
 
 ```text
-repomori improve-handoff [-h] --out OUT [--base-pack BASE_PACK] [--force] [--copy-pack]
-                                [--allow-unverified] [--target-score TARGET_SCORE]
-                                [--quality-profile {safe,ci,strict}] [--max-attempts MAX_ATTEMPTS]
-                                [--max-files MAX_FILES] [--max-bytes MAX_BYTES]
-                                [--snippet-lines SNIPPET_LINES]
-                                [--snippets-per-file SNIPPETS_PER_FILE]
-                                [--capsule-max-files CAPSULE_MAX_FILES] [--top-terms TOP_TERMS]
-                                [--eval-question EVAL_QUESTION] [--questions-file QUESTIONS_FILE]
-                                [--format {markdown,json}] [--json]
-                                pack question
+repomori improve-handoff --out OUT [--base-pack BASE_PACK] [--force] [--copy-pack]
+        [--allow-unverified] [--target-score TARGET_SCORE] [--quality-profile {safe,ci,strict}]
+        [--max-attempts MAX_ATTEMPTS] [--max-files MAX_FILES] [--max-bytes MAX_BYTES]
+        [--snippet-lines SNIPPET_LINES] [--snippets-per-file SNIPPETS_PER_FILE] [--capsule-max-files
+        CAPSULE_MAX_FILES] [--top-terms TOP_TERMS] [--eval-question EVAL_QUESTION] [--questions-file
+        QUESTIONS_FILE] [--format {markdown,json}] [--json] pack question
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -914,9 +872,8 @@ repomori improve-handoff [-h] --out OUT [--base-pack BASE_PACK] [--force] [--cop
 Write a portable zip archive for a handoff directory.
 
 ```text
-repomori archive-handoff [-h] [--out OUT] [--force] [--quality-profile {safe,ci,strict}]
-                                [--format {markdown,json}] [--report-out REPORT_OUT] [--json]
-                                handoff_dir
+repomori archive-handoff [--out OUT] [--force] [--quality-profile {safe,ci,strict}] [--format
+        {markdown,json}] [--report-out REPORT_OUT] [--json] handoff_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -934,19 +891,14 @@ repomori archive-handoff [-h] [--out OUT] [--force] [--quality-profile {safe,ci,
 Run handoff check, score, triage, quality, and optional repair/archive.
 
 ```text
-repomori handoff-health [-h] [--profile {safe,ci,strict}] [--target-score TARGET_SCORE]
-                               [--improve-pack IMPROVE_PACK] [--question QUESTION]
-                               [--improve-out IMPROVE_OUT] [--base-pack BASE_PACK] [--force]
-                               [--copy-pack] [--allow-unverified] [--archive]
-                               [--archive-out ARCHIVE_OUT] [--max-attempts MAX_ATTEMPTS]
-                               [--max-files MAX_FILES] [--max-bytes MAX_BYTES]
-                               [--snippet-lines SNIPPET_LINES]
-                               [--snippets-per-file SNIPPETS_PER_FILE]
-                               [--capsule-max-files CAPSULE_MAX_FILES] [--top-terms TOP_TERMS]
-                               [--eval-question EVAL_QUESTION] [--questions-file QUESTIONS_FILE]
-                               [--artifacts-dir ARTIFACTS_DIR] [--health-log HEALTH_LOG]
-                               [--format {markdown,json}] [--out OUT] [--json]
-                               handoff_dir
+repomori handoff-health [--profile {safe,ci,strict}] [--target-score TARGET_SCORE] [--improve-pack
+        IMPROVE_PACK] [--question QUESTION] [--improve-out IMPROVE_OUT] [--base-pack BASE_PACK]
+        [--force] [--copy-pack] [--allow-unverified] [--archive] [--archive-out ARCHIVE_OUT]
+        [--max-attempts MAX_ATTEMPTS] [--max-files MAX_FILES] [--max-bytes MAX_BYTES]
+        [--snippet-lines SNIPPET_LINES] [--snippets-per-file SNIPPETS_PER_FILE] [--capsule-max-files
+        CAPSULE_MAX_FILES] [--top-terms TOP_TERMS] [--eval-question EVAL_QUESTION] [--questions-file
+        QUESTIONS_FILE] [--artifacts-dir ARTIFACTS_DIR] [--health-log HEALTH_LOG] [--format
+        {markdown,json}] [--out OUT] [--json] handoff_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -983,13 +935,11 @@ repomori handoff-health [-h] [--profile {safe,ci,strict}] [--target-score TARGET
 Run an end-to-end repository benchmark.
 
 ```text
-repomori bench [-h] --out OUT [--question QUESTION] [--force] [--chunk-size CHUNK_SIZE]
-                      [--max-files MAX_FILES] [--max-bytes MAX_BYTES]
-                      [--snippet-lines SNIPPET_LINES] [--snippets-per-file SNIPPETS_PER_FILE]
-                      [--capsule-max-files CAPSULE_MAX_FILES] [--top-terms TOP_TERMS]
-                      [--eval-question EVAL_QUESTION] [--questions-file QUESTIONS_FILE]
-                      [--copy-pack] [--json]
-                      repo
+repomori bench --out OUT [--question QUESTION] [--force] [--chunk-size CHUNK_SIZE] [--max-files
+        MAX_FILES] [--max-bytes MAX_BYTES] [--snippet-lines SNIPPET_LINES] [--snippets-per-file
+        SNIPPETS_PER_FILE] [--capsule-max-files CAPSULE_MAX_FILES] [--top-terms TOP_TERMS]
+        [--eval-question EVAL_QUESTION] [--questions-file QUESTIONS_FILE] [--copy-pack] [--json]
+        repo
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
@@ -1015,7 +965,7 @@ repomori bench [-h] --out OUT [--question QUESTION] [--force] [--chunk-size CHUN
 Restore one exact file from the pack.
 
 ```text
-repomori get [-h] [--out OUT] pack path
+repomori get [--out OUT] pack path
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
