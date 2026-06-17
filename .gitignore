@@ -9,8 +9,13 @@ __pycache__/
 .venv/
 venv/
 
+.repomori-packs/
 .repomori-release-check/
+.repomori-release-health/
 .repomori-health/
+.repomori-smoke/
+.repomori-handoff-health/
+.repomori-baseline-drift.jsonl
 
 build/
 dist/

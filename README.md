@@ -50,9 +50,9 @@ bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
 ```powershell
 python -m repomori demo --out D:\Temp\repomori-demo --force --json
 python -m repomori scan D:\Dev\RepoMori --public-release --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
-python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
-python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.log --json
-python -m repomori drift-summary D:\Temp\repomori-drift.log --limit 20 --json
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.jsonl --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.jsonl --json
+python -m repomori drift-summary D:\Temp\repomori-drift.jsonl --limit 20 --json
 python -m repomori handoff-health-summary D:\handoffs\handoff-health.jsonl --limit 20 --json
 python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs
@@ -219,7 +219,7 @@ chain verification, drift summary, compatibility checks, and contract diffs in o
 checks:
 
 ```powershell
-python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-log D:\Temp\repomori-drift.log --json
+python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-log D:\Temp\repomori-drift.jsonl --json
 ```
 
 `build --base` creates an incremental pack. It hashes current files, reuses

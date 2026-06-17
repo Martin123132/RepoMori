@@ -1402,6 +1402,20 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("  - .repomori-release-health", workflow)
         self.assertIn("  - .repomori-health", workflow)
 
+    def test_gitignore_covers_documented_hidden_outputs(self) -> None:
+        gitignore = (Path(__file__).resolve().parents[1] / ".gitignore").read_text(encoding="utf-8")
+
+        for pattern in (
+            ".repomori-packs/",
+            ".repomori-release-check/",
+            ".repomori-release-health/",
+            ".repomori-health/",
+            ".repomori-smoke/",
+            ".repomori-handoff-health/",
+            ".repomori-baseline-drift.jsonl",
+        ):
+            self.assertIn(pattern, gitignore)
+
     def test_run_release_health_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release-health"

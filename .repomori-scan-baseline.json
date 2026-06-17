@@ -2,7 +2,7 @@
   "schema_version": "repomori.scan.baseline.v1",
   "source_schema_version": "repomori.scan.v1",
   "repo_path": "D:\\Dev\\RepoMori",
-  "created_at": 1781655698,
+  "created_at": 1781660177,
   "ignore": [
     {
       "severity": "low",
@@ -26,7 +26,7 @@
       "path": "README.md",
       "message": "D-drive temp path appears in source.",
       "line": 53,
-      "match": "D:\\T....log"
+      "match": "D:\\T...sonl"
     },
     {
       "severity": "low",
