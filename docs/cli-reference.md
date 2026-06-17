@@ -490,7 +490,7 @@ repomori contract-check [--fixture FIXTURE] [--format {markdown,json}] [--out OU
 
 | Name | Kind | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- | --- |
-| --fixture | option | no |  | tests\fixtures\compat-contracts.json | Contract fixture JSON file. |
+| --fixture | option | no |  | tests/fixtures/compat-contracts.json | Contract fixture JSON file. |
 | --format | option | no | markdown, json | markdown |  |
 | --out | option | no |  |  | Write the contract diff report to this file. |
 | --json | option | no |  | False | Print JSON output. |

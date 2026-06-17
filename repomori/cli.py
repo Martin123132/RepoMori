@@ -1685,7 +1685,7 @@ def _stable_default(value):
     if isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, Path):
-        return str(value) if not value.is_absolute() else None
+        return value.as_posix() if not value.is_absolute() else None
     if isinstance(value, (tuple, list)):
         return [str(item) for item in value]
     return str(value)
