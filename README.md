@@ -45,6 +45,20 @@ That creates a tiny demo repository, builds and verifies a `.repomori` pack,
 writes pack inspection and source-backed context, runs a memory cycle, and checks the MCP tool
 bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
 
+## Install From Checkout
+
+```powershell
+cd D:\Dev\RepoMori
+python -m pip install .
+repomori --help
+repomori demo --out D:\Temp\repomori-demo --force --json
+```
+
+Generated outputs should stay under `D:\Temp` or hidden `.repomori-*` folders
+inside the repo, so public release checks do not trip on visible artifact
+directories. `pip install .` may leave `build/` and `repomori.egg-info/` in
+the checkout; remove those generated folders before running `release-check`.
+
 ## Quick Start
 
 ```powershell

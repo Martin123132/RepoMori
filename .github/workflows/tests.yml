@@ -21,6 +21,33 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests
 
+  package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install package from checkout
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+      - name: Run installed CLI smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO_ROOT="$PWD"
+          WORK_DIR="$RUNNER_TEMP/repomori-package-smoke"
+          rm -rf "$WORK_DIR"
+          mkdir -p "$WORK_DIR"
+          pushd "$WORK_DIR"
+          repomori --help >/dev/null
+          python -m repomori schema --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.schema.catalog.v1'; print('python -m repomori schema smoke passed')"
+          repomori schema --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.schema.catalog.v1'; print('console script schema smoke passed')"
+          repomori demo --out "$WORK_DIR/demo" --force --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.demo.v1'; assert payload['status'] == 'pass'; print('console script demo smoke passed')"
+          repomori contract-check --fixture "$REPO_ROOT/tests/fixtures/compat-contracts.json" --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.contract_check.v1'; assert payload['status'] == 'pass'; print('console script contract-check smoke passed')"
+          popd
+
   workflow-self-check:
     runs-on: ubuntu-latest
     steps:

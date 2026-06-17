@@ -1391,6 +1391,10 @@ class RepoMoriCodecTests(unittest.TestCase):
     def test_workflow_contracts_for_tests_preflight(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/tests.yml").read_text(encoding="utf-8")
 
+        self.assertIn("package-smoke:", workflow)
+        self.assertIn("python -m pip install .", workflow)
+        self.assertIn("repomori demo --out", workflow)
+        self.assertIn("repomori contract-check --fixture", workflow)
         self.assertIn('generated_dirs = {', workflow)
         self.assertIn("release-check preflight blocked by visible top-level artifacts:", workflow)
         self.assertIn("release-health compat JSON artifact was not created", workflow)
