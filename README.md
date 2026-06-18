@@ -158,6 +158,7 @@ repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
 repomori release-check [repo] [--baseline file] [--fail-on low] [--drift-policy file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--drift-log file] [--json]
 repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--compat-handoff dir] [--compat-verify-pack] [--contract-fixture file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
+repomori verify-release <release-package-dir> [--format markdown|json] [--out file] [--json]
 repomori drift-summary <log> [--limit n] [--json]
 repomori handoff-health-summary <log> [--limit n] [--format markdown|json] [--out file] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
@@ -265,6 +266,15 @@ checks:
 
 ```powershell
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-log D:\Temp\repomori-drift.jsonl --json
+```
+
+`verify-release` checks a release package directory after the release-candidate
+workflow produces integrity artifacts. It validates `release-candidate.json`,
+`checksums.txt`, `release-provenance.json`, `sbom.spdx.json`, wheel/source
+artifacts, byte sizes, and SHA-256 hashes:
+
+```powershell
+python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --json
 ```
 
 `build --base` creates an incremental pack. It hashes current files, reuses

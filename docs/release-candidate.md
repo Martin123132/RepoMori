@@ -78,6 +78,13 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
 SBOM verification guidance.
 
+After downloading or unpacking the workflow artifact, verify the whole integrity
+bundle locally:
+
+```powershell
+python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --json
+```
+
 ## Tag And Pre-Release
 
 Only tag after local checks and the candidate workflow are green:

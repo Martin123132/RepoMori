@@ -12,7 +12,8 @@ product.
 - Release-health aggregate checks covering release-check, doctor, chain,
   timeline, compatibility, and contract stability.
 - Tamper-evident snapshot timelines and anchor verification.
-- Release package checksums, provenance, and minimal SPDX SBOM artifacts.
+- Release package checksums, provenance, minimal SPDX SBOM artifacts, and local
+  `verify-release` validation.
 - JSON schema catalog for supported reports and bridge contracts.
 - Agent JSON-lines bridge and dependency-free MCP stdio bridge.
 - Source-available license posture with commercial use reserved.
@@ -34,7 +35,9 @@ Before using RepoMori in a company setting:
 
 - confirm the intended use is covered by a written commercial license;
 - run from a pinned release tag or reviewed commit;
-- verify release checksums and provenance before using a downloaded artifact;
+- run `verify-release` before using a downloaded release artifact bundle;
+- verify release checksums and provenance manually when independent review is
+  required;
 - keep generated `.repomori` packs and handoffs in private storage;
 - use hidden `.repomori-*` output directories for automation artifacts;
 - run `release-check` before publishing repository changes;

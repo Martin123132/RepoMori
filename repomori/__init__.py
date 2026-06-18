@@ -44,6 +44,7 @@ from .codec import (
     format_handoff_health_summary_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
+    format_release_verify_markdown,
     format_snapshot_chain_markdown,
     format_snapshot_anchor_markdown,
     format_snapshot_anchor_verification_markdown,
@@ -83,6 +84,7 @@ from .codec import (
     verify_snapshot_chain,
     verify_snapshot_anchor,
     verify_pack,
+    verify_release_package,
     write_scan_baseline,
 )
 from .cli import build_cli_command_inventory, build_parser, format_cli_reference_markdown
@@ -131,6 +133,7 @@ __all__ = [
     "format_handoff_health_summary_markdown",
     "format_pack_inspect_diff_markdown",
     "format_pack_inspect_markdown",
+    "format_release_verify_markdown",
     "format_snapshot_chain_markdown",
     "format_snapshot_anchor_markdown",
     "append_anchor_log",
@@ -170,6 +173,7 @@ __all__ = [
     "verify_snapshot_chain",
     "verify_snapshot_anchor",
     "verify_pack",
+    "verify_release_package",
     "write_scan_baseline",
     "build_cli_command_inventory",
     "build_parser",

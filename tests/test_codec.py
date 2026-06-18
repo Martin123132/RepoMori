@@ -54,6 +54,7 @@ from repomori.codec import (
     format_handoff_health_summary_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
+    format_release_verify_markdown,
     format_context_markdown,
     format_context_eval_markdown,
     format_diff_context_markdown,
@@ -97,6 +98,7 @@ from repomori.codec import (
     triage_handoff_score,
     verify_snapshot_chain,
     verify_pack,
+    verify_release_package,
     write_scan_baseline,
     write_release_package_artifacts,
 )
@@ -1586,6 +1588,89 @@ class RepoMoriCodecTests(unittest.TestCase):
             manifest_md = (root / "release-candidate.md").read_text(encoding="utf-8")
             self.assertIn("## Integrity", manifest_md)
             self.assertIn("checksums.txt", manifest_md)
+
+    def test_verify_release_package_passes_for_integrity_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            (dist / "repomori-0.2.0-py3-none-any.whl").write_bytes(b"wheel-bytes")
+            (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+            write_release_package_artifacts(
+                root,
+                version="0.2.0",
+                commit="abc123",
+                ref="main",
+                run_id="42",
+                repository="Martin123132/RepoMori",
+                generated_at=1700000000,
+            )
+
+            report = verify_release_package(root)
+
+            self.assertEqual(report["schema_version"], "repomori.release_verify.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["checked_files"], 5)
+            self.assertEqual(report["summary"]["manifest_version"], "0.2.0")
+            self.assertTrue(report["summary"]["wheel_present"])
+            self.assertTrue(report["summary"]["source_archive_present"])
+            self.assertEqual(report["summary"]["mismatched_files"], 0)
+            self.assertTrue(any(item["path"] == "checksums.txt" for item in report["artifacts"]))
+
+            markdown = format_release_verify_markdown(report)
+            self.assertIn("# RepoMori Release Verification", markdown)
+            self.assertIn("checksums.txt", markdown)
+            self.assertIn("release-provenance.json", markdown)
+            self.assertIn("sbom.spdx.json", markdown)
+
+    def test_verify_release_package_detects_checksum_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            wheel = dist / "repomori-0.2.0-py3-none-any.whl"
+            wheel.write_bytes(b"wheel-bytes")
+            (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+            write_release_package_artifacts(root, version="0.2.0", generated_at=1700000000)
+
+            wheel.write_bytes(b"tampered")
+            report = verify_release_package(root)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertGreater(report["summary"]["mismatched_files"], 0)
+            self.assertTrue(any(error["code"] == "artifact_hash_mismatch" for error in report["errors"]))
+
+    def test_verify_release_package_fails_when_integrity_file_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            (dist / "repomori-0.2.0-py3-none-any.whl").write_bytes(b"wheel-bytes")
+            (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+            write_release_package_artifacts(root, version="0.2.0", generated_at=1700000000)
+
+            (root / "release-provenance.json").unlink()
+            report = verify_release_package(root)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertTrue(any(error["code"] == "required_file_missing" for error in report["errors"]))
+            self.assertTrue(any(check["id"] == "required_files" and check["status"] == "fail" for check in report["checks"]))
+
+    def test_verify_release_package_resolves_single_nested_artifact_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "downloaded-artifact"
+            root = parent / "repomori-release-candidate-0.2.0" / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            (dist / "repomori-0.2.0-py3-none-any.whl").write_bytes(b"wheel-bytes")
+            (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+            write_release_package_artifacts(root, version="0.2.0", generated_at=1700000000)
+
+            report = verify_release_package(parent)
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["resolved_root"], str(root.resolve()))
+            self.assertTrue(any(warning["code"] == "package_root_resolved_nested" for warning in report["warnings"]))
 
     def test_workflow_contracts_for_handoff_health(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/handoff-health.yml").read_text(
@@ -5591,6 +5676,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "repomori.schema.catalog.v1")
         self.assertIn("context.build", payload["agent_methods"])
         self.assertTrue(any(item["schema_version"] == "repomori.memory.v1" for item in payload["schemas"]))
+        self.assertTrue(any(item["schema_version"] == "repomori.release_verify.v1" for item in payload["schemas"]))
 
     def test_cli_schema_specific_json_is_parseable(self) -> None:
         output = subprocess.check_output(
@@ -5622,6 +5708,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("commands", command_names)
         self.assertIn("memory", command_names)
         self.assertIn("release-health", command_names)
+        self.assertIn("verify-release", command_names)
         self.assertIn("contract-check", command_names)
         self.assertEqual(parser.prog, inventory["prog"])
 
@@ -6237,6 +6324,67 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["checks"]["release_check"]["summary"]["drift_policy_status"], "fail")
             self.assertEqual(payload["status"], "fail")
+
+    def test_cli_verify_release_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            (dist / "repomori-0.2.0-py3-none-any.whl").write_bytes(b"wheel-bytes")
+            (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+            write_release_package_artifacts(root, version="0.2.0", generated_at=1700000000)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "verify-release",
+                    str(root),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.release_verify.v1")
+            self.assertEqual(payload["status"], "pass")
+
+    def test_cli_verify_release_fails_for_tampered_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            wheel = dist / "repomori-0.2.0-py3-none-any.whl"
+            wheel.write_bytes(b"wheel-bytes")
+            (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+            write_release_package_artifacts(root, version="0.2.0", generated_at=1700000000)
+            wheel.write_bytes(b"tampered")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "verify-release",
+                    str(root),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.release_verify.v1")
+            self.assertEqual(payload["status"], "fail")
+            self.assertTrue(any(error["code"] == "artifact_hash_mismatch" for error in payload["errors"]))
 
     def test_cli_compat_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

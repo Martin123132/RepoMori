@@ -20,7 +20,21 @@ The release package workflow writes:
 - `release-candidate.json`: release package manifest with an `integrity` block
   pointing to the checksum, provenance, and SBOM artifacts.
 
-## Verify On Windows
+## Verify With RepoMori
+
+Use the local verifier first. It checks the manifest, `checksums.txt`,
+provenance, SBOM, wheel, source archive, byte sizes, and SHA-256 values:
+
+```powershell
+python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --json
+python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --format markdown --out D:\Dev\RepoMori\.repomori-release-candidate\release-verify.md
+```
+
+The report uses schema `repomori.release_verify.v1`. If you pass a downloaded
+GitHub artifact parent directory, RepoMori will use the single nested release
+package root when exactly one `release-candidate.json` is found.
+
+## Manual Verify On Windows
 
 Download the release artifacts into one directory, then check each SHA-256 value
 against `checksums.txt`:

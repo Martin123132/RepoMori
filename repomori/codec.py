@@ -25,7 +25,7 @@ import zlib
 from collections import Counter, defaultdict
 from contextlib import closing
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 SCHEMA_VERSION = "repomori.pack.v1"
@@ -373,6 +373,13 @@ SCHEMA_DEFINITIONS = (
         "title": "Release package provenance",
         "producer": "write_release_package_artifacts",
         "required_fields": ["schema_version", "status", "version", "commit", "repository", "artifacts"],
+    },
+    {
+        "schema_version": "repomori.release_verify.v1",
+        "kind": "report",
+        "title": "Release package integrity verification report",
+        "producer": "verify_release_package",
+        "required_fields": ["schema_version", "status", "root", "resolved_root", "summary", "checks", "artifacts"],
     },
     {
         "schema_version": "repomori.health.v1",
@@ -9041,6 +9048,800 @@ def _format_release_package_manifest_markdown(manifest: dict[str, Any]) -> str:
         if isinstance(artifact, dict):
             lines.append(f"- `{artifact['path']}` `{artifact['bytes']}` bytes `{artifact['sha256']}`")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def verify_release_package(root: Path | str) -> dict[str, Any]:
+    """Verify a release package manifest, checksums, provenance, and SBOM."""
+
+    started = time.time()
+    requested_root = Path(root).resolve()
+    warnings: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    checks: list[dict[str, Any]] = []
+    artifacts: dict[str, dict[str, Any]] = {}
+
+    resolved_root = _resolve_release_package_root(requested_root, warnings, errors)
+    required_files = (
+        "release-candidate.json",
+        "checksums.txt",
+        "release-provenance.json",
+        "sbom.spdx.json",
+    )
+    if resolved_root is None:
+        _release_verify_add_check(
+            checks,
+            "package_root",
+            "fail",
+            "Release package root could not be resolved.",
+            {"requested_root": str(requested_root)},
+        )
+        return _release_verify_report(
+            requested_root,
+            None,
+            started=started,
+            checks=checks,
+            artifacts=artifacts,
+            warnings=warnings,
+            errors=errors,
+        )
+
+    _release_verify_add_check(
+        checks,
+        "package_root",
+        "pass" if resolved_root == requested_root else "warn",
+        "Release package root resolved.",
+        {"requested_root": str(requested_root), "resolved_root": str(resolved_root)},
+    )
+
+    missing_required = [name for name in required_files if not (resolved_root / name).is_file()]
+    for name in missing_required:
+        _release_verify_error(
+            errors,
+            "required_file_missing",
+            f"Required release package file is missing: {name}",
+            path=name,
+        )
+    _release_verify_add_check(
+        checks,
+        "required_files",
+        "pass" if not missing_required else "fail",
+        "Required release integrity files are present.",
+        {"required": list(required_files), "missing": missing_required},
+    )
+
+    manifest = _release_verify_load_json(resolved_root / "release-candidate.json", errors, "manifest")
+    provenance = _release_verify_load_json(resolved_root / "release-provenance.json", errors, "provenance")
+    sbom = _release_verify_load_json(resolved_root / "sbom.spdx.json", errors, "sbom")
+
+    _release_verify_add_check(
+        checks,
+        "manifest_schema",
+        "pass" if isinstance(manifest, dict) and manifest.get("schema_version") == "repomori.release_candidate.v1" else "fail",
+        "Release manifest uses the expected schema.",
+        {"expected": "repomori.release_candidate.v1", "actual": manifest.get("schema_version") if isinstance(manifest, dict) else None},
+    )
+    if isinstance(manifest, dict) and manifest.get("schema_version") != "repomori.release_candidate.v1":
+        _release_verify_error(
+            errors,
+            "manifest_schema_mismatch",
+            "release-candidate.json has an unexpected schema_version.",
+            path="release-candidate.json",
+            expected="repomori.release_candidate.v1",
+            actual=manifest.get("schema_version"),
+        )
+
+    _release_verify_add_check(
+        checks,
+        "provenance_schema",
+        "pass" if isinstance(provenance, dict) and provenance.get("schema_version") == "repomori.release_provenance.v1" else "fail",
+        "Release provenance uses the expected schema.",
+        {"expected": "repomori.release_provenance.v1", "actual": provenance.get("schema_version") if isinstance(provenance, dict) else None},
+    )
+    if isinstance(provenance, dict) and provenance.get("schema_version") != "repomori.release_provenance.v1":
+        _release_verify_error(
+            errors,
+            "provenance_schema_mismatch",
+            "release-provenance.json has an unexpected schema_version.",
+            path="release-provenance.json",
+            expected="repomori.release_provenance.v1",
+            actual=provenance.get("schema_version"),
+        )
+
+    _release_verify_add_check(
+        checks,
+        "sbom_schema",
+        "pass" if isinstance(sbom, dict) and sbom.get("spdxVersion") == "SPDX-2.3" else "fail",
+        "SBOM uses SPDX 2.3.",
+        {"expected": "SPDX-2.3", "actual": sbom.get("spdxVersion") if isinstance(sbom, dict) else None},
+    )
+    if isinstance(sbom, dict) and sbom.get("spdxVersion") != "SPDX-2.3":
+        _release_verify_error(
+            errors,
+            "sbom_schema_mismatch",
+            "sbom.spdx.json has an unexpected spdxVersion.",
+            path="sbom.spdx.json",
+            expected="SPDX-2.3",
+            actual=sbom.get("spdxVersion"),
+        )
+
+    checksum_entries = _release_verify_parse_checksums(resolved_root, errors)
+    _release_verify_add_check(
+        checks,
+        "checksums_parse",
+        "pass" if checksum_entries is not None else "fail",
+        "checksums.txt contains parseable SHA-256 records.",
+        {"checksum_count": len(checksum_entries or {})},
+    )
+    if checksum_entries:
+        for relative, digest in checksum_entries.items():
+            _release_verify_record_file(
+                resolved_root,
+                {"path": relative, "sha256": digest},
+                source="checksums.txt",
+                artifacts=artifacts,
+                errors=errors,
+            )
+    checksum_file_failures = [
+        item
+        for item in artifacts.values()
+        if "checksums.txt" in item.get("sources", []) and item.get("status") == "fail"
+    ]
+    _release_verify_add_check(
+        checks,
+        "checksum_files",
+        "pass" if checksum_entries is not None and not checksum_file_failures else "fail",
+        "Files listed in checksums.txt match their SHA-256 values.",
+        {"failed": [item.get("path") for item in checksum_file_failures]},
+    )
+
+    manifest_artifacts = _release_verify_records(manifest.get("artifacts") if isinstance(manifest, dict) else None)
+    integrity = manifest.get("integrity") if isinstance(manifest, dict) else None
+    integrity = integrity if isinstance(integrity, dict) else {}
+    manifest_integrity_ok = isinstance(manifest, dict) and isinstance(manifest.get("integrity"), dict)
+    expected_integrity_paths = {
+        "checksums": "checksums.txt",
+        "provenance": "release-provenance.json",
+        "sbom": "sbom.spdx.json",
+    }
+    manifest_integrity_error_start = len(errors)
+    for key, expected_path in expected_integrity_paths.items():
+        record = integrity.get(key)
+        if not isinstance(record, dict):
+            manifest_integrity_ok = False
+            _release_verify_error(errors, "manifest_integrity_missing", f"Manifest integrity record is missing: {key}", path=expected_path)
+            continue
+        if record.get("path") != expected_path:
+            manifest_integrity_ok = False
+            _release_verify_error(
+                errors,
+                "manifest_integrity_path_mismatch",
+                f"Manifest integrity record for {key} points at the wrong path.",
+                path=str(record.get("path")),
+                expected=expected_path,
+                actual=record.get("path"),
+            )
+        _release_verify_record_file(
+            resolved_root,
+            record,
+            source=f"manifest.integrity.{key}",
+            artifacts=artifacts,
+                errors=errors,
+        )
+    manifest_integrity_ok = manifest_integrity_ok and len(errors) == manifest_integrity_error_start
+    _release_verify_add_check(
+        checks,
+        "manifest_integrity",
+        "pass" if manifest_integrity_ok else "fail",
+        "Manifest integrity block points at checksum, provenance, and SBOM files.",
+        {"expected": expected_integrity_paths},
+    )
+
+    manifest_artifacts_ok = bool(manifest_artifacts)
+    manifest_artifacts_error_start = len(errors)
+    for record in manifest_artifacts:
+        _release_verify_record_file(
+            resolved_root,
+            record,
+            source="manifest.artifacts",
+            artifacts=artifacts,
+            errors=errors,
+        )
+    wheel_present = any(
+        str(record.get("kind")) == "wheel" or str(record.get("path", "")).endswith(".whl")
+        for record in manifest_artifacts
+    )
+    source_present = any(
+        str(record.get("kind")) == "source_archive" or str(record.get("path", "")).endswith(".zip")
+        for record in manifest_artifacts
+    )
+    if not wheel_present:
+        manifest_artifacts_ok = False
+        _release_verify_error(errors, "wheel_missing", "Release manifest does not list a wheel artifact.")
+    if not source_present:
+        manifest_artifacts_ok = False
+        _release_verify_error(errors, "source_archive_missing", "Release manifest does not list a source archive artifact.")
+    manifest_artifacts_ok = manifest_artifacts_ok and len(errors) == manifest_artifacts_error_start
+    _release_verify_add_check(
+        checks,
+        "manifest_artifacts",
+        "pass" if manifest_artifacts_ok else "fail",
+        "Release manifest lists wheel and source artifacts with valid hashes.",
+        {"artifact_count": len(manifest_artifacts), "wheel_present": wheel_present, "source_archive_present": source_present},
+    )
+
+    manifest_artifact_paths = {str(record.get("path")) for record in manifest_artifacts if isinstance(record.get("path"), str)}
+    required_checksum_paths = set(manifest_artifact_paths) | {"release-provenance.json", "sbom.spdx.json"}
+    checksum_coverage_ok = bool(checksum_entries)
+    checksum_paths = set(checksum_entries or {})
+    missing_checksums = sorted(required_checksum_paths - checksum_paths)
+    if missing_checksums:
+        checksum_coverage_ok = False
+        _release_verify_error(
+            errors,
+            "checksum_coverage_missing",
+            "checksums.txt does not cover every required release artifact.",
+            expected=sorted(required_checksum_paths),
+            actual=sorted(checksum_paths),
+        )
+    _release_verify_add_check(
+        checks,
+        "checksum_coverage",
+        "pass" if checksum_coverage_ok else "fail",
+        "Checksums cover dist artifacts, provenance, and SBOM.",
+        {"required": sorted(required_checksum_paths), "missing": missing_checksums},
+    )
+
+    provenance_artifacts = _release_verify_records(provenance.get("artifacts") if isinstance(provenance, dict) else None)
+    provenance_ok = isinstance(provenance, dict) and bool(provenance_artifacts)
+    if isinstance(manifest, dict) and isinstance(provenance, dict) and manifest.get("version") != provenance.get("version"):
+        provenance_ok = False
+        _release_verify_error(
+            errors,
+            "provenance_version_mismatch",
+            "Release provenance version does not match manifest version.",
+            expected=manifest.get("version"),
+            actual=provenance.get("version"),
+        )
+    provenance_paths = {str(record.get("path")) for record in provenance_artifacts if isinstance(record.get("path"), str)}
+    required_provenance_paths = set(manifest_artifact_paths) | {"sbom.spdx.json"}
+    missing_provenance_paths = sorted(required_provenance_paths - provenance_paths)
+    if missing_provenance_paths:
+        provenance_ok = False
+        _release_verify_error(
+            errors,
+            "provenance_coverage_missing",
+            "release-provenance.json does not cover every required release artifact.",
+            expected=sorted(required_provenance_paths),
+            actual=sorted(provenance_paths),
+        )
+    provenance_artifacts_error_start = len(errors)
+    for record in provenance_artifacts:
+        _release_verify_record_file(
+            resolved_root,
+            record,
+            source="release-provenance.json",
+            artifacts=artifacts,
+            errors=errors,
+        )
+    provenance_ok = provenance_ok and len(errors) == provenance_artifacts_error_start
+    _release_verify_add_check(
+        checks,
+        "provenance_artifacts",
+        "pass" if provenance_ok else "fail",
+        "Provenance artifact records match current files.",
+        {"required": sorted(required_provenance_paths), "missing": missing_provenance_paths},
+    )
+
+    sbom_ok = isinstance(sbom, dict)
+    sbom_packages = sbom.get("packages") if isinstance(sbom, dict) else None
+    sbom_package_names = {
+        package.get("name")
+        for package in sbom_packages
+        if isinstance(package, dict) and isinstance(package.get("name"), str)
+    } if isinstance(sbom_packages, list) else set()
+    missing_sbom_packages = sorted(manifest_artifact_paths - sbom_package_names)
+    if "repomori" not in sbom_package_names:
+        sbom_ok = False
+        _release_verify_error(errors, "sbom_package_missing", "SBOM does not include the main repomori package.", path="sbom.spdx.json")
+    if missing_sbom_packages:
+        sbom_ok = False
+        _release_verify_error(
+            errors,
+            "sbom_artifact_coverage_missing",
+            "SBOM does not list every release artifact from the manifest.",
+            path="sbom.spdx.json",
+            expected=sorted(manifest_artifact_paths),
+            actual=sorted(sbom_package_names),
+        )
+    _release_verify_add_check(
+        checks,
+        "sbom_artifacts",
+        "pass" if sbom_ok else "fail",
+        "SBOM describes the package and release artifacts.",
+        {"missing": missing_sbom_packages},
+    )
+
+    return _release_verify_report(
+        requested_root,
+        resolved_root,
+        started=started,
+        checks=checks,
+        artifacts=artifacts,
+        warnings=warnings,
+        errors=errors,
+        manifest=manifest if isinstance(manifest, dict) else None,
+        provenance=provenance if isinstance(provenance, dict) else None,
+        sbom=sbom if isinstance(sbom, dict) else None,
+        checksum_count=len(checksum_entries or {}),
+        manifest_artifact_count=len(manifest_artifacts),
+        wheel_present=wheel_present,
+        source_archive_present=source_present,
+    )
+
+
+def format_release_verify_markdown(report: dict[str, Any]) -> str:
+    """Render a compact release package verification report."""
+
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Release Verification",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Root: `{report.get('resolved_root') or report.get('root')}`",
+        f"- Version: `{summary.get('manifest_version')}`",
+        f"- Commit: `{summary.get('commit')}`",
+        f"- Ref: `{summary.get('ref')}`",
+        f"- Run ID: `{summary.get('run_id')}`",
+        f"- Checked files: `{summary.get('checked_files', 0)}`",
+        f"- Errors: `{summary.get('error_count', 0)}`",
+        f"- Warnings: `{summary.get('warning_count', 0)}`",
+        "",
+        "## Checks",
+        "",
+    ]
+    for check in report.get("checks", []):
+        lines.append(f"- `{check.get('id')}` status=`{check.get('status')}`")
+        message = check.get("message")
+        if message:
+            lines.append(f"  - {message}")
+
+    artifacts = report.get("artifacts", [])
+    if artifacts:
+        lines.extend(["", "## Artifacts", ""])
+        lines.append("| Path | Status | Bytes | SHA-256 |")
+        lines.append("| --- | --- | ---: | --- |")
+        for artifact in artifacts:
+            sha = artifact.get("actual_sha256") or artifact.get("expected_sha256") or ""
+            lines.append(
+                f"| `{artifact.get('path')}` | `{artifact.get('status')}` | "
+                f"{artifact.get('actual_bytes', artifact.get('expected_bytes', ''))} | `{sha}` |"
+            )
+
+    if report.get("errors"):
+        lines.extend(["", "## Errors", ""])
+        for error in report["errors"]:
+            path = f" `{error.get('path')}`" if error.get("path") else ""
+            lines.append(f"- `{error.get('code')}`{path} {error.get('message')}")
+    if report.get("warnings"):
+        lines.extend(["", "## Warnings", ""])
+        for warning in report["warnings"]:
+            path = f" `{warning.get('path')}`" if warning.get("path") else ""
+            lines.append(f"- `{warning.get('code')}`{path} {warning.get('message')}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _resolve_release_package_root(
+    requested_root: Path,
+    warnings: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> Path | None:
+    if requested_root.is_file() and requested_root.name == "release-candidate.json":
+        return requested_root.parent.resolve()
+    if requested_root.is_dir() and (requested_root / "release-candidate.json").is_file():
+        return requested_root.resolve()
+    if not requested_root.exists():
+        _release_verify_error(
+            errors,
+            "package_root_missing",
+            f"Release package path does not exist: {requested_root}",
+            path=str(requested_root),
+        )
+        return None
+    if not requested_root.is_dir():
+        _release_verify_error(
+            errors,
+            "package_root_not_directory",
+            f"Release package path is not a directory: {requested_root}",
+            path=str(requested_root),
+        )
+        return None
+
+    candidates = sorted(path.parent.resolve() for path in requested_root.rglob("release-candidate.json") if path.is_file())
+    if len(candidates) == 1:
+        warnings.append(
+            {
+                "code": "package_root_resolved_nested",
+                "path": str(candidates[0]),
+                "message": "Resolved a nested release package root from the supplied parent directory.",
+            }
+        )
+        return candidates[0]
+    if not candidates:
+        _release_verify_error(
+            errors,
+            "manifest_not_found",
+            "No release-candidate.json was found in the supplied package path.",
+            path=str(requested_root),
+        )
+        return None
+    _release_verify_error(
+        errors,
+        "package_root_ambiguous",
+        "Multiple release-candidate.json files were found; point verify-release at one package root.",
+        path=str(requested_root),
+        actual=[str(path) for path in candidates],
+    )
+    return None
+
+
+def _release_verify_load_json(path: Path, errors: list[dict[str, Any]], scope: str) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _release_verify_error(
+            errors,
+            f"{scope}_json_invalid",
+            f"{path.name} could not be parsed as JSON: {exc}",
+            path=path.name,
+        )
+        return None
+    if not isinstance(payload, dict):
+        _release_verify_error(
+            errors,
+            f"{scope}_json_not_object",
+            f"{path.name} must contain a JSON object.",
+            path=path.name,
+        )
+        return None
+    return payload
+
+
+def _release_verify_parse_checksums(root: Path, errors: list[dict[str, Any]]) -> dict[str, str] | None:
+    checksums_path = root / "checksums.txt"
+    if not checksums_path.is_file():
+        return None
+    entries: dict[str, str] = {}
+    try:
+        lines = checksums_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        _release_verify_error(errors, "checksums_read_failed", f"Could not read checksums.txt: {exc}", path="checksums.txt")
+        return None
+
+    ok = True
+    for lineno, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        if "  " not in line:
+            ok = False
+            _release_verify_error(
+                errors,
+                "checksum_line_invalid",
+                f"checksums.txt line {lineno} is not '<sha256>  <path>'.",
+                path="checksums.txt",
+                actual=line,
+            )
+            continue
+        digest, relative = line.split("  ", 1)
+        digest = digest.strip().lower()
+        relative = relative.strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            ok = False
+            _release_verify_error(
+                errors,
+                "checksum_digest_invalid",
+                f"checksums.txt line {lineno} does not contain a valid SHA-256 digest.",
+                path=relative or "checksums.txt",
+                actual=digest,
+            )
+            continue
+        safe_relative = _release_verify_normalize_relative(relative, errors, "checksums.txt")
+        if safe_relative is None:
+            ok = False
+            continue
+        if safe_relative in entries:
+            ok = False
+            _release_verify_error(
+                errors,
+                "checksum_path_duplicate",
+                f"checksums.txt lists a path more than once: {safe_relative}",
+                path=safe_relative,
+            )
+            continue
+        entries[safe_relative] = digest
+    return entries if ok else None
+
+
+def _release_verify_records(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _release_verify_record_file(
+    root: Path,
+    record: dict[str, Any],
+    *,
+    source: str,
+    artifacts: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> None:
+    relative = _release_verify_normalize_relative(record.get("path"), errors, source)
+    if relative is None:
+        return
+    artifact = artifacts.setdefault(
+        relative,
+        {
+            "path": relative,
+            "status": "pass",
+            "sources": [],
+            "expected_sha256": None,
+            "actual_sha256": None,
+            "expected_bytes": None,
+            "actual_bytes": None,
+        },
+    )
+    if source not in artifact["sources"]:
+        artifact["sources"].append(source)
+
+    expected_sha = record.get("sha256")
+    if expected_sha is not None:
+        expected_sha = str(expected_sha).lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
+            artifact["status"] = "fail"
+            _release_verify_error(
+                errors,
+                "artifact_hash_invalid",
+                f"{source} records an invalid SHA-256 digest for {relative}.",
+                path=relative,
+                actual=record.get("sha256"),
+            )
+        elif artifact["expected_sha256"] is None:
+            artifact["expected_sha256"] = expected_sha
+        elif artifact["expected_sha256"] != expected_sha:
+            artifact["status"] = "fail"
+            _release_verify_error(
+                errors,
+                "artifact_expected_hash_conflict",
+                f"Release records disagree about the expected SHA-256 for {relative}.",
+                path=relative,
+                expected=artifact["expected_sha256"],
+                actual=expected_sha,
+            )
+
+    expected_bytes = record.get("bytes")
+    if isinstance(expected_bytes, int) and expected_bytes >= 0:
+        if artifact["expected_bytes"] is None:
+            artifact["expected_bytes"] = expected_bytes
+        elif artifact["expected_bytes"] != expected_bytes:
+            artifact["status"] = "fail"
+            _release_verify_error(
+                errors,
+                "artifact_expected_size_conflict",
+                f"Release records disagree about the expected byte size for {relative}.",
+                path=relative,
+                expected=artifact["expected_bytes"],
+                actual=expected_bytes,
+            )
+
+    path = _release_verify_abs_path(root, relative)
+    if not path.is_file():
+        artifact["status"] = "fail"
+        _release_verify_error(errors, "artifact_file_missing", f"Release artifact is missing: {relative}", path=relative)
+        return
+
+    actual_bytes = path.stat().st_size
+    actual_sha = _path_sha256(path)
+    artifact["actual_bytes"] = actual_bytes
+    artifact["actual_sha256"] = actual_sha
+    if artifact["expected_bytes"] is not None and artifact["expected_bytes"] != actual_bytes:
+        artifact["status"] = "fail"
+        _release_verify_error(
+            errors,
+            "artifact_size_mismatch",
+            f"Release artifact byte size does not match: {relative}",
+            path=relative,
+            expected=artifact["expected_bytes"],
+            actual=actual_bytes,
+        )
+    if artifact["expected_sha256"] is not None and artifact["expected_sha256"] != actual_sha:
+        artifact["status"] = "fail"
+        _release_verify_error(
+            errors,
+            "artifact_hash_mismatch",
+            f"Release artifact SHA-256 does not match: {relative}",
+            path=relative,
+            expected=artifact["expected_sha256"],
+            actual=actual_sha,
+        )
+
+
+def _release_verify_normalize_relative(
+    value: Any,
+    errors: list[dict[str, Any]],
+    source: str,
+) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        _release_verify_error(errors, "artifact_path_invalid", f"{source} contains an empty artifact path.", actual=value)
+        return None
+    relative = value.strip()
+    if "\\" in relative or "\x00" in relative or re.match(r"^[A-Za-z]:", relative) or relative.startswith("/"):
+        _release_verify_error(
+            errors,
+            "artifact_path_unsafe",
+            f"{source} contains an unsafe artifact path.",
+            path=relative,
+        )
+        return None
+    posix = PurePosixPath(relative)
+    if any(part in {"", ".", ".."} for part in posix.parts):
+        _release_verify_error(
+            errors,
+            "artifact_path_unsafe",
+            f"{source} contains an unsafe artifact path.",
+            path=relative,
+        )
+        return None
+    return posix.as_posix()
+
+
+def _release_verify_abs_path(root: Path, relative: str) -> Path:
+    return root.joinpath(*PurePosixPath(relative).parts)
+
+
+def _release_verify_add_check(
+    checks: list[dict[str, Any]],
+    check_id: str,
+    status: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    checks.append(
+        {
+            "id": check_id,
+            "status": status,
+            "message": message,
+            "details": details or {},
+        }
+    )
+
+
+def _release_verify_error(
+    errors: list[dict[str, Any]],
+    code: str,
+    message: str,
+    *,
+    path: str | None = None,
+    expected: Any = None,
+    actual: Any = None,
+) -> None:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if path is not None:
+        error["path"] = path
+    if expected is not None:
+        error["expected"] = expected
+    if actual is not None:
+        error["actual"] = actual
+    errors.append(error)
+
+
+def _release_verify_report(
+    requested_root: Path,
+    resolved_root: Path | None,
+    *,
+    started: float,
+    checks: list[dict[str, Any]],
+    artifacts: dict[str, dict[str, Any]],
+    warnings: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    manifest: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
+    sbom: dict[str, Any] | None = None,
+    checksum_count: int = 0,
+    manifest_artifact_count: int = 0,
+    wheel_present: bool = False,
+    source_archive_present: bool = False,
+) -> dict[str, Any]:
+    artifact_list = sorted(artifacts.values(), key=lambda item: item["path"])
+    failed_artifacts = [item for item in artifact_list if item.get("status") == "fail"]
+    missing_files = sum(1 for item in artifact_list if item.get("actual_sha256") is None)
+    mismatched_files = sum(
+        1
+        for item in artifact_list
+        if item.get("actual_sha256") is not None
+        and item.get("expected_sha256") is not None
+        and item.get("actual_sha256") != item.get("expected_sha256")
+    )
+    status = "fail" if errors or any(check.get("status") == "fail" for check in checks) else "pass"
+    return {
+        "schema_version": "repomori.release_verify.v1",
+        "status": status,
+        "root": str(requested_root),
+        "resolved_root": str(resolved_root) if resolved_root is not None else None,
+        "summary": {
+            "elapsed_seconds": round(time.time() - started, 4),
+            "checked_files": len(artifact_list),
+            "failed_files": len(failed_artifacts),
+            "missing_files": missing_files,
+            "mismatched_files": mismatched_files,
+            "checksum_count": checksum_count,
+            "artifact_count": manifest_artifact_count,
+            "manifest_version": manifest.get("version") if isinstance(manifest, dict) else None,
+            "provenance_version": provenance.get("version") if isinstance(provenance, dict) else None,
+            "sbom_version": sbom.get("spdxVersion") if isinstance(sbom, dict) else None,
+            "commit": manifest.get("commit") if isinstance(manifest, dict) else None,
+            "ref": manifest.get("ref") if isinstance(manifest, dict) else None,
+            "run_id": manifest.get("run_id") if isinstance(manifest, dict) else None,
+            "wheel_present": wheel_present,
+            "source_archive_present": source_archive_present,
+            "error_count": len(errors),
+            "warning_count": len(warnings),
+        },
+        "checks": checks,
+        "artifacts": artifact_list,
+        "manifest": _release_verify_manifest_summary(manifest),
+        "provenance": _release_verify_provenance_summary(provenance),
+        "sbom": _release_verify_sbom_summary(sbom),
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def _release_verify_manifest_summary(manifest: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(manifest, dict):
+        return None
+    return {
+        "schema_version": manifest.get("schema_version"),
+        "status": manifest.get("status"),
+        "version": manifest.get("version"),
+        "commit": manifest.get("commit"),
+        "ref": manifest.get("ref"),
+        "run_id": manifest.get("run_id"),
+        "artifact_count": len(_release_verify_records(manifest.get("artifacts"))),
+        "integrity_paths": {
+            key: value.get("path")
+            for key, value in (manifest.get("integrity") or {}).items()
+            if isinstance(value, dict)
+        } if isinstance(manifest.get("integrity"), dict) else {},
+    }
+
+
+def _release_verify_provenance_summary(provenance: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(provenance, dict):
+        return None
+    return {
+        "schema_version": provenance.get("schema_version"),
+        "status": provenance.get("status"),
+        "version": provenance.get("version"),
+        "repository": provenance.get("repository"),
+        "workflow": provenance.get("workflow"),
+        "run_id": provenance.get("run_id"),
+        "artifact_count": len(_release_verify_records(provenance.get("artifacts"))),
+    }
+
+
+def _release_verify_sbom_summary(sbom: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(sbom, dict):
+        return None
+    packages = sbom.get("packages")
+    relationships = sbom.get("relationships")
+    return {
+        "spdxVersion": sbom.get("spdxVersion"),
+        "name": sbom.get("name"),
+        "package_count": len(packages) if isinstance(packages, list) else 0,
+        "relationship_count": len(relationships) if isinstance(relationships, list) else 0,
+    }
 
 
 def handle_agent_request(

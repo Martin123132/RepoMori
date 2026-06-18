@@ -48,6 +48,7 @@ from .codec import (
     format_handoff_health_summary_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
+    format_release_verify_markdown,
     format_snapshot_chain_markdown,
     format_snapshot_anchor_markdown,
     format_snapshot_anchor_verification_markdown,
@@ -84,6 +85,7 @@ from .codec import (
     verify_snapshot_chain,
     verify_snapshot_anchor,
     verify_pack,
+    verify_release_package,
     write_scan_baseline,
 )
 
@@ -217,6 +219,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional contract fixture for release-health contract drift checks.",
     )
     release_health.add_argument("--json", action="store_true", help="Print release-health JSON.")
+
+    verify_release = sub.add_parser("verify-release", help="Verify a release package integrity bundle.")
+    verify_release.add_argument("package_dir", type=Path, help="Release package directory containing release-candidate.json.")
+    verify_release.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    verify_release.add_argument("--out", type=Path, help="Write the verification report to this file.")
+    verify_release.add_argument("--json", action="store_true", help="Print release verification JSON.")
 
     init = sub.add_parser("init", help="Write a RepoMori config file.")
     init.add_argument("repo", type=Path, help="Repository folder to remember.")
@@ -775,6 +783,20 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report, indent=2))
         else:
             _print(report, args.json)
+        return 0 if report["status"] != "fail" else 1
+    if args.command == "verify-release":
+        report = verify_release_package(args.package_dir)
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_release_verify_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
         return 0 if report["status"] != "fail" else 1
     if args.command == "compat":
         report = check_compatibility(

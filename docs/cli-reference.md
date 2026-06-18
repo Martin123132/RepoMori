@@ -3,7 +3,7 @@
 Generated from the live `argparse` command surface.
 
 - Schema: `repomori.cli_commands.v1`
-- Commands: `48`
+- Commands: `49`
 
 ## Commands
 
@@ -124,6 +124,21 @@ repomori release-health [--snapshot-dir SNAPSHOT_DIR] [--baseline BASELINE] [--f
 | --compat-verify-pack | option | no |  | False | Run full pack verification during release-health compatibility checks. |
 | --contract-fixture | option | no |  |  | Optional contract fixture for release-health contract drift checks. |
 | --json | option | no |  | False | Print release-health JSON. |
+
+### `verify-release`
+
+Verify a release package integrity bundle.
+
+```text
+repomori verify-release [--format {markdown,json}] [--out OUT] [--json] package_dir
+```
+
+| Name | Kind | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- | --- |
+| package_dir | argument | yes |  |  | Release package directory containing release-candidate.json. |
+| --format | option | no | markdown, json | markdown |  |
+| --out | option | no |  |  | Write the verification report to this file. |
+| --json | option | no |  | False | Print release verification JSON. |
 
 ### `init`
 

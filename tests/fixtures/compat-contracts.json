@@ -42,6 +42,7 @@
     "repomori.release_candidate.v1",
     "repomori.release_check.v1",
     "repomori.release_provenance.v1",
+    "repomori.release_verify.v1",
     "repomori.scan.baseline.v1",
     "repomori.scan.v1",
     "repomori.schema.catalog.v1",
