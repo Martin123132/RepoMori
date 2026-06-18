@@ -151,6 +151,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "pack", "settings", "summary", "coverage", "questions"],
     },
     {
+        "schema_version": "repomori.context_eval.v1",
+        "kind": "report",
+        "title": "Fixture-backed context quality evaluation report",
+        "producer": "evaluate_context_quality",
+        "required_fields": ["schema_version", "status", "pack", "settings", "summary", "cases", "failures"],
+    },
+    {
         "schema_version": "repomori.handoff.v1",
         "kind": "manifest",
         "title": "Agent handoff package manifest",
@@ -3965,6 +3972,188 @@ def format_eval_markdown(report: dict[str, Any]) -> str:
             lines.append(f"- {suggestion}")
     else:
         lines.append("No immediate eval weaknesses detected.")
+    lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def evaluate_context_quality(
+    pack: Path | str,
+    cases: Iterable[dict[str, Any] | str],
+    *,
+    limit: int = 8,
+    snippet_lines: int = 12,
+    max_bytes: int | None = 4096,
+    snippets_per_file: int = 2,
+    include_source: bool = True,
+) -> dict[str, Any]:
+    """Run fixture-backed quality cases against context bundle output."""
+
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    if snippet_lines <= 0:
+        raise ValueError("snippet_lines must be greater than zero")
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes must be zero or greater")
+    if snippets_per_file < 0:
+        raise ValueError("snippets_per_file must be zero or greater")
+
+    case_list = [_normalize_context_eval_case(case, index) for index, case in enumerate(cases, start=1)]
+    if not case_list:
+        raise ValueError("at least one context eval case is required")
+
+    started = time.time()
+    pack_info = info_pack(pack)
+    evaluated_cases = []
+    failures = []
+    total_snippets = 0
+    total_source_bytes = 0
+    expected_path_ranks: list[int] = []
+
+    for case in case_list:
+        bundle = build_context_bundle(
+            pack,
+            case["question"],
+            limit=limit,
+            snippet_lines=snippet_lines,
+            max_bytes=max_bytes,
+            snippets_per_file=snippets_per_file,
+            include_source=include_source,
+        )
+        sources = bundle.get("sources", [])
+        result = _context_eval_result_summary(bundle)
+        checks = _context_eval_checks(case, bundle)
+        failed_checks = [check for check in checks if check["status"] == "fail"]
+        status = "fail" if failed_checks else "pass"
+
+        total_snippets += int(result["snippet_count"])
+        total_source_bytes += int(result["source_bytes"])
+        expected_path_ranks.extend(
+            int(check["rank"])
+            for check in checks
+            if check["id"].startswith("expected_path:") and check.get("rank") is not None and check["status"] == "pass"
+        )
+        if failed_checks:
+            failures.append(
+                {
+                    "case_id": case["id"],
+                    "question": case["question"],
+                    "failed_checks": failed_checks,
+                }
+            )
+
+        evaluated_cases.append(
+            {
+                "id": case["id"],
+                "question": case["question"],
+                "status": status,
+                "expectations": case["expectations"],
+                "result": result,
+                "checks": checks,
+                "selected_sources": [_eval_source_summary(source) for source in sources],
+            }
+        )
+
+    passed = sum(1 for case in evaluated_cases if case["status"] == "pass")
+    failed = len(evaluated_cases) - passed
+    elapsed = time.time() - started
+    return {
+        "schema_version": "repomori.context_eval.v1",
+        "status": "fail" if failed else "pass",
+        "pack": {
+            "schema_version": pack_info.get("schema_version"),
+            "repo_path": pack_info.get("repo_path"),
+            "pack_path": pack_info.get("pack_path"),
+            "logical_bytes": pack_info.get("logical_bytes"),
+            "pack_bytes": pack_info.get("pack_bytes"),
+            "counts": pack_info.get("counts", {}),
+        },
+        "settings": {
+            "limit": limit,
+            "snippet_lines": snippet_lines,
+            "max_bytes": max_bytes,
+            "snippets_per_file": snippets_per_file,
+            "include_source": include_source,
+        },
+        "summary": {
+            "case_count": len(evaluated_cases),
+            "passed_cases": passed,
+            "failed_cases": failed,
+            "total_snippets": total_snippets,
+            "total_source_bytes": total_source_bytes,
+            "average_expected_path_rank": round(sum(expected_path_ranks) / len(expected_path_ranks), 2)
+            if expected_path_ranks
+            else None,
+            "elapsed_seconds": round(elapsed, 4),
+        },
+        "cases": evaluated_cases,
+        "failures": failures,
+    }
+
+
+def format_context_eval_markdown(report: dict[str, Any]) -> str:
+    """Render a context quality eval report as Markdown."""
+
+    pack = report.get("pack", {})
+    settings = report.get("settings", {})
+    summary = report.get("summary", {})
+    lines = [
+        "# RepoMori Context Quality Eval",
+        "",
+        "## Pack",
+        "",
+        f"- Repository: `{pack.get('repo_path')}`",
+        f"- Pack: `{pack.get('pack_path')}`",
+        f"- Schema: `{pack.get('schema_version')}`",
+        "",
+        "## Settings",
+        "",
+        f"- Limit: `{settings.get('limit')}`",
+        f"- Snippet lines: `{settings.get('snippet_lines')}`",
+        f"- Max bytes per case: `{settings.get('max_bytes')}`",
+        f"- Snippets per file: `{settings.get('snippets_per_file')}`",
+        f"- Include source: `{settings.get('include_source')}`",
+        "",
+        "## Summary",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Cases: `{summary.get('case_count', 0)}`",
+        f"- Passed: `{summary.get('passed_cases', 0)}`",
+        f"- Failed: `{summary.get('failed_cases', 0)}`",
+        f"- Total snippets: `{summary.get('total_snippets', 0)}`",
+        f"- Total source bytes: `{summary.get('total_source_bytes', 0)}`",
+        f"- Average expected path rank: `{summary.get('average_expected_path_rank')}`",
+        "",
+        "## Cases",
+        "",
+    ]
+    for index, case in enumerate(report.get("cases", []), start=1):
+        result = case.get("result", {})
+        lines.extend(
+            [
+                f"### {index}. {case.get('id')} - {case.get('question')}",
+                "",
+                f"- Status: `{case.get('status')}`",
+                f"- Top path: `{result.get('top_path')}`",
+                f"- Top score: `{result.get('top_score')}`",
+                f"- Selected paths: `{', '.join(result.get('selected_paths', [])) or 'none'}`",
+                f"- Matched terms: `{', '.join(result.get('matched_terms', [])) or 'none'}`",
+                f"- Snippets: `{result.get('snippet_count', 0)}`",
+                "",
+                "Checks:",
+            ]
+        )
+        for check in case.get("checks", []):
+            lines.append(
+                f"- `{check.get('status')}` {check.get('id')}: {check.get('message')}"
+            )
+        lines.append("")
+    failures = report.get("failures", [])
+    lines.extend(["## Failures", ""])
+    if failures:
+        for failure in failures:
+            lines.append(f"- `{failure.get('case_id')}` {failure.get('question')}")
+    else:
+        lines.append("No failing context quality cases.")
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -9234,10 +9423,205 @@ def _eval_source_summary(source: dict[str, Any]) -> dict[str, Any]:
         "sha256": source.get("sha256"),
         "score": source.get("score"),
         "why": source.get("why", []),
+        "match_reasons": source.get("match_reasons", source.get("why", [])),
+        "matched_terms": source.get("matched_terms", []),
         "snippet_status": source.get("snippet_status"),
         "snippet_count": len(source.get("snippets", [])),
         "source_bytes": source.get("source_bytes", 0),
     }
+
+
+def _normalize_context_eval_case(raw: dict[str, Any] | str, index: int) -> dict[str, Any]:
+    if isinstance(raw, str):
+        item: dict[str, Any] = {"question": raw}
+    elif isinstance(raw, dict):
+        item = dict(raw)
+    else:
+        raise TypeError("context eval cases must be objects or strings")
+
+    question = str(item.get("question") or item.get("q") or "").strip()
+    if not question:
+        raise ValueError(f"context eval case {index} is missing a question")
+
+    expected_paths = _context_eval_list(item.get("expected_paths", item.get("expected_path")))
+    required_snippets = _context_eval_list(item.get("required_snippets", item.get("expected_snippets")))
+    required_terms = _context_eval_list(item.get("required_terms", item.get("expected_terms")))
+    max_rank = _optional_positive_int(item.get("max_rank"))
+    min_top_score = _optional_float(item.get("min_top_score"))
+    min_snippets = _optional_positive_int(item.get("min_snippets"))
+
+    return {
+        "id": str(item.get("id") or f"case-{index}"),
+        "question": question,
+        "expectations": {
+            "expected_paths": [_normalize_repo_path(path) for path in expected_paths],
+            "required_snippets": required_snippets,
+            "required_terms": [term.lower() for term in required_terms],
+            "max_rank": max_rank,
+            "min_top_score": min_top_score,
+            "min_snippets": min_snippets,
+        },
+    }
+
+
+def _context_eval_list(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item).strip()]
+    return [str(value)]
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError("context eval integer thresholds must be greater than zero")
+    return parsed
+
+
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def _context_eval_result_summary(bundle: dict[str, Any]) -> dict[str, Any]:
+    sources = bundle.get("sources", [])
+    selected_paths = [str(source.get("path")) for source in sources]
+    matched_terms = sorted(
+        {
+            str(term).lower()
+            for source in sources
+            for term in source.get("matched_terms", [])
+            if str(term).strip()
+        }
+    )
+    snippet_count = sum(len(source.get("snippets", [])) for source in sources)
+    source_bytes = int(bundle.get("selection", {}).get("source_bytes") or 0)
+    top = sources[0] if sources else {}
+    return {
+        "selected_count": len(sources),
+        "selected_paths": selected_paths,
+        "top_path": top.get("path"),
+        "top_score": top.get("score"),
+        "matched_terms": matched_terms,
+        "snippet_count": snippet_count,
+        "source_bytes": source_bytes,
+    }
+
+
+def _context_eval_checks(case: dict[str, Any], bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    expectations = case["expectations"]
+    result = _context_eval_result_summary(bundle)
+    sources = bundle.get("sources", [])
+    selected_paths = result["selected_paths"]
+    path_ranks = {path: index for index, path in enumerate(selected_paths, start=1)}
+    snippet_text = "\n".join(
+        str(snippet.get("text", ""))
+        for source in sources
+        for snippet in source.get("snippets", [])
+    )
+    snippet_text_lower = snippet_text.lower()
+    matched_terms = set(result["matched_terms"])
+    checks = [
+        _context_eval_check(
+            "sources_selected",
+            bool(sources),
+            "At least one source was selected.",
+            actual=result["selected_count"],
+        )
+    ]
+
+    max_rank = expectations.get("max_rank")
+    for path in expectations.get("expected_paths", []):
+        rank = path_ranks.get(path)
+        ok = rank is not None and (max_rank is None or rank <= max_rank)
+        checks.append(
+            _context_eval_check(
+                f"expected_path:{path}",
+                ok,
+                f"Expected `{path}` to be selected" + (f" by rank {max_rank}." if max_rank else "."),
+                expected=path,
+                actual=selected_paths,
+                rank=rank,
+            )
+        )
+
+    for text in expectations.get("required_snippets", []):
+        ok = text.lower() in snippet_text_lower
+        checks.append(
+            _context_eval_check(
+                f"required_snippet:{_trace_value(text, 48)}",
+                ok,
+                f"Expected snippet text containing `{_trace_value(text, 80)}`.",
+                expected=text,
+                actual="present" if ok else "missing",
+            )
+        )
+
+    for term in expectations.get("required_terms", []):
+        ok = term in matched_terms
+        checks.append(
+            _context_eval_check(
+                f"required_term:{term}",
+                ok,
+                f"Expected matched term `{term}`.",
+                expected=term,
+                actual=sorted(matched_terms),
+            )
+        )
+
+    min_top_score = expectations.get("min_top_score")
+    if min_top_score is not None:
+        top_score = float(result.get("top_score") or 0.0)
+        checks.append(
+            _context_eval_check(
+                "min_top_score",
+                top_score >= min_top_score,
+                f"Expected top score >= {min_top_score}.",
+                expected=min_top_score,
+                actual=top_score,
+            )
+        )
+
+    min_snippets = expectations.get("min_snippets")
+    if min_snippets is not None:
+        snippet_count = int(result.get("snippet_count") or 0)
+        checks.append(
+            _context_eval_check(
+                "min_snippets",
+                snippet_count >= min_snippets,
+                f"Expected at least {min_snippets} snippets.",
+                expected=min_snippets,
+                actual=snippet_count,
+            )
+        )
+    return checks
+
+
+def _context_eval_check(
+    check_id: str,
+    ok: bool,
+    message: str,
+    *,
+    expected: Any = None,
+    actual: Any = None,
+    rank: int | None = None,
+) -> dict[str, Any]:
+    row = {
+        "id": check_id,
+        "status": "pass" if ok else "fail",
+        "message": message,
+        "expected": expected,
+        "actual": actual,
+    }
+    if rank is not None:
+        row["rank"] = rank
+    return row
 
 
 def _capsule_symbols(items: list[dict[str, Any]], limit: int) -> list[list[Any]]:
@@ -9418,6 +9802,7 @@ def _compat_required_schemas() -> set[str]:
         "repomori.agent_brief.v1",
         "repomori.capsule.v1",
         "repomori.eval.v1",
+        "repomori.context_eval.v1",
         "repomori.handoff.v1",
         "repomori.handoff_score.v1",
         "repomori.handoff_triage.v1",

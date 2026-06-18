@@ -27,6 +27,7 @@ from .codec import (
     compare_packs,
     diagnose_query,
     doctor_snapshot_dir,
+    evaluate_context_quality,
     evaluate_handoff_quality,
     evaluate_pack,
     format_agent_brief_markdown,
@@ -35,6 +36,7 @@ from .codec import (
     format_compat_markdown,
     format_contract_check_markdown,
     format_context_markdown,
+    format_context_eval_markdown,
     format_diff_context_markdown,
     format_eval_markdown,
     format_handoff_score_markdown,
@@ -529,6 +531,19 @@ def build_parser() -> argparse.ArgumentParser:
     eval_cmd.add_argument("--no-source", action="store_true", help="Evaluate rankings and metadata without snippets.")
     eval_cmd.add_argument("--format", choices=("markdown", "json"), default="markdown")
     eval_cmd.add_argument("--out", type=Path, help="Write the eval report to this file.")
+
+    context_eval = sub.add_parser("context-eval", help="Run fixture-backed context quality cases.")
+    context_eval.add_argument("pack", type=Path)
+    context_eval.add_argument("--cases", type=Path, required=True, help="JSON file with context eval cases.")
+    context_eval.add_argument("--limit", type=int, default=8)
+    context_eval.add_argument("--max-files", type=int, help="Alias for --limit.")
+    context_eval.add_argument("--snippet-lines", type=int, default=12)
+    context_eval.add_argument("--snippets-per-file", type=int, default=2)
+    context_eval.add_argument("--max-bytes", type=int, default=4096, help="Maximum snippet text bytes per case.")
+    context_eval.add_argument("--no-source", action="store_true", help="Evaluate rankings and metadata without snippets.")
+    context_eval.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    context_eval.add_argument("--out", type=Path, help="Write the context quality report to this file.")
+    context_eval.add_argument("--json", action="store_true", help="Print JSON output.")
 
     capsule = sub.add_parser("capsule", help="Export a dense machine-readable capsule.")
     capsule.add_argument("pack", type=Path)
@@ -1275,6 +1290,29 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0
+    if args.command == "context-eval":
+        limit = args.max_files if args.max_files is not None else args.limit
+        report = evaluate_context_quality(
+            args.pack,
+            _context_eval_cases(args.cases),
+            limit=limit,
+            snippet_lines=args.snippet_lines,
+            max_bytes=args.max_bytes,
+            snippets_per_file=args.snippets_per_file,
+            include_source=not args.no_source,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_context_eval_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report.get("status") == "pass" else 1
     if args.command == "capsule":
         capsule = build_capsule(args.pack, max_files=args.max_files, top_terms=args.top_terms)
         output = json.dumps(capsule, separators=(",", ":"))
@@ -1741,6 +1779,17 @@ def _eval_questions(questions: list[str] | None, questions_file: Path | None) ->
             if line.strip() and not line.lstrip().startswith("#")
         )
     return values or None
+
+
+def _context_eval_cases(cases_file: Path) -> list[dict | str]:
+    payload = json.loads(cases_file.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        cases = payload.get("cases")
+        if isinstance(cases, list):
+            return cases
+    raise ValueError("context eval cases file must be a JSON list or an object with a `cases` list")
 
 
 def _print_scan(report: dict) -> None:

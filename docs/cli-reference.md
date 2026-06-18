@@ -3,7 +3,7 @@
 Generated from the live `argparse` command surface.
 
 - Schema: `repomori.cli_commands.v1`
-- Commands: `47`
+- Commands: `48`
 
 ## Commands
 
@@ -721,6 +721,30 @@ repomori eval [--question QUESTION] [--questions-file QUESTIONS_FILE] [--limit L
 | --no-source | option | no |  | False | Evaluate rankings and metadata without snippets. |
 | --format | option | no | markdown, json | markdown |  |
 | --out | option | no |  |  | Write the eval report to this file. |
+
+### `context-eval`
+
+Run fixture-backed context quality cases.
+
+```text
+repomori context-eval --cases CASES [--limit LIMIT] [--max-files MAX_FILES] [--snippet-lines
+        SNIPPET_LINES] [--snippets-per-file SNIPPETS_PER_FILE] [--max-bytes MAX_BYTES] [--no-source]
+        [--format {markdown,json}] [--out OUT] [--json] pack
+```
+
+| Name | Kind | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- | --- |
+| pack | argument | yes |  |  |  |
+| --cases | option | yes |  |  | JSON file with context eval cases. |
+| --limit | option | no |  | 8 |  |
+| --max-files | option | no |  |  | Alias for --limit. |
+| --snippet-lines | option | no |  | 12 |  |
+| --snippets-per-file | option | no |  | 2 |  |
+| --max-bytes | option | no |  | 4096 | Maximum snippet text bytes per case. |
+| --no-source | option | no |  | False | Evaluate rankings and metadata without snippets. |
+| --format | option | no | markdown, json | markdown |  |
+| --out | option | no |  |  | Write the context quality report to this file. |
+| --json | option | no |  | False | Print JSON output. |
 
 ### `capsule`
 

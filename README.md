@@ -163,6 +163,7 @@ repomori context <pack> <question> [--format markdown|json] [--max-files n] [--m
 repomori diff-context <base-pack> <target-pack> [question] [--format markdown|json] [--max-files n] [--max-bytes n] [--no-source] [--out file]
 repomori verify <pack>
 repomori eval <pack> [--question text] [--format markdown|json] [--out file]
+repomori context-eval <pack> --cases cases.json [--format markdown|json] [--out file]
 repomori capsule <pack> [--max-files n] [--top-terms n] [--out file]
 repomori handoff <pack> <question> --out <dir> [--base-pack pack] [--copy-pack] [--force] [--json]
 repomori check-handoff <dir> [--json]
@@ -411,6 +412,11 @@ files still match their recorded sizes and SHA-256 hashes.
 `eval` runs representative questions through the context builder and reports
 selected files, snippet counts, source bytes, coverage, weak signals, and
 suggested ranking or extraction improvements.
+
+`context-eval` runs fixture-backed context quality cases. A case can require
+expected paths, snippet text, matched terms, maximum rank, minimum top score, and
+minimum snippet count. It exits nonzero when a case fails, so teams can use it as
+a small local quality gate for agent context.
 
 `capsule` exports the pack's machine summary as dense JSON: compact file
 records, symbol/import/heading graph data, vocabulary, and a verification

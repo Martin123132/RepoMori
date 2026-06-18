@@ -49,6 +49,7 @@ python -m repomori archive-handoff D:\handoffs\repo-improved --out D:\handoffs\r
 python -m repomori handoff-health D:\handoffs\repo --profile ci --improve-pack D:\Dev\YourRepo\.repomori-packs\latest.repomori --question "continue this repo" --archive --artifacts-dir D:\handoffs\repo-health --health-log D:\handoffs\handoff-health.jsonl --json
 python -m repomori handoff-health-summary D:\handoffs\handoff-health.jsonl --limit 20 --json
 python -m repomori timeline-search D:\Dev\YourRepo\.repomori-packs "sqlite Store" --json
+python -m repomori context-eval D:\Dev\YourRepo\.repomori-packs\latest.repomori --cases D:\Dev\YourRepo\context-eval-cases.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
 python -m repomori release-check D:\Dev\YourRepo --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --drift-log D:\Dev\YourRepo\.repomori-baseline-drift.jsonl --json
 python -m repomori release-health D:\Dev\YourRepo --snapshot-dir D:\Dev\YourRepo\.repomori-packs --baseline D:\Dev\YourRepo\.repomori-scan-baseline.json --json
@@ -88,6 +89,8 @@ Add `--health-log` to keep a JSONL trend history and read it back with
 `handoff-health-summary`.
 Use `archive-handoff` to create a portable zip, and `timeline-search` to ask when
 a path, symbol, or concept started appearing across snapshot packs.
+Use `context-eval` when you want fixture-backed quality cases that prove expected
+paths, matched terms, and snippet text still appear in agent context.
 Use `compat` when you want one local report proving the latest pack, optional
 handoff directory, schema catalog, agent bridge, and MCP bridge still agree.
 Use `contract-check` when you want a fixture-backed diff of public schema,

@@ -17,6 +17,7 @@
     "repomori.compat.v1",
     "repomori.config.v1",
     "repomori.context.v1",
+    "repomori.context_eval.v1",
     "repomori.contract_check.v1",
     "repomori.demo.v1",
     "repomori.diff_context.v1",

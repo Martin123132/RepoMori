@@ -24,6 +24,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.agent_brief.v1`: snapshot-directory start brief for another agent.
 - `repomori.capsule.v1`: dense machine-readable capsule without raw source.
 - `repomori.eval.v1`: source-backed pack evaluation report.
+- `repomori.context_eval.v1`: fixture-backed context quality evaluation report.
 - `repomori.handoff.v1`: handoff directory manifest.
 - `repomori.handoff_score.v1`: deterministic handoff usefulness score report.
 - `repomori.handoff_triage.v1`: prioritized checklist generated from a handoff score.

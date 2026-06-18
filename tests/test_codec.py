@@ -37,6 +37,7 @@ from repomori.codec import (
     doctor_snapshot_dir,
     evaluate_handoff_quality,
     evaluate_pack,
+    evaluate_context_quality,
     format_agent_brief_markdown,
     format_benchmark_markdown,
     format_brief_markdown,
@@ -54,6 +55,7 @@ from repomori.codec import (
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_context_markdown,
+    format_context_eval_markdown,
     format_diff_context_markdown,
     format_snapshot_anchor_markdown,
     format_snapshot_anchor_verification_markdown,
@@ -564,6 +566,63 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("# RepoMori Evaluation", markdown)
             self.assertIn("sqlite Store", markdown)
             self.assertIn("Suggested Improvements", markdown)
+
+    def test_context_quality_eval_report_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            report = evaluate_context_quality(
+                pack,
+                [
+                    {
+                        "id": "sqlite-store",
+                        "question": "How does the sqlite Store connect?",
+                        "expected_paths": ["app.py"],
+                        "required_snippets": ["sqlite3.connect"],
+                        "required_terms": ["sqlite", "store"],
+                        "max_rank": 1,
+                        "min_snippets": 1,
+                    }
+                ],
+                limit=3,
+                snippet_lines=6,
+            )
+
+            self.assertEqual(report["schema_version"], "repomori.context_eval.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["passed_cases"], 1)
+            self.assertEqual(report["cases"][0]["result"]["top_path"], "app.py")
+            self.assertTrue(all(check["status"] == "pass" for check in report["cases"][0]["checks"]))
+
+            markdown = format_context_eval_markdown(report)
+            self.assertIn("# RepoMori Context Quality Eval", markdown)
+            self.assertIn("sqlite-store", markdown)
+            self.assertIn("No failing context quality cases", markdown)
+
+    def test_context_quality_eval_reports_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+
+            report = evaluate_context_quality(
+                pack,
+                [
+                    {
+                        "id": "missing-path",
+                        "question": "sqlite Store",
+                        "expected_paths": ["missing.py"],
+                        "required_snippets": ["not in source"],
+                    }
+                ],
+                limit=2,
+                snippet_lines=4,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["summary"]["failed_cases"], 1)
+            self.assertEqual(report["failures"][0]["case_id"], "missing-path")
+            failed_ids = {check["id"] for check in report["failures"][0]["failed_checks"]}
+            self.assertIn("expected_path:missing.py", failed_ids)
+            self.assertTrue(any(check_id.startswith("required_snippet:") for check_id in failed_ids))
 
     def test_capsule_export(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3290,6 +3349,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.inspect_diff.v1", schema_versions)
         self.assertIn("repomori.verify.v1", schema_versions)
         self.assertIn("repomori.eval.v1", schema_versions)
+        self.assertIn("repomori.context_eval.v1", schema_versions)
         self.assertIn("repomori.snapshot_chain.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.verify.v1", schema_versions)
@@ -3357,6 +3417,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         eval_schema = schema_catalog("repomori.eval.v1")
         self.assertEqual(eval_schema["selected"], "repomori.eval.v1")
         self.assertEqual(eval_schema["schema"]["producer"], "evaluate_pack")
+
+        context_eval_schema = schema_catalog("repomori.context_eval.v1")
+        self.assertEqual(context_eval_schema["selected"], "repomori.context_eval.v1")
+        self.assertEqual(context_eval_schema["schema"]["producer"], "evaluate_context_quality")
 
         agent_brief = schema_catalog("repomori.agent_brief.v1")
         self.assertEqual(agent_brief["selected"], "repomori.agent_brief.v1")
@@ -3930,6 +3994,49 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.eval.v1")
             self.assertEqual(payload["summary"]["question_count"], 1)
             self.assertEqual(payload["questions"][0]["selected_sources"][0]["path"], "app.py")
+
+    def test_cli_context_eval_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _repo, pack = self._demo_pack(Path(tmp), build=True)
+            cases = Path(tmp) / "context-eval-cases.json"
+            cases.write_text(
+                json.dumps(
+                    {
+                        "cases": [
+                            {
+                                "id": "sqlite-store",
+                                "question": "sqlite Store",
+                                "expected_paths": ["app.py"],
+                                "required_snippets": ["sqlite3.connect"],
+                                "max_rank": 1,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "context-eval",
+                    str(pack),
+                    "--cases",
+                    str(cases),
+                    "--format",
+                    "json",
+                    "--max-files",
+                    "2",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.context_eval.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["cases"][0]["result"]["top_path"], "app.py")
 
     def test_cli_capsule_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
