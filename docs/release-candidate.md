@@ -94,8 +94,13 @@ gh release create v0.2.0rc1 `
 Attach the workflow-built wheel and source archive if you want the GitHub
 pre-release to carry downloadable artifacts.
 
+After publishing the pre-release, run an outside-in install smoke from the
+published wheel and record the result in `docs/releases/0.2.0rc1-validation.md`.
+
 ## Final Release Promotion
 
 If the candidate holds up, promote by changing `pyproject.toml` from
 `0.2.0rc1` to `0.2.0`, moving the changelog heading to `0.2.0`, rerunning the
 same gates, then tagging `v0.2.0`.
+
+Use `docs/releases/0.2.0-final-promotion.md` as the final checklist.
