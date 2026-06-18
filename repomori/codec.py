@@ -652,6 +652,23 @@ STOPWORDS = {
     "you",
 }
 
+QUERY_TOKEN_ALIASES = {
+    "command": ("cli", "argparse"),
+    "commands": ("cli", "argparse"),
+    "configuration": ("config", "settings"),
+    "database": ("db", "sqlite", "postgres"),
+    "databases": ("db", "sqlite", "postgres"),
+    "connection": ("connect", "conn"),
+    "connections": ("connect", "conn"),
+    "persistent": ("persist", "store", "storage"),
+    "persistence": ("persist", "store", "storage"),
+    "storage": ("store", "persist", "persistence"),
+    "stored": ("store", "persist"),
+    "stores": ("store", "storage"),
+    "testing": ("test", "tests", "unittest", "pytest"),
+    "tests": ("test", "unittest", "pytest"),
+}
+
 
 @dataclass(frozen=True)
 class BuildOptions:
@@ -3085,6 +3102,7 @@ def diagnose_query(
                 "sha256": result.get("sha256"),
                 "score": result.get("score"),
                 "why": result.get("why", []),
+                "match_reasons": result.get("match_reasons", result.get("why", [])),
                 "matched_tokens": sorted(matched),
                 "missed_tokens": missed,
                 "summary": result.get("summary", {}),
@@ -3111,6 +3129,7 @@ def diagnose_query(
         },
         "query": {
             "tokens": scored["tokens"],
+            "expanded_terms": scored["expanded_terms"],
             "phrases": scored["phrases"],
             "limit": limit,
         },
@@ -3132,6 +3151,7 @@ def diagnose_query(
 
 def _score_pack_query(pack: Path | str, query: str) -> dict[str, Any]:
     tokens = _query_tokens(query)
+    expanded_terms = _expanded_query_terms(tokens)
     phrases = _query_phrases(query, tokens)
     scores: dict[str, float] = defaultdict(float)
     reasons: dict[str, set[str]] = defaultdict(set)
@@ -3141,6 +3161,7 @@ def _score_pack_query(pack: Path | str, query: str) -> dict[str, Any]:
     if not tokens:
         return {
             "tokens": [],
+            "expanded_terms": [],
             "phrases": [],
             "scores": scores,
             "reasons": reasons,
@@ -3159,7 +3180,7 @@ def _score_pack_query(pack: Path | str, query: str) -> dict[str, Any]:
                 path,
                 "path",
                 path,
-                tokens,
+                expanded_terms,
                 phrases,
                 _field_weight("path"),
                 scores,
@@ -3171,7 +3192,7 @@ def _score_pack_query(pack: Path | str, query: str) -> dict[str, Any]:
                 path,
                 "basename",
                 Path(path).stem,
-                tokens,
+                expanded_terms,
                 phrases,
                 _field_weight("basename"),
                 scores,
@@ -3184,7 +3205,7 @@ def _score_pack_query(pack: Path | str, query: str) -> dict[str, Any]:
                     path,
                     "language",
                     str(row["language"]),
-                    tokens,
+                    expanded_terms,
                     phrases,
                     _field_weight("language"),
                     scores,
@@ -3200,7 +3221,7 @@ def _score_pack_query(pack: Path | str, query: str) -> dict[str, Any]:
                 row["path"],
                 field,
                 str(row["value"] or ""),
-                tokens,
+                expanded_terms,
                 phrases,
                 _field_weight(field),
                 scores,
@@ -3211,9 +3232,14 @@ def _score_pack_query(pack: Path | str, query: str) -> dict[str, Any]:
 
         for path, matches in matched_tokens.items():
             coverage = len(matches) / len(tokens)
-            added = coverage * 3.0
-            scores[path] += added
             reason = "all-query-terms" if coverage == 1.0 else "partial-query-terms"
+            missing_count = len(tokens) - len(matches)
+            added = coverage * 3.0
+            if reason == "all-query-terms":
+                added += 12.0
+            else:
+                added = max(0.0, added - (missing_count * 2.0))
+            scores[path] += added
             reasons[path].add(reason)
             breakdown[path].append(
                 {
@@ -3234,6 +3260,7 @@ def _score_pack_query(pack: Path | str, query: str) -> dict[str, Any]:
 
     return {
         "tokens": tokens,
+        "expanded_terms": expanded_terms,
         "phrases": phrases,
         "scores": scores,
         "reasons": reasons,
@@ -3255,6 +3282,8 @@ def _ranked_query_results(scored: dict[str, Any], limit: int) -> list[dict[str, 
                 "path": path,
                 "score": round(scores[path], 2),
                 "why": sorted(reasons[path]),
+                "match_reasons": sorted(reasons[path]),
+                "matched_terms": sorted(scored["matched_tokens"].get(path, set())),
                 "language": row["language"],
                 "size": row["size"],
                 "sha256": row["sha256"],
@@ -3370,6 +3399,8 @@ def build_context_bundle(
             "sha256": result.get("sha256"),
             "score": result.get("score"),
             "why": result.get("why", []),
+            "match_reasons": result.get("match_reasons", result.get("why", [])),
+            "matched_terms": result.get("matched_terms", []),
             "summary": result.get("summary", {}),
             "snippet_status": status,
             "source_bytes": used_bytes,
@@ -3449,7 +3480,8 @@ def format_context_markdown(bundle: dict[str, Any]) -> str:
                 f"- Language: `{source.get('language') or 'unknown'}`",
                 f"- Size: `{source.get('size')}`",
                 f"- SHA-256: `{source.get('sha256')}`",
-                f"- Match reasons: `{', '.join(source.get('why', [])) or 'none'}`",
+                f"- Match reasons: `{', '.join(source.get('match_reasons', source.get('why', []))) or 'none'}`",
+                f"- Matched terms: `{', '.join(source.get('matched_terms', [])) or 'none'}`",
                 f"- Snippet status: `{source.get('snippet_status')}`",
                 f"- Source bytes: `{source.get('source_bytes', 0)}`",
                 "",
@@ -8916,29 +8948,72 @@ def _snippet_anchors(
     result: dict[str, Any],
     lines: list[str],
 ) -> list[tuple[int, str]]:
-    anchors: list[tuple[int, str]] = []
     tokens = _query_tokens(question)
-    for index, line in enumerate(lines, start=1):
-        lowered = line.lower()
-        for token in tokens:
-            if token in lowered:
-                anchors.append((index, f"query:{token}"))
-                break
+    terms = _expanded_query_terms(tokens)
+    candidates: list[tuple[int, int, str, int]] = []
+    order = 0
+
+    def add(priority: int, line: int, matched: str) -> None:
+        nonlocal order
+        order += 1
+        candidates.append((priority, line, matched, order))
 
     summary = result.get("summary", {})
+    field_priorities = {"symbols": 0, "headings": 1, "imports": 2}
     for field in ("symbols", "headings", "imports"):
         for item in summary.get(field, []):
             line = int(item.get("line", 0) or 0)
-            if line > 0:
-                label = item.get("name") or item.get("text") or item.get("target") or field
-                anchors.append((line, f"{field}:{label}"))
+            if line <= 0:
+                continue
+            label = str(item.get("name") or item.get("text") or item.get("target") or field)
+            haystack = " ".join(
+                str(item.get(key, ""))
+                for key in ("kind", "name", "text", "target", "signature")
+                if item.get(key)
+            )
+            matches = _matching_query_terms(haystack or label, terms)
+            if matches:
+                add(field_priorities[field], line, f"{field}:{label} query:{_anchor_term_label(matches[0])}")
+            else:
+                add(6 + field_priorities[field], line, f"{field}:{label}")
 
-    if not anchors:
+    for index, line in enumerate(lines, start=1):
+        matches = _matching_query_terms(line, terms)
+        if not matches:
+            continue
+        priority = 3
+        stripped = line.lstrip()
+        if stripped.startswith(("#", "import ", "from ", "class ", "def ")):
+            priority = 2
+        add(priority, index, f"query:{_anchor_term_label(matches[0])}")
+
+    if not candidates:
         for index, line in enumerate(lines, start=1):
             if line.strip():
-                anchors.append((index, "fallback:first-useful-line"))
+                add(9, index, "fallback:first-useful-line")
                 break
+    anchors = [(line, matched) for priority, line, matched, order in sorted(candidates)]
     return _dedupe_anchors(anchors, len(lines))
+
+
+def _matching_query_terms(value: str, terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    lowered = value.lower()
+    value_terms = set(_query_tokens(value))
+    matches = []
+    for term in terms:
+        token = str(term.get("token", ""))
+        if token and (token in lowered or token in value_terms):
+            matches.append(term)
+    return matches
+
+
+def _anchor_term_label(term: dict[str, Any]) -> str:
+    token = str(term.get("query_token") or term.get("token") or "")
+    matched = str(term.get("token") or "")
+    kind = str(term.get("kind") or "query")
+    if kind == "query" or matched == token:
+        return token
+    return f"{token}->{matched}"
 
 
 def _dedupe_anchors(anchors: list[tuple[int, str]], line_count: int) -> list[tuple[int, str]]:
@@ -14178,7 +14253,85 @@ def _line_at(content: str, line_no: int) -> str:
 
 
 def _query_tokens(query: str) -> list[str]:
-    return _tokens(query) or [part.lower() for part in query.split() if part.strip()]
+    raw_tokens = re.findall(r"[A-Za-z][A-Za-z0-9_/-]{2,}", query) or [
+        part for part in query.split() if part.strip()
+    ]
+    tokens: list[str] = []
+    for token in raw_tokens:
+        tokens.extend(_identifier_terms(token, include_original=True))
+    return _unique_items(
+        token
+        for token in tokens
+        if len(token) >= 3 and len(token) <= 48 and token not in STOPWORDS
+    )
+
+
+def _identifier_terms(value: str, *, include_original: bool = False) -> list[str]:
+    original = value.strip().lower()
+    split_value = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", value)
+    split_value = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", split_value)
+    parts = [part.lower() for part in re.split(r"[^A-Za-z0-9]+", split_value) if part]
+    terms = []
+    if include_original and original and original not in parts and len(parts) <= 1:
+        terms.append(original)
+    terms.extend(parts)
+    return _unique_items(terms)
+
+
+def _token_variants(token: str) -> list[str]:
+    variants = []
+    if len(token) > 5 and token.endswith("ies"):
+        variants.append(token[:-3] + "y")
+    if len(token) > 5 and token.endswith("ing"):
+        stem = token[:-3]
+        if len(stem) > 3 and stem[-1] == stem[-2]:
+            stem = stem[:-1]
+        variants.append(stem)
+    if len(token) > 4 and token.endswith("ed"):
+        variants.append(token[:-2])
+    if len(token) > 4 and token.endswith("es"):
+        variants.append(token[:-2])
+    if len(token) > 3 and token.endswith("s"):
+        variants.append(token[:-1])
+    return _unique_items(
+        variant
+        for variant in variants
+        if len(variant) >= 3 and variant != token and variant not in STOPWORDS
+    )
+
+
+def _expanded_query_terms(tokens: list[str]) -> list[dict[str, Any]]:
+    terms: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(token: str, query_token: str, kind: str, factor: float) -> None:
+        if not token or len(token) < 3 or token in STOPWORDS:
+            return
+        key = (token, query_token, kind)
+        if key in seen:
+            return
+        seen.add(key)
+        terms.append(
+            {
+                "token": token,
+                "query_token": query_token,
+                "kind": kind,
+                "factor": factor,
+            }
+        )
+
+    for query_token in tokens:
+        add(query_token, query_token, "query", 1.0)
+        roots = [query_token, *_token_variants(query_token)]
+        for variant in roots[1:]:
+            add(variant, query_token, "variant", 0.7)
+        for root in roots:
+            for alias in QUERY_TOKEN_ALIASES.get(root, ()):
+                alias = alias.lower()
+                add(alias, query_token, "alias", 0.45)
+                for variant in _token_variants(alias):
+                    add(variant, query_token, "alias", 0.35)
+    return terms
 
 
 def _field_weight(field: str) -> float:
@@ -14196,10 +14349,13 @@ def _field_weight(field: str) -> float:
 def _query_phrases(query: str, tokens: list[str]) -> list[str]:
     raw = re.sub(r"\s+", " ", query.lower()).strip()
     token_phrase = " ".join(tokens).strip()
+    compact_phrase = re.sub(r"[^a-z0-9]+", "", token_phrase)
     phrases = []
     for phrase in (raw, token_phrase):
         if " " in phrase and phrase not in phrases:
             phrases.append(phrase)
+    if len(compact_phrase) >= 6 and compact_phrase not in tokens and compact_phrase not in phrases:
+        phrases.append(compact_phrase)
     return phrases
 
 
@@ -14207,7 +14363,7 @@ def _score_query_value(
     path: str,
     field: str,
     value: str,
-    tokens: list[str],
+    terms: list[dict[str, Any]],
     phrases: list[str],
     weight: float,
     scores: dict[str, float],
@@ -14237,34 +14393,46 @@ def _score_query_value(
                     }
                 )
 
-    for token in tokens:
-        if token not in normalized:
+    for term in terms:
+        term_text = str(term.get("token", ""))
+        if not term_text:
             continue
-        scores[path] += weight
+        if term_text not in normalized:
+            continue
+        query_token = str(term.get("query_token") or term_text)
+        term_kind = str(term.get("kind") or "query")
+        factor = float(term.get("factor") or 1.0)
+        added = weight * factor
+        scores[path] += added
         reasons[path].add(field)
-        matched_tokens[path].add(token)
+        if term_kind != "query":
+            reasons[path].add(f"{term_kind}-{field}")
+        matched_tokens[path].add(query_token)
         if breakdown is not None:
             breakdown[path].append(
                 {
                     "field": field,
-                    "kind": "token",
-                    "token": token,
+                    "kind": "token" if term_kind == "query" else term_kind,
+                    "token": query_token,
+                    "matched_token": term_text,
                     "value": _trace_value(value),
-                    "weight": round(weight, 2),
+                    "weight": round(added, 2),
                 }
             )
-        if token in value_terms:
-            added = weight * 0.5
-            scores[path] += added
-            reasons[path].add(f"exact-{field}")
+        if term_text in value_terms:
+            exact_added = weight * 0.5 * factor
+            scores[path] += exact_added
+            exact_reason = f"exact-{field}" if term_kind == "query" else f"exact-{term_kind}-{field}"
+            reasons[path].add(exact_reason)
             if breakdown is not None:
                 breakdown[path].append(
                     {
                         "field": field,
-                        "kind": "exact",
-                        "token": token,
+                        "kind": "exact" if term_kind == "query" else f"exact-{term_kind}",
+                        "token": query_token,
+                        "matched_token": term_text,
                         "value": _trace_value(value),
-                        "weight": round(added, 2),
+                        "weight": round(exact_added, 2),
                     }
                 )
 

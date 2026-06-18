@@ -196,11 +196,74 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(top["path"], "app.py")
             self.assertIn("symbol", top["why"])
             self.assertIn("store", top["matched_tokens"])
-            self.assertIn("storage", top["missed_tokens"])
+            self.assertIn("storage", top["matched_tokens"])
+            self.assertIn("alias-symbol", top["match_reasons"])
             self.assertTrue(top["snippet_anchors"])
             self.assertTrue(any(event["field"] == "symbol" for event in top["score_breakdown"]))
             self.assertTrue(report["ranking_notes"])
             self.assertIn("score_delta", report["ranking_notes"][0])
+
+    def test_query_ranking_uses_identifier_terms_and_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "quality"
+            repo.mkdir()
+            (repo / "README.md").write_text(
+                "# Storage Notes\n\nGeneral product notes for repositories.\n",
+                encoding="utf-8",
+            )
+            (repo / "storage.py").write_text(
+                "import sqlite3\n\n"
+                "class Repository:\n"
+                "    def connect_database(self):\n"
+                "        return sqlite3.connect(':memory:')\n",
+                encoding="utf-8",
+            )
+            pack = root / "quality.repomori"
+            build_pack(repo, pack, BuildOptions(force=True))
+
+            results = query_pack(pack, "database connection", limit=2)
+
+            self.assertEqual(results[0]["path"], "storage.py")
+            self.assertIn("alias-symbol", results[0]["match_reasons"])
+            self.assertIn("all-query-terms", results[0]["match_reasons"])
+            self.assertEqual(results[0]["matched_terms"], ["connection", "database"])
+
+            camel_results = query_pack(pack, "connectDatabase", limit=1)
+            self.assertEqual(camel_results[0]["path"], "storage.py")
+            self.assertIn("all-query-terms", camel_results[0]["match_reasons"])
+            self.assertEqual(camel_results[0]["matched_terms"], ["connect", "database"])
+
+    def test_context_snippet_prefers_matching_symbol_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "anchors"
+            repo.mkdir()
+            (repo / "storage.py").write_text(
+                "# database connection overview\n"
+                "# database connection setup notes\n"
+                "# database connection retries\n"
+                "# database connection pooling\n\n"
+                "import sqlite3\n\n"
+                "def connect_database():\n"
+                "    return sqlite3.connect(':memory:')\n",
+                encoding="utf-8",
+            )
+            pack = root / "anchors.repomori"
+            build_pack(repo, pack, BuildOptions(force=True))
+
+            bundle = build_context_bundle(
+                pack,
+                "database connection",
+                limit=1,
+                snippet_lines=3,
+                snippets_per_file=1,
+            )
+
+            snippet = bundle["sources"][0]["snippets"][0]
+            self.assertIn("def connect_database", snippet["text"])
+            self.assertIn("symbols:connect_database", snippet["matched"])
+            self.assertEqual(bundle["sources"][0]["matched_terms"], ["connection", "database"])
 
     def test_diagnose_binary_file_skips_snippet_anchors(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

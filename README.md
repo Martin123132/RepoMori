@@ -248,9 +248,12 @@ from the base are simply left out of the new pack.
 latest pack exists.
 
 `diagnose` explains why a question ranked files the way it did. It reports
-query tokens and phrases, per-file score breakdowns, matched and missed terms,
-ranking comparisons, snippet anchors, and tuning suggestions for better agent
-context.
+query tokens, expanded alias/variant terms, phrases, per-file score breakdowns,
+matched and missed terms, ranking comparisons, snippet anchors, and tuning
+suggestions for better agent context. Query ranking understands code-shaped
+terms such as `StoreClient` or `connect_database`, gives lower-weight credit to
+common aliases like storage/store and connection/connect, and prefers snippets
+anchored on matching symbols, headings, or imports.
 
 `brief` creates a question-free repository orientation report from one pack:
 languages, likely entrypoints, key files, top terms, symbols, imports, headings,

@@ -19,6 +19,11 @@ python -m repomori context D:\Temp\repomori-demo\demo.repomori "sqlite connect S
 python -m repomori timeline D:\Temp\repomori-demo\.repomori-packs --format json
 ```
 
+`query`, `context`, and `diagnose` share the same offline ranking path. They split
+code-shaped identifiers, apply small low-weight aliases such as storage/store and
+connection/connect, and anchor source snippets on matching symbols, headings, or
+imports before falling back to plain text hits.
+
 ## Use Your Own Repository
 
 ```powershell
