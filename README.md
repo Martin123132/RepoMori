@@ -2,6 +2,7 @@
 
 [![tests](https://github.com/Martin123132/RepoMori/actions/workflows/tests.yml/badge.svg)](https://github.com/Martin123132/RepoMori/actions/workflows/tests.yml)
 [![memory-anchor](https://github.com/Martin123132/RepoMori/actions/workflows/memory-anchor.yml/badge.svg)](https://github.com/Martin123132/RepoMori/actions/workflows/memory-anchor.yml)
+[![release](https://img.shields.io/github/v/release/Martin123132/RepoMori?include_prereleases=false)](https://github.com/Martin123132/RepoMori/releases/tag/v0.2.0)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE.md)
 [![source available](https://img.shields.io/badge/source--available-non--commercial-informational)](NOTICE.md)
@@ -17,6 +18,10 @@ The first version is deliberately local and dependency-light:
 - File hashes and provenance metadata.
 - Language, import, symbol, heading, and top-term indexes.
 - Exact source recovery when the machine summary is not enough.
+
+Latest release: [`v0.2.0`](https://github.com/Martin123132/RepoMori/releases/tag/v0.2.0).
+See [docs/releases/0.2.0-validation.md](docs/releases/0.2.0-validation.md)
+for the post-release install validation record.
 
 ## License
 
@@ -34,6 +39,21 @@ See [LICENSE.md](LICENSE.md), [NOTICE.md](NOTICE.md),
 
 RepoMori was created by Martin Ollett and is owned/licensed by
 TWO HANDS NETWORK LTD.
+
+## Install From Release
+
+Install the latest validated release wheel directly from GitHub:
+
+```powershell
+python -m venv D:\Dev\repomori-venv
+D:\Dev\repomori-venv\Scripts\python -m pip install `
+  https://github.com/Martin123132/RepoMori/releases/download/v0.2.0/repomori-0.2.0-py3-none-any.whl
+D:\Dev\repomori-venv\Scripts\python -m repomori --help
+D:\Dev\repomori-venv\Scripts\python -m repomori demo --out D:\Dev\repomori-demo --force --json
+```
+
+This install path is for personal and non-commercial use under the project
+license. Commercial use needs written permission from TWO HANDS NETWORK LTD.
 
 ## Try It In 60 Seconds
 
@@ -484,6 +504,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Release health](docs/release-health.md)
 - [Release candidate process](docs/release-candidate.md)
 - [0.2.0 release notes](docs/releases/0.2.0.md)
+- [0.2.0 validation](docs/releases/0.2.0-validation.md)
 - [0.2.0rc1 validation](docs/releases/0.2.0rc1-validation.md)
 - [0.2.0 final promotion](docs/releases/0.2.0-final-promotion.md)
 - [Baseline drift watchlist](docs/baseline-drift-watchlist.md)
