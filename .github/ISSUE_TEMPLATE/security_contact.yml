@@ -1,0 +1,25 @@
+name: Security contact request
+description: Ask for a private security reporting route without disclosing details.
+title: "[Security contact request]"
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include vulnerability details, exploit steps, private source, secrets, generated `.repomori` packs, or private handoff artifacts in this public issue.
+
+        Use this form only to request a private security contact route when GitHub private vulnerability reporting is not available.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Minimal public summary
+      description: Keep this generic. Example: "I need to report a potential path handling issue privately."
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I have not included vulnerability details or sensitive artifacts in this public issue.
+          required: true

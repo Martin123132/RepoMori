@@ -37,6 +37,12 @@ See [LICENSE.md](LICENSE.md), [NOTICE.md](NOTICE.md),
 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md), and
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+Enterprise and security review starting points:
+[SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md),
+[docs/commercial-use.md](docs/commercial-use.md),
+[docs/security-model.md](docs/security-model.md), and
+[docs/enterprise-readiness.md](docs/enterprise-readiness.md).
+
 RepoMori was created by Martin Ollett and is owned/licensed by
 TWO HANDS NETWORK LTD.
 
@@ -511,6 +517,11 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Reusable anchor workflow](docs/memory-anchor-reusable.md)
 - [Incremental packs](docs/incremental-packs.md)
 - [License FAQ](docs/license-faq.md)
+- [Commercial use](docs/commercial-use.md)
+- [Security model](docs/security-model.md)
+- [Enterprise readiness](docs/enterprise-readiness.md)
+- [Security policy](SECURITY.md)
+- [Support](SUPPORT.md)
 - [Public release checklist](PUBLIC_RELEASE_CHECKLIST.md)
 
 You can run the same commands without installing the package:
