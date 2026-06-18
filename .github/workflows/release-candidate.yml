@@ -4,16 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Expected pre-release version.
+        description: Expected release or pre-release version.
         required: true
-        default: 0.2.0rc1
+        default: 0.2.0
       ref:
         description: Branch, tag, or SHA to build.
         required: true
         default: main
   push:
     tags:
-      - "v*rc*"
+      - "v*"
 
 permissions:
   contents: read
@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: "3.12"
       - id: version
-        name: Validate release-candidate version
+        name: Validate release version
         env:
           INPUT_VERSION: ${{ inputs.version || '' }}
         run: |
@@ -49,16 +49,13 @@ jobs:
           expected = input_version or (ref_name[1:] if ref_name.startswith("v") else project_version)
 
           if project_version != expected:
-              print(f"release candidate version mismatch: pyproject={project_version} expected={expected}")
-              sys.exit(1)
-          if "rc" not in project_version:
-              print(f"release candidate workflow requires an rc version, got {project_version}")
+              print(f"release version mismatch: pyproject={project_version} expected={expected}")
               sys.exit(1)
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
               handle.write(f"project_version={project_version}\n")
               handle.write(f"expected_version={expected}\n")
-          print(f"release candidate version ok: {project_version}")
+          print(f"release version ok: {project_version}")
           PY
       - name: Run release check
         run: |
@@ -77,7 +74,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip wheel . --no-deps --wheel-dir .repomori-release-candidate/dist
           git archive --format=zip --output ".repomori-release-candidate/dist/repomori-${PROJECT_VERSION}-source.zip" HEAD
-      - name: Install candidate artifact smoke
+      - name: Install release artifact smoke
         env:
           PROJECT_VERSION: ${{ steps.version.outputs.project_version }}
         run: |
@@ -88,7 +85,7 @@ jobs:
           repomori --help >/dev/null
           repomori schema --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.schema.catalog.v1'; print('installed schema smoke passed')"
           repomori contract-check --fixture tests/fixtures/compat-contracts.json --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.contract_check.v1'; assert payload['status'] == 'pass'; print('installed contract smoke passed')"
-          repomori demo --out "$RUNNER_TEMP/repomori-rc-demo" --force --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.demo.v1'; assert payload['status'] == 'pass'; print('installed demo smoke passed')"
+          repomori demo --out "$RUNNER_TEMP/repomori-release-demo" --force --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.demo.v1'; assert payload['status'] == 'pass'; print('installed demo smoke passed')"
       - name: Write release-candidate manifest
         env:
           PROJECT_VERSION: ${{ steps.version.outputs.project_version }}

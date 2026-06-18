@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.2.0rc1 - 2026-06-18
+## 0.2.0 - 2026-06-18
 
-Release candidate for the first public `0.2.0` line.
+First public `0.2.0` release.
 
 - Added `demo` command and checked-in quickstart example for first-time users.
 - Added `scan` command for local public-safety and pack-readiness checks.

@@ -363,7 +363,7 @@ SCHEMA_DEFINITIONS = (
     {
         "schema_version": "repomori.release_candidate.v1",
         "kind": "ci-artifact",
-        "title": "Release candidate workflow manifest",
+        "title": "Release package workflow manifest",
         "producer": ".github/workflows/release-candidate.yml",
         "required_fields": ["schema_version", "status", "version", "commit", "artifacts"],
     },

@@ -483,6 +483,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Release check](docs/release-check.md)
 - [Release health](docs/release-health.md)
 - [Release candidate process](docs/release-candidate.md)
+- [0.2.0 release notes](docs/releases/0.2.0.md)
 - [0.2.0rc1 validation](docs/releases/0.2.0rc1-validation.md)
 - [0.2.0 final promotion](docs/releases/0.2.0-final-promotion.md)
 - [Baseline drift watchlist](docs/baseline-drift-watchlist.md)

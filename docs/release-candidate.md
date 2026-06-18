@@ -4,7 +4,9 @@ RepoMori release candidates are source-available pre-releases. They prove the
 local package, public-release scan, compatibility contracts, and operational
 health gates before a final release tag is cut.
 
-Current candidate: `0.2.0rc1`.
+Latest validated candidate: `0.2.0rc1`.
+
+Final release: `0.2.0`.
 
 ## Local Gate
 
@@ -61,7 +63,7 @@ gh workflow run release-candidate.yml `
   -f ref=main
 ```
 
-It also runs automatically for pushed tags matching `v*rc*`. The workflow does
+It also runs automatically for pushed tags matching `v*`. The workflow does
 not publish a GitHub release by itself; it uploads reviewable artifacts:
 
 - wheel in `.repomori-release-candidate/dist`
@@ -99,8 +101,8 @@ published wheel and record the result in `docs/releases/0.2.0rc1-validation.md`.
 
 ## Final Release Promotion
 
-If the candidate holds up, promote by changing `pyproject.toml` from
-`0.2.0rc1` to `0.2.0`, moving the changelog heading to `0.2.0`, rerunning the
-same gates, then tagging `v0.2.0`.
+For future final releases, promote by changing `pyproject.toml` from the latest
+release-candidate version to the final version, moving the changelog heading to
+the final release date, rerunning the same gates, then tagging the final version.
 
 Use `docs/releases/0.2.0-final-promotion.md` as the final checklist.
