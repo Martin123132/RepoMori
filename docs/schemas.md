@@ -50,6 +50,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.scan.v1`: local public-safety repository scan report.
 - `repomori.scan.baseline.v1`: acknowledged public-safety scan findings.
 - `repomori.release_check.v1`: local release readiness report.
+- `repomori.release_candidate.v1`: release-candidate workflow artifact manifest.
 - `repomori.health.v1`: release-health aggregate bundle.
 - `repomori.compat.v1`: pack, handoff, schema, agent, and MCP compatibility report.
 - `repomori.contract_check.v1`: contract fixture diff report for schema, agent, MCP, and artifact names.

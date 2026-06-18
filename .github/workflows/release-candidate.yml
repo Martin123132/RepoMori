@@ -1,0 +1,161 @@
+name: release-candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Expected pre-release version.
+        required: true
+        default: 0.2.0rc1
+      ref:
+        description: Branch, tag, or SHA to build.
+        required: true
+        default: main
+  push:
+    tags:
+      - "v*rc*"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build_release_candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - id: version
+        name: Validate release-candidate version
+        env:
+          INPUT_VERSION: ${{ inputs.version || '' }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_version = pyproject["project"]["version"]
+          input_version = os.environ.get("INPUT_VERSION", "").strip()
+          ref_name = os.environ.get("GITHUB_REF_NAME", "")
+          expected = input_version or (ref_name[1:] if ref_name.startswith("v") else project_version)
+
+          if project_version != expected:
+              print(f"release candidate version mismatch: pyproject={project_version} expected={expected}")
+              sys.exit(1)
+          if "rc" not in project_version:
+              print(f"release candidate workflow requires an rc version, got {project_version}")
+              sys.exit(1)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"project_version={project_version}\n")
+              handle.write(f"expected_version={expected}\n")
+          print(f"release candidate version ok: {project_version}")
+          PY
+      - name: Run release check
+        run: |
+          python -m repomori release-check . \
+            --baseline .repomori-scan-baseline.json \
+            --fail-on low \
+            --artifacts-dir .repomori-release-check \
+            --drift-log .repomori-release-check/baseline-drift.jsonl \
+            --json
+      - name: Build wheel and source archive
+        env:
+          PROJECT_VERSION: ${{ steps.version.outputs.project_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p .repomori-release-candidate/dist
+          python -m pip install --upgrade pip
+          python -m pip wheel . --no-deps --wheel-dir .repomori-release-candidate/dist
+          git archive --format=zip --output ".repomori-release-candidate/dist/repomori-${PROJECT_VERSION}-source.zip" HEAD
+      - name: Install candidate artifact smoke
+        env:
+          PROJECT_VERSION: ${{ steps.version.outputs.project_version }}
+        run: |
+          set -euo pipefail
+          python -m pip install --force-reinstall --no-index \
+            --find-links .repomori-release-candidate/dist \
+            "repomori==${PROJECT_VERSION}"
+          repomori --help >/dev/null
+          repomori schema --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.schema.catalog.v1'; print('installed schema smoke passed')"
+          repomori contract-check --fixture tests/fixtures/compat-contracts.json --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.contract_check.v1'; assert payload['status'] == 'pass'; print('installed contract smoke passed')"
+          repomori demo --out "$RUNNER_TEMP/repomori-rc-demo" --force --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.demo.v1'; assert payload['status'] == 'pass'; print('installed demo smoke passed')"
+      - name: Write release-candidate manifest
+        env:
+          PROJECT_VERSION: ${{ steps.version.outputs.project_version }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import time
+          from pathlib import Path
+
+          root = Path(".repomori-release-candidate")
+          dist = root / "dist"
+          artifacts = []
+          for path in sorted(dist.iterdir()):
+              if not path.is_file():
+                  continue
+              data = path.read_bytes()
+              artifacts.append(
+                  {
+                      "path": path.as_posix(),
+                      "bytes": len(data),
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                  }
+              )
+
+          payload = {
+              "schema_version": "repomori.release_candidate.v1",
+              "status": "pass",
+              "version": os.environ["PROJECT_VERSION"],
+              "commit": os.environ.get("GITHUB_SHA"),
+              "ref": os.environ.get("GITHUB_REF_NAME"),
+              "run_id": os.environ.get("GITHUB_RUN_ID"),
+              "generated_at": int(time.time()),
+              "artifacts": artifacts,
+              "release_check": {
+                  "json": ".repomori-release-check/release-check.json",
+                  "markdown": ".repomori-release-check/release-check.md",
+                  "drift_log": ".repomori-release-check/baseline-drift.jsonl",
+              },
+          }
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "release-candidate.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+          lines = [
+              f"# RepoMori {payload['version']} Release Candidate",
+              "",
+              f"- Status: `{payload['status']}`",
+              f"- Commit: `{payload['commit']}`",
+              f"- Ref: `{payload['ref']}`",
+              f"- Run ID: `{payload['run_id']}`",
+              "",
+              "## Artifacts",
+              "",
+          ]
+          for artifact in artifacts:
+              lines.append(f"- `{artifact['path']}` `{artifact['bytes']}` bytes `{artifact['sha256']}`")
+          (root / "release-candidate.md").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+          print(json.dumps(payload, indent=2))
+          PY
+      - name: Upload release-candidate artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: repomori-release-candidate-${{ steps.version.outputs.project_version }}
+          include-hidden-files: true
+          path: |
+            .repomori-release-candidate/
+            .repomori-release-check/release-check.json
+            .repomori-release-check/release-check.md
+            .repomori-release-check/baseline-drift.jsonl

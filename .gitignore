@@ -12,6 +12,7 @@ venv/
 .repomori-packs/
 .repomori-release-check/
 .repomori-release-health/
+.repomori-release-candidate/
 .repomori-health/
 .repomori-smoke/
 .repomori-handoff-health/

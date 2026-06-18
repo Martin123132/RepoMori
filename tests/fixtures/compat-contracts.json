@@ -39,6 +39,7 @@
     "repomori.memory.v1",
     "repomori.pack.v1",
     "repomori.prune.v1",
+    "repomori.release_candidate.v1",
     "repomori.release_check.v1",
     "repomori.scan.baseline.v1",
     "repomori.scan.v1",

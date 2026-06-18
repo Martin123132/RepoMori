@@ -1496,6 +1496,30 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("${{ steps.run.outputs.artifacts_dir }}/compat.md", workflow)
         self.assertIn("if [ -n \"$DRIFT_LOG\" ] && [ ! -f \"$DRIFT_LOG\" ]", workflow)
 
+    def test_workflow_contracts_for_release_candidate(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        workflow = (repo_root / ".github/workflows/release-candidate.yml").read_text(encoding="utf-8")
+        pyproject = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+        changelog = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
+        release_doc = (repo_root / "docs/release-candidate.md").read_text(encoding="utf-8")
+        release_notes = (repo_root / "docs/releases/0.2.0rc1.md").read_text(encoding="utf-8")
+
+        self.assertIn('version = "0.2.0rc1"', pyproject)
+        self.assertIn("## 0.2.0rc1", changelog)
+        self.assertIn("Current candidate: `0.2.0rc1`", release_doc)
+        self.assertIn("# RepoMori 0.2.0rc1", release_notes)
+        self.assertIn("workflow_dispatch", workflow)
+        self.assertIn("v*rc*", workflow)
+        self.assertIn("Validate release-candidate version", workflow)
+        self.assertIn("python -m repomori release-check", workflow)
+        self.assertIn("python -m pip wheel . --no-deps", workflow)
+        self.assertIn("repomori contract-check --fixture", workflow)
+        self.assertIn("repomori demo --out", workflow)
+        self.assertIn("repomori.release_candidate.v1", workflow)
+        self.assertIn("include-hidden-files: true", workflow)
+        self.assertIn("release-candidate.json", workflow)
+        self.assertIn("release-candidate.md", workflow)
+
     def test_workflow_contracts_for_handoff_health(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/handoff-health.yml").read_text(
             encoding="utf-8"
@@ -1536,6 +1560,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             ".repomori-packs/",
             ".repomori-release-check/",
             ".repomori-release-health/",
+            ".repomori-release-candidate/",
             ".repomori-health/",
             ".repomori-smoke/",
             ".repomori-handoff-health/",
@@ -3328,6 +3353,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.scan.v1", schema_versions)
         self.assertIn("repomori.scan.baseline.v1", schema_versions)
         self.assertIn("repomori.release_check.v1", schema_versions)
+        self.assertIn("repomori.release_candidate.v1", schema_versions)
         self.assertIn("repomori.health.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
@@ -3421,6 +3447,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         context_eval_schema = schema_catalog("repomori.context_eval.v1")
         self.assertEqual(context_eval_schema["selected"], "repomori.context_eval.v1")
         self.assertEqual(context_eval_schema["schema"]["producer"], "evaluate_context_quality")
+
+        release_candidate_schema = schema_catalog("repomori.release_candidate.v1")
+        self.assertEqual(release_candidate_schema["selected"], "repomori.release_candidate.v1")
+        self.assertEqual(release_candidate_schema["schema"]["producer"], ".github/workflows/release-candidate.yml")
 
         agent_brief = schema_catalog("repomori.agent_brief.v1")
         self.assertEqual(agent_brief["selected"], "repomori.agent_brief.v1")

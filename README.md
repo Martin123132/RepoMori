@@ -482,6 +482,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Public safety scan](docs/public-safety-scan.md)
 - [Release check](docs/release-check.md)
 - [Release health](docs/release-health.md)
+- [Release candidate process](docs/release-candidate.md)
 - [Baseline drift watchlist](docs/baseline-drift-watchlist.md)
 - [Reusable anchor workflow](docs/memory-anchor-reusable.md)
 - [Incremental packs](docs/incremental-packs.md)

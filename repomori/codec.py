@@ -361,6 +361,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "repo_path", "settings", "summary", "checks"],
     },
     {
+        "schema_version": "repomori.release_candidate.v1",
+        "kind": "ci-artifact",
+        "title": "Release candidate workflow manifest",
+        "producer": ".github/workflows/release-candidate.yml",
+        "required_fields": ["schema_version", "status", "version", "commit", "artifacts"],
+    },
+    {
         "schema_version": "repomori.health.v1",
         "kind": "report",
         "title": "Release health and trend bundle",
