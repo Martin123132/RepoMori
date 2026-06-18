@@ -15,7 +15,7 @@ Use this before changing the GitHub repository visibility to public.
 - Run a secret scan for API keys, tokens, private keys, passwords, and personal data.
 - Run `python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --fail-on low --json`.
 - Run `python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json`.
-- Confirm the release-candidate workflow has uploaded a wheel, source archive, manifest, and release-check artifacts.
+- Confirm the release package workflow has uploaded a wheel, source archive, manifest, checksums, provenance, SBOM, and release-check artifacts.
 - Check git history for secrets or private files, not just the current checkout.
 - Remove generated `.repomori` packs, handoff folders, benchmark outputs, and snapshot directories unless intentionally published.
 - Confirm examples use safe D-drive paths and no private customer/project names.

@@ -68,9 +68,15 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 
 - wheel in `.repomori-release-candidate/dist`
 - source archive made from the checked-out commit
+- `checksums.txt`
+- `release-provenance.json`
+- `sbom.spdx.json`
 - `release-candidate.json`
 - `release-candidate.md`
 - `release-check` JSON, Markdown, and drift log
+
+See [release-integrity.md](release-integrity.md) for checksum, provenance, and
+SBOM verification guidance.
 
 ## Tag And Pre-Release
 

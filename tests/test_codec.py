@@ -98,6 +98,7 @@ from repomori.codec import (
     verify_snapshot_chain,
     verify_pack,
     write_scan_baseline,
+    write_release_package_artifacts,
 )
 
 
@@ -1520,6 +1521,71 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("include-hidden-files: true", workflow)
         self.assertIn("release-candidate.json", workflow)
         self.assertIn("release-candidate.md", workflow)
+        self.assertIn("write_release_package_artifacts", workflow)
+        self.assertIn("checksums.txt", workflow)
+        self.assertIn("release-provenance.json", workflow)
+        self.assertIn("sbom.spdx.json", workflow)
+
+    def test_write_release_package_artifacts_outputs_integrity_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            wheel = dist / "repomori-0.2.0-py3-none-any.whl"
+            source = dist / "repomori-0.2.0-source.zip"
+            wheel.write_bytes(b"wheel-bytes")
+            source.write_bytes(b"source-bytes")
+
+            manifest = write_release_package_artifacts(
+                root,
+                version="0.2.0",
+                commit="abc123",
+                ref="main",
+                run_id="42",
+                repository="Martin123132/RepoMori",
+                generated_at=1700000000,
+            )
+
+            self.assertEqual(manifest["schema_version"], "repomori.release_candidate.v1")
+            self.assertEqual(manifest["integrity"]["checksums"]["path"], "checksums.txt")
+            self.assertEqual(manifest["integrity"]["provenance"]["path"], "release-provenance.json")
+            self.assertEqual(manifest["integrity"]["sbom"]["path"], "sbom.spdx.json")
+            self.assertEqual(json.loads((root / "release-candidate.json").read_text(encoding="utf-8")), manifest)
+
+            provenance = json.loads((root / "release-provenance.json").read_text(encoding="utf-8"))
+            self.assertEqual(provenance["schema_version"], "repomori.release_provenance.v1")
+            self.assertEqual(provenance["version"], "0.2.0")
+            self.assertEqual(provenance["repository"], "Martin123132/RepoMori")
+            provenance_paths = {artifact["path"] for artifact in provenance["artifacts"]}
+            self.assertEqual(
+                provenance_paths,
+                {
+                    "dist/repomori-0.2.0-py3-none-any.whl",
+                    "dist/repomori-0.2.0-source.zip",
+                    "sbom.spdx.json",
+                },
+            )
+
+            sbom = json.loads((root / "sbom.spdx.json").read_text(encoding="utf-8"))
+            self.assertEqual(sbom["spdxVersion"], "SPDX-2.3")
+            self.assertTrue(any(package["name"] == "repomori" for package in sbom["packages"]))
+            self.assertIn("LicenseRef-PolyForm-Noncommercial-1.0.0", json.dumps(sbom))
+
+            checksum_lines = (root / "checksums.txt").read_text(encoding="utf-8").splitlines()
+            checksum_map = {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in checksum_lines}
+            expected_paths = {
+                "dist/repomori-0.2.0-py3-none-any.whl",
+                "dist/repomori-0.2.0-source.zip",
+                "sbom.spdx.json",
+                "release-provenance.json",
+            }
+            self.assertEqual(set(checksum_map), expected_paths)
+            for relative, digest in checksum_map.items():
+                self.assertEqual(digest, hashlib.sha256((root / relative).read_bytes()).hexdigest())
+
+            manifest_md = (root / "release-candidate.md").read_text(encoding="utf-8")
+            self.assertIn("## Integrity", manifest_md)
+            self.assertIn("checksums.txt", manifest_md)
 
     def test_workflow_contracts_for_handoff_health(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/handoff-health.yml").read_text(
@@ -3355,6 +3421,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.scan.baseline.v1", schema_versions)
         self.assertIn("repomori.release_check.v1", schema_versions)
         self.assertIn("repomori.release_candidate.v1", schema_versions)
+        self.assertIn("repomori.release_provenance.v1", schema_versions)
         self.assertIn("repomori.health.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
@@ -3452,6 +3519,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         release_candidate_schema = schema_catalog("repomori.release_candidate.v1")
         self.assertEqual(release_candidate_schema["selected"], "repomori.release_candidate.v1")
         self.assertEqual(release_candidate_schema["schema"]["producer"], ".github/workflows/release-candidate.yml")
+
+        release_provenance_schema = schema_catalog("repomori.release_provenance.v1")
+        self.assertEqual(release_provenance_schema["selected"], "repomori.release_provenance.v1")
+        self.assertEqual(release_provenance_schema["schema"]["producer"], "write_release_package_artifacts")
 
         agent_brief = schema_catalog("repomori.agent_brief.v1")
         self.assertEqual(agent_brief["selected"], "repomori.agent_brief.v1")

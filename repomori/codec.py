@@ -368,6 +368,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "version", "commit", "artifacts"],
     },
     {
+        "schema_version": "repomori.release_provenance.v1",
+        "kind": "ci-artifact",
+        "title": "Release package provenance",
+        "producer": "write_release_package_artifacts",
+        "required_fields": ["schema_version", "status", "version", "commit", "repository", "artifacts"],
+    },
+    {
         "schema_version": "repomori.health.v1",
         "kind": "report",
         "title": "Release health and trend bundle",
@@ -8805,6 +8812,235 @@ def schema_catalog(schema_version: str | None = None) -> dict[str, Any]:
         "agent_methods": list(AGENT_METHODS),
         "mcp_tools": [tool["name"] for tool in MCP_TOOLS],
     }
+
+
+def write_release_package_artifacts(
+    root: Path | str,
+    *,
+    version: str,
+    commit: str | None = None,
+    ref: str | None = None,
+    run_id: str | None = None,
+    repository: str | None = None,
+    workflow: str = "release-candidate.yml",
+    generated_at: int | None = None,
+) -> dict[str, Any]:
+    """Write release manifest, provenance, SBOM, and checksum artifacts."""
+
+    root_path = Path(root)
+    dist_path = root_path / "dist"
+    if not dist_path.exists():
+        raise FileNotFoundError(f"Release dist directory not found: {dist_path}")
+
+    generated_at_value = int(time.time()) if generated_at is None else int(generated_at)
+    generated_at_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(generated_at_value))
+    dist_artifacts = _release_artifact_records(root_path, dist_path)
+
+    sbom = _release_sbom_document(
+        version=version,
+        commit=commit,
+        repository=repository,
+        generated_at_utc=generated_at_utc,
+        artifacts=dist_artifacts,
+    )
+    sbom_path = root_path / "sbom.spdx.json"
+    root_path.mkdir(parents=True, exist_ok=True)
+    sbom_path.write_text(json.dumps(sbom, indent=2) + "\n", encoding="utf-8")
+    sbom_record = _release_artifact_record(root_path, sbom_path, kind="sbom")
+
+    provenance_artifacts = [*dist_artifacts, sbom_record]
+    provenance = {
+        "schema_version": "repomori.release_provenance.v1",
+        "status": "pass",
+        "version": version,
+        "commit": commit,
+        "ref": ref,
+        "repository": repository,
+        "workflow": workflow,
+        "run_id": run_id,
+        "generated_at": generated_at_value,
+        "generated_at_utc": generated_at_utc,
+        "artifacts": provenance_artifacts,
+        "license": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+        "notes": [
+            "Checksums and provenance are tamper-evident aids, not cryptographic signatures.",
+            "No network, model provider, or signing service is required to generate these artifacts.",
+        ],
+    }
+    provenance_path = root_path / "release-provenance.json"
+    provenance_path.write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+    provenance_record = _release_artifact_record(root_path, provenance_path, kind="provenance")
+
+    checksum_records = [*dist_artifacts, sbom_record, provenance_record]
+    checksums_path = root_path / "checksums.txt"
+    checksums_path.write_text(
+        "".join(f"{item['sha256']}  {item['path']}\n" for item in checksum_records),
+        encoding="utf-8",
+    )
+    checksums_record = _release_artifact_record(root_path, checksums_path, kind="checksums")
+
+    integrity = {
+        "checksums": checksums_record,
+        "provenance": provenance_record,
+        "sbom": sbom_record,
+    }
+    manifest = {
+        "schema_version": "repomori.release_candidate.v1",
+        "status": "pass",
+        "version": version,
+        "commit": commit,
+        "ref": ref,
+        "run_id": run_id,
+        "generated_at": generated_at_value,
+        "artifacts": dist_artifacts,
+        "integrity": integrity,
+        "release_check": {
+            "json": ".repomori-release-check/release-check.json",
+            "markdown": ".repomori-release-check/release-check.md",
+            "drift_log": ".repomori-release-check/baseline-drift.jsonl",
+        },
+    }
+    manifest_path = root_path / "release-candidate.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    markdown_path = root_path / "release-candidate.md"
+    markdown_path.write_text(_format_release_package_manifest_markdown(manifest), encoding="utf-8")
+    return manifest
+
+
+def _release_artifact_records(root: Path, directory: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for path in sorted(directory.iterdir()):
+        if path.is_file():
+            records.append(_release_artifact_record(root, path, kind=_release_artifact_kind(path)))
+    return records
+
+
+def _release_artifact_record(root: Path, path: Path, *, kind: str) -> dict[str, Any]:
+    data = path.read_bytes()
+    return {
+        "path": path.relative_to(root).as_posix(),
+        "kind": kind,
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def _release_artifact_kind(path: Path) -> str:
+    name = path.name.lower()
+    if name.endswith(".whl"):
+        return "wheel"
+    if name.endswith(".zip"):
+        return "source_archive"
+    return "release_artifact"
+
+
+def _release_spdx_id(prefix: str, value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9.-]+", "-", value).strip("-")
+    if not safe:
+        safe = "artifact"
+    return f"SPDXRef-{prefix}-{safe}"
+
+
+def _release_sbom_document(
+    *,
+    version: str,
+    commit: str | None,
+    repository: str | None,
+    generated_at_utc: str,
+    artifacts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    namespace_commit = commit or "local"
+    repository_part = repository or "local"
+    packages: list[dict[str, Any]] = [
+        {
+            "name": "repomori",
+            "SPDXID": "SPDXRef-Package-RepoMori",
+            "versionInfo": version,
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+            "licenseConcluded": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+            "licenseDeclared": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+            "copyrightText": "Copyright (c) 2026 TWO HANDS NETWORK LTD",
+            "supplier": "Organization: TWO HANDS NETWORK LTD",
+            "primaryPackagePurpose": "APPLICATION",
+        }
+    ]
+    relationships = [
+        {
+            "spdxElementId": "SPDXRef-DOCUMENT",
+            "relationshipType": "DESCRIBES",
+            "relatedSpdxElement": "SPDXRef-Package-RepoMori",
+        }
+    ]
+    for artifact in artifacts:
+        artifact_id = _release_spdx_id("Artifact", str(artifact.get("path") or "artifact"))
+        packages.append(
+            {
+                "name": artifact["path"],
+                "SPDXID": artifact_id,
+                "downloadLocation": "NOASSERTION",
+                "filesAnalyzed": False,
+                "licenseConcluded": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+                "licenseDeclared": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+                "copyrightText": "Copyright (c) 2026 TWO HANDS NETWORK LTD",
+                "checksums": [{"algorithm": "SHA256", "checksumValue": artifact["sha256"]}],
+                "primaryPackagePurpose": "FILE",
+            }
+        )
+        relationships.append(
+            {
+                "spdxElementId": "SPDXRef-Package-RepoMori",
+                "relationshipType": "CONTAINS",
+                "relatedSpdxElement": artifact_id,
+            }
+        )
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": f"RepoMori {version} release artifacts",
+        "documentNamespace": f"https://github.com/{repository_part}/spdx/repomori-{version}-{namespace_commit}",
+        "creationInfo": {
+            "created": generated_at_utc,
+            "creators": [
+                "Tool: RepoMori release package workflow",
+                "Organization: TWO HANDS NETWORK LTD",
+            ],
+        },
+        "packages": packages,
+        "relationships": relationships,
+        "hasExtractedLicensingInfos": [
+            {
+                "licenseId": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+                "extractedText": "RepoMori is source-available for personal and non-commercial use. Commercial use requires a separate written license from TWO HANDS NETWORK LTD.",
+                "name": "PolyForm Noncommercial License 1.0.0 with RepoMori required notice",
+            }
+        ],
+    }
+
+
+def _format_release_package_manifest_markdown(manifest: dict[str, Any]) -> str:
+    lines = [
+        f"# RepoMori {manifest.get('version')} Release Package",
+        "",
+        f"- Status: `{manifest.get('status')}`",
+        f"- Commit: `{manifest.get('commit')}`",
+        f"- Ref: `{manifest.get('ref')}`",
+        f"- Run ID: `{manifest.get('run_id')}`",
+        "",
+        "## Artifacts",
+        "",
+    ]
+    for artifact in manifest.get("artifacts", []):
+        lines.append(f"- `{artifact['path']}` `{artifact['bytes']}` bytes `{artifact['sha256']}`")
+    lines.extend(["", "## Integrity", ""])
+    integrity = manifest.get("integrity", {})
+    for key in ("checksums", "provenance", "sbom"):
+        artifact = integrity.get(key)
+        if isinstance(artifact, dict):
+            lines.append(f"- `{artifact['path']}` `{artifact['bytes']}` bytes `{artifact['sha256']}`")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def handle_agent_request(

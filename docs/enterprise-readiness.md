@@ -12,6 +12,7 @@ product.
 - Release-health aggregate checks covering release-check, doctor, chain,
   timeline, compatibility, and contract stability.
 - Tamper-evident snapshot timelines and anchor verification.
+- Release package checksums, provenance, and minimal SPDX SBOM artifacts.
 - JSON schema catalog for supported reports and bridge contracts.
 - Agent JSON-lines bridge and dependency-free MCP stdio bridge.
 - Source-available license posture with commercial use reserved.
@@ -25,6 +26,7 @@ product.
 - Support: [../SUPPORT.md](../SUPPORT.md)
 - Security reporting: [../SECURITY.md](../SECURITY.md)
 - Release validation: [releases/0.2.0-validation.md](releases/0.2.0-validation.md)
+- Release integrity: [release-integrity.md](release-integrity.md)
 
 ## Operational Checklist
 
@@ -32,6 +34,7 @@ Before using RepoMori in a company setting:
 
 - confirm the intended use is covered by a written commercial license;
 - run from a pinned release tag or reviewed commit;
+- verify release checksums and provenance before using a downloaded artifact;
 - keep generated `.repomori` packs and handoffs in private storage;
 - use hidden `.repomori-*` output directories for automation artifacts;
 - run `release-check` before publishing repository changes;
@@ -55,8 +58,8 @@ Before using RepoMori in a company setting:
 
 ## Recommended Enterprise Next Steps
 
-- Add signed release checksums and provenance.
-- Add a software bill of materials for packaged releases.
+- Add signed checksums and signed provenance.
+- Add external timestamping or transparency-log publication.
 - Add policy files for stricter CI drift and artifact retention.
 - Add documented backup and restore guidance for snapshot timelines.
 - Add private commercial contact and support routing outside public issues.

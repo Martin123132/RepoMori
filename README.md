@@ -508,6 +508,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Public safety scan](docs/public-safety-scan.md)
 - [Release check](docs/release-check.md)
 - [Release health](docs/release-health.md)
+- [Release integrity](docs/release-integrity.md)
 - [Release candidate process](docs/release-candidate.md)
 - [0.2.0 release notes](docs/releases/0.2.0.md)
 - [0.2.0 validation](docs/releases/0.2.0-validation.md)

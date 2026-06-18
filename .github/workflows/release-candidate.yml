@@ -90,60 +90,50 @@ jobs:
         env:
           PROJECT_VERSION: ${{ steps.version.outputs.project_version }}
         run: |
+          set -euo pipefail
           python - <<'PY'
-          import hashlib
           import json
           import os
-          import time
+
+          from repomori.codec import write_release_package_artifacts
+
+          payload = write_release_package_artifacts(
+              ".repomori-release-candidate",
+              version=os.environ["PROJECT_VERSION"],
+              commit=os.environ.get("GITHUB_SHA"),
+              ref=os.environ.get("GITHUB_REF_NAME"),
+              run_id=os.environ.get("GITHUB_RUN_ID"),
+              repository=os.environ.get("GITHUB_REPOSITORY"),
+              workflow="release-candidate.yml",
+          )
+          print(json.dumps(payload, indent=2))
+          PY
+          for artifact in \
+            .repomori-release-candidate/release-candidate.json \
+            .repomori-release-candidate/release-candidate.md \
+            .repomori-release-candidate/checksums.txt \
+            .repomori-release-candidate/release-provenance.json \
+            .repomori-release-candidate/sbom.spdx.json; do
+            if [ ! -s "$artifact" ]; then
+              echo "::error::release package artifact was not created: $artifact"
+              exit 1
+            fi
+          done
+          python - <<'PY'
+          import json
           from pathlib import Path
 
           root = Path(".repomori-release-candidate")
-          dist = root / "dist"
-          artifacts = []
-          for path in sorted(dist.iterdir()):
-              if not path.is_file():
-                  continue
-              data = path.read_bytes()
-              artifacts.append(
-                  {
-                      "path": path.as_posix(),
-                      "bytes": len(data),
-                      "sha256": hashlib.sha256(data).hexdigest(),
-                  }
-              )
-
-          payload = {
-              "schema_version": "repomori.release_candidate.v1",
-              "status": "pass",
-              "version": os.environ["PROJECT_VERSION"],
-              "commit": os.environ.get("GITHUB_SHA"),
-              "ref": os.environ.get("GITHUB_REF_NAME"),
-              "run_id": os.environ.get("GITHUB_RUN_ID"),
-              "generated_at": int(time.time()),
-              "artifacts": artifacts,
-              "release_check": {
-                  "json": ".repomori-release-check/release-check.json",
-                  "markdown": ".repomori-release-check/release-check.md",
-                  "drift_log": ".repomori-release-check/baseline-drift.jsonl",
-              },
-          }
-          root.mkdir(parents=True, exist_ok=True)
-          (root / "release-candidate.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-          lines = [
-              f"# RepoMori {payload['version']} Release Candidate",
-              "",
-              f"- Status: `{payload['status']}`",
-              f"- Commit: `{payload['commit']}`",
-              f"- Ref: `{payload['ref']}`",
-              f"- Run ID: `{payload['run_id']}`",
-              "",
-              "## Artifacts",
-              "",
-          ]
-          for artifact in artifacts:
-              lines.append(f"- `{artifact['path']}` `{artifact['bytes']}` bytes `{artifact['sha256']}`")
-          (root / "release-candidate.md").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-          print(json.dumps(payload, indent=2))
+          manifest = json.loads((root / "release-candidate.json").read_text(encoding="utf-8"))
+          provenance = json.loads((root / "release-provenance.json").read_text(encoding="utf-8"))
+          sbom = json.loads((root / "sbom.spdx.json").read_text(encoding="utf-8"))
+          assert manifest["schema_version"] == "repomori.release_candidate.v1"
+          assert provenance["schema_version"] == "repomori.release_provenance.v1"
+          assert sbom["spdxVersion"] == "SPDX-2.3"
+          assert manifest["integrity"]["checksums"]["path"] == "checksums.txt"
+          assert manifest["integrity"]["provenance"]["path"] == "release-provenance.json"
+          assert manifest["integrity"]["sbom"]["path"] == "sbom.spdx.json"
+          print("release integrity artifact schemas passed")
           PY
       - name: Upload release-candidate artifacts
         if: always()
@@ -153,6 +143,9 @@ jobs:
           include-hidden-files: true
           path: |
             .repomori-release-candidate/
+            .repomori-release-candidate/checksums.txt
+            .repomori-release-candidate/release-provenance.json
+            .repomori-release-candidate/sbom.spdx.json
             .repomori-release-check/release-check.json
             .repomori-release-check/release-check.md
             .repomori-release-check/baseline-drift.jsonl
