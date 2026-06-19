@@ -23,6 +23,8 @@ The release package workflow writes:
   reports from `verify-release` when the release-candidate workflow runs.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when
   release signing secrets are configured.
+- `repomori-release-public-key.asc`: optional public key artifact when release
+  signing is configured with a public key repository variable.
 
 ## Verify With RepoMori
 
@@ -75,6 +77,12 @@ signatures for:
 - `sbom.spdx.json`
 - `release-verify.json`
 
+Compare the public key fingerprint with a trusted record first:
+
+```powershell
+gpg --show-keys --with-fingerprint D:\Dev\RepoMori\.repomori-release-candidate\repomori-release-public-key.asc
+```
+
 Import the trusted RepoMori release public key, then verify:
 
 ```powershell
@@ -88,6 +96,9 @@ gpg --verify D:\Dev\RepoMori\.repomori-release-candidate\release-verify.json.asc
 The workflows skip signing unless `REPOMORI_RELEASE_GPG_PRIVATE_KEY` is present.
 Use `REPOMORI_RELEASE_GPG_PASSPHRASE` when the imported signing key requires a
 passphrase.
+
+See [release-signing.md](release-signing.md) for key generation, GitHub
+configuration, public-key distribution, and rotation guidance.
 
 ## Read Provenance
 
@@ -107,5 +118,5 @@ the workflow run that created it.
 Checksums detect accidental corruption and make substitution visible when the
 expected checksum is trusted. They do not prove identity or intent.
 
-For stronger supply-chain guarantees, add signed checksums, signed provenance,
-or external transparency/timestamping in a later release.
+For stronger supply-chain guarantees, add external timestamping or transparency
+log publication in a later release.

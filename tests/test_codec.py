@@ -1535,6 +1535,9 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("Sign release integrity artifacts", workflow)
         self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", workflow)
         self.assertIn("REPOMORI_RELEASE_GPG_PASSPHRASE", workflow)
+        self.assertIn("REPOMORI_RELEASE_GPG_PUBLIC_KEY", workflow)
+        self.assertIn("repomori-release-public-key.asc", workflow)
+        self.assertIn("release public key fingerprint does not match signing key fingerprint", workflow)
         self.assertIn("for artifact in checksums.txt release-provenance.json sbom.spdx.json release-verify.json", workflow)
         self.assertIn("${artifact}.asc", workflow)
         self.assertIn(".repomori-release-candidate/*.asc", workflow)
@@ -1565,6 +1568,9 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("Sign release integrity artifacts", workflow)
         self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", workflow)
         self.assertIn("REPOMORI_RELEASE_GPG_PASSPHRASE", workflow)
+        self.assertIn("REPOMORI_RELEASE_GPG_PUBLIC_KEY", workflow)
+        self.assertIn("repomori-release-public-key.asc", workflow)
+        self.assertIn("release public key fingerprint does not match signing key fingerprint", workflow)
         self.assertIn("for artifact in checksums.txt release-provenance.json sbom.spdx.json release-verify.json", workflow)
         self.assertIn("${artifact}.asc", workflow)
         self.assertIn(".repomori-release-candidate/*.asc", workflow)
@@ -1576,6 +1582,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("Draft Release Assets", publish_doc)
         self.assertIn("Existing published releases are never overwritten.", publish_doc)
         self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", publish_doc)
+        self.assertIn("REPOMORI_RELEASE_GPG_PUBLIC_KEY", publish_doc)
 
     def test_write_release_package_artifacts_outputs_integrity_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

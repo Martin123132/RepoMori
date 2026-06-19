@@ -163,6 +163,7 @@ jobs:
         env:
           RELEASE_GPG_PRIVATE_KEY: ${{ secrets.REPOMORI_RELEASE_GPG_PRIVATE_KEY }}
           RELEASE_GPG_PASSPHRASE: ${{ secrets.REPOMORI_RELEASE_GPG_PASSPHRASE }}
+          RELEASE_GPG_PUBLIC_KEY: ${{ vars.REPOMORI_RELEASE_GPG_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_GPG_PRIVATE_KEY:-}" ]; then
@@ -176,9 +177,27 @@ jobs:
           chmod 700 "$GNUPGHOME"
           printf '%s' "$RELEASE_GPG_PRIVATE_KEY" | gpg --batch --import
 
+          public_fingerprint=""
+          if [ -n "${RELEASE_GPG_PUBLIC_KEY:-}" ]; then
+            printf '%s' "$RELEASE_GPG_PUBLIC_KEY" > .repomori-release-candidate/repomori-release-public-key.asc
+            public_fingerprint="$(gpg --batch --with-colons --show-keys .repomori-release-candidate/repomori-release-public-key.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+            if [ -z "$public_fingerprint" ]; then
+              echo "::error::release public key variable is not a parseable GPG public key"
+              exit 1
+            fi
+          else
+            echo "release public key artifact skipped: REPOMORI_RELEASE_GPG_PUBLIC_KEY variable is not configured"
+          fi
+
           passphrase_args=()
           if [ -n "${RELEASE_GPG_PASSPHRASE:-}" ]; then
             passphrase_args=(--pinentry-mode loopback --passphrase "$RELEASE_GPG_PASSPHRASE")
+          fi
+
+          key_fingerprint="$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr:/ {print $10; exit}')"
+          if [ -n "$public_fingerprint" ] && [ "$public_fingerprint" != "$key_fingerprint" ]; then
+            echo "::error::release public key fingerprint does not match signing key fingerprint"
+            exit 1
           fi
 
           for artifact in checksums.txt release-provenance.json sbom.spdx.json release-verify.json; do
@@ -191,7 +210,6 @@ jobs:
             fi
           done
 
-          key_fingerprint="$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr:/ {print $10; exit}')"
           echo "signed=true" >> "$GITHUB_OUTPUT"
           echo "key_fingerprint=$key_fingerprint" >> "$GITHUB_OUTPUT"
           echo "release signing complete: key_fingerprint=$key_fingerprint"

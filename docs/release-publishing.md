@@ -51,6 +51,7 @@ The draft release receives:
 - `release-candidate.json`
 - `release-candidate.md`
 - optional `*.asc` detached signatures for integrity artifacts
+- optional `repomori-release-public-key.asc` for reviewers
 
 The workflow also uploads a CI artifact bundle containing the same release
 package plus release-check JSON, Markdown, and drift telemetry.
@@ -61,9 +62,12 @@ Configure these GitHub Actions secrets to emit signatures:
 
 - `REPOMORI_RELEASE_GPG_PRIVATE_KEY`: ASCII-armored private signing key.
 - `REPOMORI_RELEASE_GPG_PASSPHRASE`: optional passphrase for that key.
+- `REPOMORI_RELEASE_GPG_PUBLIC_KEY`: repository variable containing the matching
+  ASCII-armored public key.
 
-Keep the matching public key in a durable company location so reviewers can
-verify `.asc` files independently.
+Keep the matching public-key fingerprint in a durable company location so
+reviewers can verify `.asc` files independently. See
+[release-signing.md](release-signing.md) for setup and rotation.
 
 ## Review Before Publishing
 

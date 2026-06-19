@@ -77,9 +77,12 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - `release-candidate.md`
 - `release-check` JSON, Markdown, and drift log
 - optional `*.asc` GPG signatures when release signing secrets are configured
+- optional `repomori-release-public-key.asc` when the public key variable is
+  configured
 
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
-SBOM verification guidance.
+SBOM verification guidance. See [release-signing.md](release-signing.md) for
+signing setup and key rotation.
 
 After downloading or unpacking the workflow artifact, verify the whole integrity
 bundle locally:

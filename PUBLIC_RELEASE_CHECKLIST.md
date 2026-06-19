@@ -17,7 +17,7 @@ Use this before changing the GitHub repository visibility to public.
 - Run `python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json`.
 - Confirm the release package workflow has uploaded a wheel, source archive, manifest, checksums, provenance, SBOM, release verification, and release-check artifacts.
 - Prefer `publish-release.yml` for future releases so GitHub Release assets are verifier-gated and draft-first.
-- If release signing is configured, verify the uploaded `.asc` signatures against the trusted public key.
+- If release signing is configured, verify the uploaded `.asc` signatures and the public key fingerprint against the trusted record.
 - Run `python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --json` after downloading or generating the release package.
 - Check git history for secrets or private files, not just the current checkout.
 - Remove generated `.repomori` packs, handoff folders, benchmark outputs, and snapshot directories unless intentionally published.

@@ -30,6 +30,7 @@ product.
 - Security reporting: [../SECURITY.md](../SECURITY.md)
 - Release validation: [releases/0.2.0-validation.md](releases/0.2.0-validation.md)
 - Release integrity: [release-integrity.md](release-integrity.md)
+- Release signing: [release-signing.md](release-signing.md)
 - Release publishing: [release-publishing.md](release-publishing.md)
 
 ## Operational Checklist
@@ -39,6 +40,8 @@ Before using RepoMori in a company setting:
 - confirm the intended use is covered by a written commercial license;
 - run from a pinned release tag or reviewed commit;
 - run `verify-release` before using a downloaded release artifact bundle;
+- verify release signatures and the public key fingerprint when signing is
+  enabled;
 - publish new releases through the draft-first `publish-release` workflow when
   possible;
 - verify release checksums and provenance manually when independent review is
@@ -66,8 +69,8 @@ Before using RepoMori in a company setting:
 
 ## Recommended Enterprise Next Steps
 
-- Add durable public-key distribution and key-rotation guidance for signed
-  release artifacts.
+- Add signed-release adoption evidence after GitHub signing secrets are
+  configured.
 - Add external timestamping or transparency-log publication.
 - Add policy files for stricter CI drift and artifact retention.
 - Add documented backup and restore guidance for snapshot timelines.
