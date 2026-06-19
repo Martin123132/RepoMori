@@ -108,8 +108,21 @@ gh release create v0.2.0rc1 `
   --prerelease
 ```
 
-Attach the workflow-built wheel and source archive if you want the GitHub
-pre-release to carry downloadable artifacts.
+For future releases, prefer the draft-first publish workflow instead of
+attaching assets manually:
+
+```powershell
+gh workflow run publish-release.yml `
+  --repo Martin123132/RepoMori `
+  --ref main `
+  -f version=0.2.1 `
+  -f ref=main `
+  -f tag=v0.2.1 `
+  -f prerelease=false
+```
+
+See [release-publishing.md](release-publishing.md) for the draft-release
+automation runbook.
 
 After publishing the pre-release, run an outside-in install smoke from the
 published wheel and record the result in `docs/releases/0.2.0rc1-validation.md`.

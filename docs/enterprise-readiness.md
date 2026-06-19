@@ -14,6 +14,7 @@ product.
 - Tamper-evident snapshot timelines and anchor verification.
 - Release package checksums, provenance, minimal SPDX SBOM artifacts, and local
   `verify-release` validation.
+- Draft-first GitHub Release publishing workflow with verifier-gated assets.
 - JSON schema catalog for supported reports and bridge contracts.
 - Agent JSON-lines bridge and dependency-free MCP stdio bridge.
 - Source-available license posture with commercial use reserved.
@@ -28,6 +29,7 @@ product.
 - Security reporting: [../SECURITY.md](../SECURITY.md)
 - Release validation: [releases/0.2.0-validation.md](releases/0.2.0-validation.md)
 - Release integrity: [release-integrity.md](release-integrity.md)
+- Release publishing: [release-publishing.md](release-publishing.md)
 
 ## Operational Checklist
 
@@ -36,6 +38,8 @@ Before using RepoMori in a company setting:
 - confirm the intended use is covered by a written commercial license;
 - run from a pinned release tag or reviewed commit;
 - run `verify-release` before using a downloaded release artifact bundle;
+- publish new releases through the draft-first `publish-release` workflow when
+  possible;
 - verify release checksums and provenance manually when independent review is
   required;
 - keep generated `.repomori` packs and handoffs in private storage;

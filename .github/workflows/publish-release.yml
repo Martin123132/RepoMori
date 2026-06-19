@@ -1,0 +1,227 @@
+name: publish-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version that must match pyproject.toml.
+        required: true
+        default: 0.2.0
+      ref:
+        description: Branch, tag, or SHA to build and publish from.
+        required: true
+        default: main
+      tag:
+        description: Release tag to create or update; defaults to v<version>.
+        required: false
+        default: ""
+      notes_file:
+        description: Release notes file; defaults to docs/releases/<version>.md.
+        required: false
+        default: ""
+      prerelease:
+        description: Mark the draft release as a pre-release.
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      overwrite_draft:
+        description: Allow updating an existing draft release and replacing assets.
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  publish_release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - id: release_inputs
+        name: Validate publish inputs
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_NOTES_FILE: ${{ inputs.notes_file }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_OVERWRITE_DRAFT: ${{ inputs.overwrite_draft }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_version = pyproject["project"]["version"]
+          input_version = os.environ["INPUT_VERSION"].strip()
+          if project_version != input_version:
+              print(f"release version mismatch: pyproject={project_version} input={input_version}")
+              sys.exit(1)
+
+          release_tag = os.environ.get("INPUT_TAG", "").strip() or f"v{input_version}"
+          notes_file = os.environ.get("INPUT_NOTES_FILE", "").strip() or f"docs/releases/{input_version}.md"
+          notes_path = Path(notes_file)
+          if not notes_path.is_file():
+              print(f"release notes file not found: {notes_file}")
+              sys.exit(1)
+
+          prerelease = os.environ["INPUT_PRERELEASE"].strip().lower()
+          overwrite_draft = os.environ["INPUT_OVERWRITE_DRAFT"].strip().lower()
+          if prerelease not in {"true", "false"}:
+              print(f"invalid prerelease input: {prerelease}")
+              sys.exit(1)
+          if overwrite_draft not in {"true", "false"}:
+              print(f"invalid overwrite_draft input: {overwrite_draft}")
+              sys.exit(1)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"project_version={project_version}\n")
+              handle.write(f"release_tag={release_tag}\n")
+              handle.write(f"notes_file={notes_file}\n")
+              handle.write(f"prerelease={prerelease}\n")
+              handle.write(f"overwrite_draft={overwrite_draft}\n")
+          print(f"publish inputs ok: version={project_version} tag={release_tag} notes={notes_file}")
+          PY
+      - name: Run release check
+        run: |
+          python -m repomori release-check . \
+            --baseline .repomori-scan-baseline.json \
+            --fail-on low \
+            --artifacts-dir .repomori-release-check \
+            --drift-log .repomori-release-check/baseline-drift.jsonl \
+            --json
+      - name: Build wheel and source archive
+        env:
+          PROJECT_VERSION: ${{ steps.release_inputs.outputs.project_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p .repomori-release-candidate/dist
+          python -m pip install --upgrade pip
+          python -m pip wheel . --no-deps --wheel-dir .repomori-release-candidate/dist
+          git archive --format=zip --output ".repomori-release-candidate/dist/repomori-${PROJECT_VERSION}-source.zip" HEAD
+      - name: Install release artifact smoke
+        env:
+          PROJECT_VERSION: ${{ steps.release_inputs.outputs.project_version }}
+        run: |
+          set -euo pipefail
+          python -m pip install --force-reinstall --no-index \
+            --find-links .repomori-release-candidate/dist \
+            "repomori==${PROJECT_VERSION}"
+          repomori --help >/dev/null
+          repomori schema --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.schema.catalog.v1'; print('installed schema smoke passed')"
+          repomori contract-check --fixture tests/fixtures/compat-contracts.json --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.contract_check.v1'; assert payload['status'] == 'pass'; print('installed contract smoke passed')"
+          repomori demo --out "$RUNNER_TEMP/repomori-release-demo" --force --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.demo.v1'; assert payload['status'] == 'pass'; print('installed demo smoke passed')"
+      - name: Write release package integrity artifacts
+        env:
+          PROJECT_VERSION: ${{ steps.release_inputs.outputs.project_version }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+
+          from repomori.codec import write_release_package_artifacts
+
+          payload = write_release_package_artifacts(
+              ".repomori-release-candidate",
+              version=os.environ["PROJECT_VERSION"],
+              commit=os.environ.get("GITHUB_SHA"),
+              ref=os.environ.get("GITHUB_REF_NAME"),
+              run_id=os.environ.get("GITHUB_RUN_ID"),
+              repository=os.environ.get("GITHUB_REPOSITORY"),
+              workflow="publish-release.yml",
+          )
+          print(json.dumps(payload, indent=2))
+          PY
+      - name: Verify release package
+        run: |
+          set -euo pipefail
+          python -m repomori verify-release .repomori-release-candidate --json > .repomori-release-candidate/release-verify.json
+          python -m repomori verify-release .repomori-release-candidate --format markdown --out .repomori-release-candidate/release-verify.md
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path(".repomori-release-candidate/release-verify.json").read_text(encoding="utf-8"))
+          assert report["schema_version"] == "repomori.release_verify.v1"
+          assert report["status"] == "pass"
+          assert report["summary"]["mismatched_files"] == 0
+          print("release package verification passed")
+          PY
+      - name: Publish draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release_inputs.outputs.release_tag }}
+          RELEASE_TITLE: RepoMori ${{ steps.release_inputs.outputs.project_version }}
+          NOTES_FILE: ${{ steps.release_inputs.outputs.notes_file }}
+          PRERELEASE: ${{ steps.release_inputs.outputs.prerelease }}
+          OVERWRITE_DRAFT: ${{ steps.release_inputs.outputs.overwrite_draft }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(
+            .repomori-release-candidate/dist/*.whl
+            .repomori-release-candidate/dist/*-source.zip
+            .repomori-release-candidate/checksums.txt
+            .repomori-release-candidate/release-provenance.json
+            .repomori-release-candidate/sbom.spdx.json
+            .repomori-release-candidate/release-verify.json
+            .repomori-release-candidate/release-verify.md
+            .repomori-release-candidate/release-candidate.json
+            .repomori-release-candidate/release-candidate.md
+          )
+          for asset in "${assets[@]}"; do
+            if [ ! -s "$asset" ]; then
+              echo "::error::release asset was not created: $asset"
+              exit 1
+            fi
+          done
+
+          if gh release view "$RELEASE_TAG" --json isDraft,tagName,name > "$RUNNER_TEMP/release.json" 2>/dev/null; then
+            is_draft="$(python -c "import json, pathlib; print(str(json.loads(pathlib.Path('$RUNNER_TEMP/release.json').read_text())['isDraft']).lower())")"
+            if [ "$is_draft" != "true" ]; then
+              echo "::error::Refusing to overwrite a published release: $RELEASE_TAG"
+              exit 1
+            fi
+            if [ "$OVERWRITE_DRAFT" != "true" ]; then
+              echo "::error::Draft release already exists and overwrite_draft=false: $RELEASE_TAG"
+              exit 1
+            fi
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes-file "$NOTES_FILE"
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            create_args=(release create "$RELEASE_TAG" "${assets[@]}" --draft --target "$GITHUB_SHA" --title "$RELEASE_TITLE" --notes-file "$NOTES_FILE")
+            if [ "$PRERELEASE" = "true" ]; then
+              create_args+=(--prerelease)
+            fi
+            gh "${create_args[@]}"
+          fi
+      - name: Upload publish package artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: repomori-publish-release-${{ steps.release_inputs.outputs.project_version }}
+          include-hidden-files: true
+          path: |
+            .repomori-release-candidate/
+            .repomori-release-check/release-check.json
+            .repomori-release-check/release-check.md
+            .repomori-release-check/baseline-drift.jsonl

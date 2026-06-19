@@ -1533,6 +1533,37 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-verify.md", workflow)
         self.assertIn("repomori.release_verify.v1", workflow)
 
+    def test_workflow_contracts_for_publish_release(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        workflow = (repo_root / ".github/workflows/publish-release.yml").read_text(encoding="utf-8")
+        publish_doc = (repo_root / "docs/release-publishing.md").read_text(encoding="utf-8")
+
+        self.assertIn("name: publish-release", workflow)
+        self.assertIn("workflow_dispatch", workflow)
+        self.assertIn("contents: write", workflow)
+        self.assertIn("Validate publish inputs", workflow)
+        self.assertIn("release version mismatch", workflow)
+        self.assertIn("python -m repomori release-check", workflow)
+        self.assertIn("python -m pip wheel . --no-deps", workflow)
+        self.assertIn("repomori contract-check --fixture", workflow)
+        self.assertIn("repomori demo --out", workflow)
+        self.assertIn("write_release_package_artifacts", workflow)
+        self.assertIn('workflow="publish-release.yml"', workflow)
+        self.assertIn("python -m repomori verify-release .repomori-release-candidate --json", workflow)
+        self.assertIn("create_args=(release create", workflow)
+        self.assertIn("--draft", workflow)
+        self.assertIn("--target \"$GITHUB_SHA\"", workflow)
+        self.assertIn("gh release upload", workflow)
+        self.assertIn("--clobber", workflow)
+        self.assertIn("Refusing to overwrite a published release", workflow)
+        self.assertIn("release-verify.json", workflow)
+        self.assertIn("release-verify.md", workflow)
+        self.assertIn("release-candidate.json", workflow)
+        self.assertIn("release-candidate.md", workflow)
+        self.assertIn("include-hidden-files: true", workflow)
+        self.assertIn("Draft Release Assets", publish_doc)
+        self.assertIn("Existing published releases are never overwritten.", publish_doc)
+
     def test_write_release_package_artifacts_outputs_integrity_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / ".repomori-release-candidate"
