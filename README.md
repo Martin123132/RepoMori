@@ -277,6 +277,9 @@ artifacts, byte sizes, and SHA-256 hashes:
 python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --json
 ```
 
+The release-candidate workflow writes `release-verify.json` and
+`release-verify.md` automatically for reviewers.
+
 `build --base` creates an incremental pack. It hashes current files, reuses
 unchanged file records, compressed chunks, symbols, imports, and search index
 rows from the base pack, and rebuilds only added or changed files. Removed files

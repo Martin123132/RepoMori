@@ -135,6 +135,29 @@ jobs:
           assert manifest["integrity"]["sbom"]["path"] == "sbom.spdx.json"
           print("release integrity artifact schemas passed")
           PY
+      - name: Verify release package
+        run: |
+          set -euo pipefail
+          python -m repomori verify-release .repomori-release-candidate --json > .repomori-release-candidate/release-verify.json
+          python -m repomori verify-release .repomori-release-candidate --format markdown --out .repomori-release-candidate/release-verify.md
+          for artifact in \
+            .repomori-release-candidate/release-verify.json \
+            .repomori-release-candidate/release-verify.md; do
+            if [ ! -s "$artifact" ]; then
+              echo "::error::release verification artifact was not created: $artifact"
+              exit 1
+            fi
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path(".repomori-release-candidate/release-verify.json").read_text(encoding="utf-8"))
+          assert report["schema_version"] == "repomori.release_verify.v1"
+          assert report["status"] == "pass"
+          assert report["summary"]["mismatched_files"] == 0
+          print("release package verification passed")
+          PY
       - name: Upload release-candidate artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -146,6 +169,8 @@ jobs:
             .repomori-release-candidate/checksums.txt
             .repomori-release-candidate/release-provenance.json
             .repomori-release-candidate/sbom.spdx.json
+            .repomori-release-candidate/release-verify.json
+            .repomori-release-candidate/release-verify.md
             .repomori-release-check/release-check.json
             .repomori-release-check/release-check.md
             .repomori-release-check/baseline-drift.jsonl

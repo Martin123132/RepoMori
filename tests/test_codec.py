@@ -1527,6 +1527,11 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("checksums.txt", workflow)
         self.assertIn("release-provenance.json", workflow)
         self.assertIn("sbom.spdx.json", workflow)
+        self.assertIn("Verify release package", workflow)
+        self.assertIn("python -m repomori verify-release .repomori-release-candidate --json", workflow)
+        self.assertIn("release-verify.json", workflow)
+        self.assertIn("release-verify.md", workflow)
+        self.assertIn("repomori.release_verify.v1", workflow)
 
     def test_write_release_package_artifacts_outputs_integrity_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

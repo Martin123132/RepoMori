@@ -71,6 +71,8 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - `checksums.txt`
 - `release-provenance.json`
 - `sbom.spdx.json`
+- `release-verify.json`
+- `release-verify.md`
 - `release-candidate.json`
 - `release-candidate.md`
 - `release-check` JSON, Markdown, and drift log

@@ -19,6 +19,8 @@ The release package workflow writes:
   artifacts using `LicenseRef-PolyForm-Noncommercial-1.0.0`.
 - `release-candidate.json`: release package manifest with an `integrity` block
   pointing to the checksum, provenance, and SBOM artifacts.
+- `release-verify.json` / `release-verify.md`: machine-readable and readable
+  reports from `verify-release` when the release-candidate workflow runs.
 
 ## Verify With RepoMori
 
