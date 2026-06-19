@@ -21,6 +21,8 @@ The release package workflow writes:
   pointing to the checksum, provenance, and SBOM artifacts.
 - `release-verify.json` / `release-verify.md`: machine-readable and readable
   reports from `verify-release` when the release-candidate workflow runs.
+- `*.asc`: optional GPG detached signatures for integrity artifacts when
+  release signing secrets are configured.
 
 ## Verify With RepoMori
 
@@ -62,6 +64,30 @@ Get-FileHash -Algorithm SHA256 `
 ```
 
 Compare the hash with the matching line in `checksums.txt`.
+
+## Verify Signatures
+
+When release signing is configured, the workflow writes detached ASCII-armored
+signatures for:
+
+- `checksums.txt`
+- `release-provenance.json`
+- `sbom.spdx.json`
+- `release-verify.json`
+
+Import the trusted RepoMori release public key, then verify:
+
+```powershell
+gpg --import D:\Dev\RepoMori\.repomori-release-candidate\repomori-release-public-key.asc
+gpg --verify D:\Dev\RepoMori\.repomori-release-candidate\checksums.txt.asc D:\Dev\RepoMori\.repomori-release-candidate\checksums.txt
+gpg --verify D:\Dev\RepoMori\.repomori-release-candidate\release-provenance.json.asc D:\Dev\RepoMori\.repomori-release-candidate\release-provenance.json
+gpg --verify D:\Dev\RepoMori\.repomori-release-candidate\sbom.spdx.json.asc D:\Dev\RepoMori\.repomori-release-candidate\sbom.spdx.json
+gpg --verify D:\Dev\RepoMori\.repomori-release-candidate\release-verify.json.asc D:\Dev\RepoMori\.repomori-release-candidate\release-verify.json
+```
+
+The workflows skip signing unless `REPOMORI_RELEASE_GPG_PRIVATE_KEY` is present.
+Use `REPOMORI_RELEASE_GPG_PASSPHRASE` when the imported signing key requires a
+passphrase.
 
 ## Read Provenance
 

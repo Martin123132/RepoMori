@@ -1532,6 +1532,12 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-verify.json", workflow)
         self.assertIn("release-verify.md", workflow)
         self.assertIn("repomori.release_verify.v1", workflow)
+        self.assertIn("Sign release integrity artifacts", workflow)
+        self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", workflow)
+        self.assertIn("REPOMORI_RELEASE_GPG_PASSPHRASE", workflow)
+        self.assertIn("for artifact in checksums.txt release-provenance.json sbom.spdx.json release-verify.json", workflow)
+        self.assertIn("${artifact}.asc", workflow)
+        self.assertIn(".repomori-release-candidate/*.asc", workflow)
 
     def test_workflow_contracts_for_publish_release(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -1556,6 +1562,12 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("gh release upload", workflow)
         self.assertIn("--clobber", workflow)
         self.assertIn("Refusing to overwrite a published release", workflow)
+        self.assertIn("Sign release integrity artifacts", workflow)
+        self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", workflow)
+        self.assertIn("REPOMORI_RELEASE_GPG_PASSPHRASE", workflow)
+        self.assertIn("for artifact in checksums.txt release-provenance.json sbom.spdx.json release-verify.json", workflow)
+        self.assertIn("${artifact}.asc", workflow)
+        self.assertIn(".repomori-release-candidate/*.asc", workflow)
         self.assertIn("release-verify.json", workflow)
         self.assertIn("release-verify.md", workflow)
         self.assertIn("release-candidate.json", workflow)
@@ -1563,6 +1575,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("include-hidden-files: true", workflow)
         self.assertIn("Draft Release Assets", publish_doc)
         self.assertIn("Existing published releases are never overwritten.", publish_doc)
+        self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", publish_doc)
 
     def test_write_release_package_artifacts_outputs_integrity_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -31,6 +31,8 @@ it uses `docs/releases/<version>.md`.
 - `release-check` must pass.
 - The built wheel must install in a clean workflow environment.
 - `verify-release` must return `repomori.release_verify.v1` with status `pass`.
+- GPG signatures are created when `REPOMORI_RELEASE_GPG_PRIVATE_KEY` is
+  configured.
 - Existing published releases are never overwritten.
 - Existing draft releases are only updated when `overwrite_draft=true`.
 - Assets are replaced with `gh release upload --clobber` only for draft releases.
@@ -48,9 +50,20 @@ The draft release receives:
 - `release-verify.md`
 - `release-candidate.json`
 - `release-candidate.md`
+- optional `*.asc` detached signatures for integrity artifacts
 
 The workflow also uploads a CI artifact bundle containing the same release
 package plus release-check JSON, Markdown, and drift telemetry.
+
+## Signing Secrets
+
+Configure these GitHub Actions secrets to emit signatures:
+
+- `REPOMORI_RELEASE_GPG_PRIVATE_KEY`: ASCII-armored private signing key.
+- `REPOMORI_RELEASE_GPG_PASSPHRASE`: optional passphrase for that key.
+
+Keep the matching public key in a durable company location so reviewers can
+verify `.asc` files independently.
 
 ## Review Before Publishing
 

@@ -76,6 +76,7 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - `release-candidate.json`
 - `release-candidate.md`
 - `release-check` JSON, Markdown, and drift log
+- optional `*.asc` GPG signatures when release signing secrets are configured
 
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
 SBOM verification guidance.

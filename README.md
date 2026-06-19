@@ -279,6 +279,8 @@ python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --
 
 The release-candidate workflow writes `release-verify.json` and
 `release-verify.md` automatically for reviewers.
+When GPG signing secrets are configured, release workflows also emit detached
+`.asc` signatures for integrity artifacts.
 
 `build --base` creates an incremental pack. It hashes current files, reuses
 unchanged file records, compressed chunks, symbols, imports, and search index

@@ -14,6 +14,7 @@ product.
 - Tamper-evident snapshot timelines and anchor verification.
 - Release package checksums, provenance, minimal SPDX SBOM artifacts, and local
   `verify-release` validation.
+- Optional GPG detached signatures for release integrity artifacts.
 - Draft-first GitHub Release publishing workflow with verifier-gated assets.
 - JSON schema catalog for supported reports and bridge contracts.
 - Agent JSON-lines bridge and dependency-free MCP stdio bridge.
@@ -65,7 +66,8 @@ Before using RepoMori in a company setting:
 
 ## Recommended Enterprise Next Steps
 
-- Add signed checksums and signed provenance.
+- Add durable public-key distribution and key-rotation guidance for signed
+  release artifacts.
 - Add external timestamping or transparency-log publication.
 - Add policy files for stricter CI drift and artifact retention.
 - Add documented backup and restore guidance for snapshot timelines.
