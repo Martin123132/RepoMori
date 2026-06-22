@@ -324,6 +324,13 @@ jobs:
           assert "Privacy Guard Demo Preflight" in checklist
           assert "privacy-guard-demo --mode clean" in checklist
           assert "privacy-guard-demo --mode fail" in checklist
+          assert "Release-Check Privacy Demo Result" in checklist
+          assert "Privacy guard demo status: `pass`" in checklist
+          assert "Clean demo guard status: `pass`" in checklist
+          assert "Failing demo guard status: `fail`" in checklist
+          assert "Leaked marker confirmation: `none`" in checklist
+          assert "`secret_like_value`" in checklist
+          assert "`raw_dump_key`" in checklist
           assert "Privacy-guard demo clean/fail expectations were run" in checklist
           assert "Final reviewer decision: `pending`" in checklist
           assert "RepoMori Release Candidate Artifact Index" in index

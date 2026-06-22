@@ -329,7 +329,9 @@ synthetic failure path locally before a real candidate run; it reports
 categories/counts only and does not tag, publish, upload assets, or inspect
 private release material. The generated release-review checklist records the
 clean/fail demo expectations so reviewers confirm that preflight before
-candidate upload.
+candidate upload, plus the executable `release-check` privacy demo status,
+clean/fail guard statuses, redacted issue category counts, and leaked-marker
+confirmation.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
 The policy report includes the checked profile name and a reviewer decision:

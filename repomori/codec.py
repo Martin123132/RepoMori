@@ -10785,6 +10785,7 @@ def format_release_review_checklist_markdown(
     review = policy.get("review", {}) if isinstance(policy.get("review"), dict) else {}
     diagnostics = policy.get("diagnostics", {}) if isinstance(policy.get("diagnostics"), dict) else {}
     reasons = diagnostics.get("reasons") if isinstance(diagnostics.get("reasons"), list) else []
+    privacy_demo = _release_review_privacy_demo_from_evidence(evidence)
 
     def field(value: Any, default: str = "unknown") -> Any:
         return default if value in (None, "") else value
@@ -10860,6 +10861,25 @@ def format_release_review_checklist_markdown(
             "- Failing expectation: top-level `status` is `pass`, embedded `privacy_guard.status` is `fail`, and only redacted category/count summaries are shown.",
             "- Treat any echoed local path, temp path, secret-like value, private URL, raw dump, or proprietary material as a blocker before upload.",
             "",
+            "### Release-Check Privacy Demo Result",
+            "",
+            f"- Privacy guard demo status: `{privacy_demo.get('status')}`",
+            f"- Clean demo guard status: `{privacy_demo.get('clean_guard_status')}`",
+            f"- Failing demo guard status: `{privacy_demo.get('failing_guard_status')}`",
+            f"- Leaked marker confirmation: `{privacy_demo.get('leaked_marker_confirmation')}`",
+        ]
+    )
+    issue_counts = privacy_demo.get("issue_counts_by_code")
+    if isinstance(issue_counts, dict) and issue_counts:
+        lines.extend(["", "| Issue Category | Count |", "| --- | ---: |"])
+        for code, count in sorted(issue_counts.items()):
+            lines.append(f"| `{code}` | {count} |")
+    else:
+        lines.extend(["", "No privacy-guard demo issue category counts were reported by release-check."])
+
+    lines.extend(
+        [
+            "",
             "## Reviewer Checklist",
             "",
             "- [ ] Selected policy profile matches the release situation and `docs/release-policy-selection.md`.",
@@ -10880,6 +10900,29 @@ def format_release_review_checklist_markdown(
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _release_review_privacy_demo_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    reports = evidence.get("reports") if isinstance(evidence.get("reports"), dict) else {}
+    release_check = reports.get("release_check") if isinstance(reports.get("release_check"), dict) else {}
+    release_check_summary = release_check.get("summary") if isinstance(release_check.get("summary"), dict) else {}
+    checks = release_check.get("checks") if isinstance(release_check.get("checks"), dict) else {}
+    privacy_demo = checks.get("privacy_guard_demo") if isinstance(checks.get("privacy_guard_demo"), dict) else {}
+    privacy_summary = privacy_demo.get("summary") if isinstance(privacy_demo.get("summary"), dict) else {}
+    leaked_marker_codes = privacy_summary.get("leaked_marker_codes")
+    leaked_codes = [str(item) for item in leaked_marker_codes] if isinstance(leaked_marker_codes, list) else []
+    leaked_marker_confirmation = "none" if not leaked_codes else f"detected ({len(leaked_codes)} marker categories)"
+    return {
+        "status": privacy_demo.get("status") or release_check_summary.get("privacy_guard_demo_status") or "not_reported",
+        "clean_guard_status": privacy_summary.get("clean_guard_status") or "not_reported",
+        "failing_guard_status": privacy_summary.get("failing_guard_status") or "not_reported",
+        "issue_counts_by_code": (
+            privacy_summary.get("observed_issue_counts_by_code")
+            if isinstance(privacy_summary.get("observed_issue_counts_by_code"), dict)
+            else {}
+        ),
+        "leaked_marker_confirmation": leaked_marker_confirmation,
+    }
 
 
 def format_release_candidate_artifact_index_markdown(

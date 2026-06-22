@@ -156,7 +156,31 @@ class RepoMoriCodecTests(unittest.TestCase):
                 {
                     "schema_version": "repomori.release_check.v1",
                     "status": "pass",
-                    "summary": {"failed_checks": [], "scan_findings": 0},
+                    "summary": {
+                        "failed_checks": [],
+                        "scan_findings": 0,
+                        "privacy_guard_demo_status": "pass",
+                    },
+                    "checks": {
+                        "privacy_guard_demo": {
+                            "name": "privacy_guard_demo",
+                            "ok": True,
+                            "status": "pass",
+                            "summary": {
+                                "clean_guard_status": "pass",
+                                "failing_guard_status": "fail",
+                                "observed_issue_counts_by_code": {
+                                    "local_absolute_path": 1,
+                                    "private_url": 1,
+                                    "proprietary_marker": 1,
+                                    "raw_dump_key": 2,
+                                    "secret_like_value": 1,
+                                    "temp_directory": 1,
+                                },
+                                "leaked_marker_codes": [],
+                            },
+                        }
+                    },
                 }
             ),
             encoding="utf-8",
@@ -1678,6 +1702,13 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("Privacy Guard Demo Preflight", workflow)
         self.assertIn("privacy-guard-demo --mode clean", workflow)
         self.assertIn("privacy-guard-demo --mode fail", workflow)
+        self.assertIn("Release-Check Privacy Demo Result", workflow)
+        self.assertIn("Privacy guard demo status: `pass`", workflow)
+        self.assertIn("Clean demo guard status: `pass`", workflow)
+        self.assertIn("Failing demo guard status: `fail`", workflow)
+        self.assertIn("Leaked marker confirmation: `none`", workflow)
+        self.assertIn("`secret_like_value`", workflow)
+        self.assertIn("`raw_dump_key`", workflow)
         self.assertIn("Privacy-guard demo clean/fail expectations were run", workflow)
         self.assertIn("Final reviewer decision: `pending`", workflow)
         self.assertIn("RepoMori Release Candidate Artifact Index", workflow)
@@ -1711,6 +1742,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("diagnostics references", release_doc)
         self.assertIn("fill-in reviewer decision log", release_doc)
         self.assertIn("clean/fail demo expectations", readme)
+        self.assertIn("release-check privacy demo status", release_doc)
+        self.assertIn("leaked-marker confirmation", release_doc)
+        self.assertIn("executable `release-check` privacy demo status", readme)
+        self.assertIn("redacted issue category counts", readme)
         self.assertIn("first-stop reviewer map", release_doc)
         self.assertIn("Sign release integrity artifacts", workflow)
         self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", workflow)
@@ -1808,6 +1843,13 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("Privacy Guard Demo Preflight", workflow)
         self.assertIn("privacy-guard-demo --mode clean", workflow)
         self.assertIn("privacy-guard-demo --mode fail", workflow)
+        self.assertIn("Release-Check Privacy Demo Result", workflow)
+        self.assertIn("Privacy guard demo status: `pass`", workflow)
+        self.assertIn("Clean demo guard status: `pass`", workflow)
+        self.assertIn("Failing demo guard status: `fail`", workflow)
+        self.assertIn("Leaked marker confirmation: `none`", workflow)
+        self.assertIn("`secret_like_value`", workflow)
+        self.assertIn("`raw_dump_key`", workflow)
         self.assertIn("Privacy-guard demo clean/fail expectations were run", workflow)
         self.assertIn("Final reviewer decision: `pending`", workflow)
         self.assertIn("RepoMori Release Candidate Artifact Index", workflow)
@@ -2118,6 +2160,32 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("Clean expectation: top-level `status` is `pass`", markdown)
             self.assertIn("Failing expectation: top-level `status` is `pass`", markdown)
             self.assertIn("only redacted category/count summaries are shown", markdown)
+            self.assertIn("### Release-Check Privacy Demo Result", markdown)
+            self.assertIn("Privacy guard demo status: `pass`", markdown)
+            self.assertIn("Clean demo guard status: `pass`", markdown)
+            self.assertIn("Failing demo guard status: `fail`", markdown)
+            self.assertIn("Leaked marker confirmation: `none`", markdown)
+            self.assertIn("| `secret_like_value` | 1 |", markdown)
+            self.assertIn("| `raw_dump_key` | 2 |", markdown)
+            raw_values = [
+                "C:" + "\\" + "Users" + "\\" + "reviewer" + "\\" + "Temp" + "\\" + "SYNTHETIC_PATH.txt",
+                "api" + "_key=" + "s" + "k-" + "syntheticplaceholdernotreal",
+                "https://" + "internal" + ".example" + ".local/synthetic",
+                "proprietary" + " source",
+                "SYNTHETIC_RAW_DUMP_PLACEHOLDER",
+            ]
+            for raw_value in raw_values:
+                self.assertNotIn(raw_value, markdown)
+            evidence_with_leaks = json.loads(json.dumps(evidence))
+            privacy_summary = evidence_with_leaks["reports"]["release_check"]["checks"]["privacy_guard_demo"]["summary"]
+            privacy_summary["leaked_marker_codes"] = [
+                "api" + "_key=" + "s" + "k-" + "syntheticplaceholdernotreal",
+                "https://" + "internal" + ".example" + ".local/synthetic",
+            ]
+            leak_markdown = format_release_review_checklist_markdown(report, evidence_with_leaks)
+            self.assertIn("Leaked marker confirmation: `detected (2 marker categories)`", leak_markdown)
+            self.assertNotIn("api" + "_key=" + "s" + "k-" + "syntheticplaceholdernotreal", leak_markdown)
+            self.assertNotIn("https://" + "internal" + ".example" + ".local/synthetic", leak_markdown)
             self.assertIn("- [ ] Selected policy profile matches the release situation", markdown)
             self.assertIn("Privacy-guard demo clean/fail expectations were run", markdown)
             self.assertIn("Final reviewer decision: `pending`", markdown)

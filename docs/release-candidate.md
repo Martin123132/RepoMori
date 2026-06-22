@@ -116,7 +116,9 @@ Markdown policy artifact also includes a profile preflight section linking to
 so reviewers can confirm the selected profile before approving the candidate.
 It also writes `release-review-checklist.md`, a fill-in reviewer decision log
 covering the selected profile, policy outcome, diagnostics reviewed,
-artifact hash/provenance checks, and final reviewer decision.
+artifact hash/provenance checks, release-check privacy demo status, clean/fail
+guard statuses, redacted issue category counts, leaked-marker confirmation, and
+final reviewer decision.
 The companion `release-artifact-index.md` is a first-stop reviewer map of the
 expected candidate artifacts, selected policy profile, policy outcome, and
 diagnostics references. It also shows the generation order: provisional
