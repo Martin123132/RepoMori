@@ -27,7 +27,10 @@ If `tag` is omitted, the workflow uses `v<version>`. If `notes_file` is omitted,
 it uses `docs/releases/<version>.md`.
 If `release_policy` is omitted, the workflow uses
 `tests/fixtures/release-policy-basic.json`; point it at a stricter internal
-policy file when signature/public-key requirements are mandatory.
+policy file when signature/public-key requirements are mandatory. Checked
+examples are available as `release-policy-dev-unsigned.json`,
+`release-policy-enterprise-signed.json`, and
+`release-policy-strict-no-warnings.json` under `tests/fixtures`.
 
 ## Safety Rules
 

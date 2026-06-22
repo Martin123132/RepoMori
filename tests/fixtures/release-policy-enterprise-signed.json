@@ -1,0 +1,38 @@
+{
+  "schema_version": "repomori.release_policy.v1",
+  "require": {
+    "checksums": true,
+    "provenance": true,
+    "sbom": true,
+    "release_verify_report": true,
+    "release_verify_markdown": true,
+    "release_evidence": true,
+    "release_evidence_markdown": true,
+    "release_check": true,
+    "signatures": true,
+    "public_key": true
+  },
+  "allowed_statuses": {
+    "release_verify": [
+      "pass"
+    ],
+    "release_evidence": [
+      "pass"
+    ],
+    "release_check": [
+      "pass"
+    ],
+    "signatures": [
+      "signed"
+    ]
+  },
+  "required_schemas": {
+    "release_candidate": "repomori.release_candidate.v1",
+    "provenance": "repomori.release_provenance.v1",
+    "sbom": "SPDX-2.3",
+    "release_verify": "repomori.release_verify.v1",
+    "release_evidence": "repomori.release_evidence.v1",
+    "release_check": "repomori.release_check.v1"
+  },
+  "max_errors": 0
+}

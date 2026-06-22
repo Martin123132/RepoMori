@@ -112,6 +112,37 @@ For a stricter release lane, require the complete signature set and public key:
 Signature presence is not the same as identity trust. Reviewers still need to
 verify the public key fingerprint through an independent channel.
 
+## Checked Policy Profiles
+
+RepoMori keeps small policy examples under `tests/fixtures` so the examples are
+also executable regression fixtures:
+
+| Profile | File | Intended Use |
+| --- | --- | --- |
+| Basic workflow default | `release-policy-basic.json` | Candidate workflow gate with checksums, provenance, SBOM, release evidence, and release-check required. Unsigned and signed packages are accepted. |
+| Unsigned OSS/dev candidate | `release-policy-dev-unsigned.json` | Public or development candidate review before release signing is configured. It still requires the release evidence bundle and release-check pass. |
+| Signed enterprise package | `release-policy-enterprise-signed.json` | Procurement or customer review lane where the complete detached signature set and `repomori-release-public-key.asc` must be present. |
+| Strict no-warnings | `release-policy-strict-no-warnings.json` | Final verification lane that rejects any observed release verification or evidence warnings. |
+
+Use a checked profile directly:
+
+```powershell
+python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate `
+  --policy D:\Dev\RepoMori\tests\fixtures\release-policy-enterprise-signed.json `
+  --json
+```
+
+Or pass a profile to the release workflows:
+
+```powershell
+gh workflow run release-candidate.yml `
+  --repo Martin123132/RepoMori `
+  --ref main `
+  -f version=0.2.1 `
+  -f ref=main `
+  -f release_policy=tests/fixtures/release-policy-strict-no-warnings.json
+```
+
 ## Recommended Use
 
 The `release-candidate` and `publish-release` workflows expose a

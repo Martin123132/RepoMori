@@ -111,6 +111,61 @@ from repomori.codec import (
 
 
 class RepoMoriCodecTests(unittest.TestCase):
+    def _release_policy_package(
+        self,
+        tmp_path: Path,
+        *,
+        signed: bool = False,
+        evidence_warning_count: int = 0,
+    ) -> Path:
+        root = tmp_path / ".repomori-release-candidate"
+        dist = root / "dist"
+        dist.mkdir(parents=True)
+        (dist / "repomori-0.2.0-py3-none-any.whl").write_bytes(b"wheel-bytes")
+        (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+        write_release_package_artifacts(
+            root,
+            version="0.2.0",
+            commit="abc123",
+            ref="main",
+            run_id="42",
+            repository="Martin123132/RepoMori",
+            generated_at=1700000000,
+        )
+        verify_report = verify_release_package(root)
+        (root / "release-verify.json").write_text(json.dumps(verify_report, indent=2), encoding="utf-8")
+        (root / "release-verify.md").write_text(format_release_verify_markdown(verify_report), encoding="utf-8")
+        if signed:
+            for target in ("checksums.txt", "release-provenance.json", "sbom.spdx.json", "release-verify.json"):
+                (root / f"{target}.asc").write_text(f"signature for {target}\n", encoding="utf-8")
+            (root / "repomori-release-public-key.asc").write_text("public-key\n", encoding="utf-8")
+
+        release_check = tmp_path / "release-check.json"
+        release_check.write_text(
+            json.dumps(
+                {
+                    "schema_version": "repomori.release_check.v1",
+                    "status": "pass",
+                    "summary": {"failed_checks": [], "scan_findings": 0},
+                }
+            ),
+            encoding="utf-8",
+        )
+        build_release_evidence(root, release_check=release_check, out_dir=root)
+        if evidence_warning_count:
+            evidence_path = root / "release-evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["status"] = "pass"
+            evidence.setdefault("summary", {})["warning_count"] = evidence_warning_count
+            evidence["warnings"] = [
+                {
+                    "code": "fixture_warning",
+                    "message": "Synthetic reviewer warning used to test strict release policy thresholds.",
+                }
+            ]
+            evidence_path.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+        return root
+
     def test_build_query_and_restore(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo, pack = self._demo_pack(Path(tmp))
@@ -1821,6 +1876,78 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("release_policy_required_report_missing", codes)
             self.assertIn("release_policy_signatures_missing", codes)
             self.assertIn("release_policy_status_not_allowed", codes)
+
+    def test_release_policy_example_fixtures_are_documented_and_valid(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        release_policy_doc = (repo_root / "docs/release-policy.md").read_text(encoding="utf-8")
+        readme = (repo_root / "README.md").read_text(encoding="utf-8")
+        fixture_names = (
+            "release-policy-basic.json",
+            "release-policy-dev-unsigned.json",
+            "release-policy-enterprise-signed.json",
+            "release-policy-strict-no-warnings.json",
+        )
+
+        for name in fixture_names:
+            with self.subTest(name=name):
+                policy = json.loads((repo_root / "tests" / "fixtures" / name).read_text(encoding="utf-8"))
+                self.assertEqual(policy["schema_version"], "repomori.release_policy.v1")
+                self.assertIn(name, release_policy_doc)
+                self.assertIn(name, readme)
+
+    def test_release_policy_dev_unsigned_example_accepts_unsigned_package(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        policy = repo_root / "tests/fixtures/release-policy-dev-unsigned.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._release_policy_package(Path(tmp), signed=False)
+
+            report = verify_release_package(root, policy=policy)
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["policy"]["status"], "pass")
+            self.assertEqual(report["policy"]["summary"]["signature_status"], "unsigned")
+
+    def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        policy = repo_root / "tests/fixtures/release-policy-enterprise-signed.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            unsigned_root = self._release_policy_package(Path(tmp) / "unsigned", signed=False)
+
+            unsigned_report = verify_release_package(unsigned_root, policy=policy)
+
+            self.assertEqual(unsigned_report["status"], "fail")
+            unsigned_codes = {violation["code"] for violation in unsigned_report["policy"]["violations"]}
+            self.assertIn("release_policy_required_file_missing", unsigned_codes)
+            self.assertIn("release_policy_signatures_missing", unsigned_codes)
+            self.assertIn("release_policy_status_not_allowed", unsigned_codes)
+
+            signed_root = self._release_policy_package(Path(tmp) / "signed", signed=True)
+            signed_report = verify_release_package(signed_root, policy=policy)
+
+            self.assertEqual(signed_report["status"], "pass")
+            self.assertEqual(signed_report["policy"]["status"], "pass")
+            self.assertEqual(signed_report["policy"]["summary"]["signature_status"], "signed")
+            self.assertEqual(signed_report["policy"]["summary"]["public_key_status"], "present")
+
+    def test_release_policy_strict_no_warnings_example_blocks_warning_drift(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        policy = repo_root / "tests/fixtures/release-policy-strict-no-warnings.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._release_policy_package(Path(tmp), evidence_warning_count=1)
+
+            report = verify_release_package(root, policy=policy)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["policy"]["status"], "fail")
+            violations = report["policy"]["violations"]
+            self.assertTrue(
+                any(
+                    item["code"] == "release_policy_threshold_exceeded"
+                    and item["expected"] == 0
+                    and item["actual"] == 1
+                    for item in violations
+                )
+            )
 
     def test_build_release_evidence_outputs_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

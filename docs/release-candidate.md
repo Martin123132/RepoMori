@@ -88,6 +88,10 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
 SBOM verification guidance. See [release-signing.md](release-signing.md) for
 signing setup and key rotation.
+See [release-policy.md](release-policy.md) for checked policy profiles such as
+`release-policy-dev-unsigned.json`,
+`release-policy-enterprise-signed.json`, and
+`release-policy-strict-no-warnings.json`.
 
 After downloading or unpacking the workflow artifact, verify the whole integrity
 bundle locally:

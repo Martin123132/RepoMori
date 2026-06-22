@@ -303,6 +303,10 @@ The release-candidate workflow writes `release-verify.json`,
 release policy is present.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
+Checked reviewer profiles live in `tests/fixtures`:
+`release-policy-basic.json`, `release-policy-dev-unsigned.json`,
+`release-policy-enterprise-signed.json`, and
+`release-policy-strict-no-warnings.json`.
 `release-evidence` combines verification, release-check status, signatures,
 artifact hashes, and workflow metadata into `repomori.release_evidence.v1`:
 
