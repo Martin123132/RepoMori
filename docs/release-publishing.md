@@ -31,6 +31,8 @@ it uses `docs/releases/<version>.md`.
 - `release-check` must pass.
 - The built wheel must install in a clean workflow environment.
 - `verify-release` must return `repomori.release_verify.v1` with status `pass`.
+- If a release policy is used, `verify-release --policy <file>` must also
+  report `policy.status = pass`.
 - GPG signatures are created when `REPOMORI_RELEASE_GPG_PRIVATE_KEY` is
   configured.
 - Existing published releases are never overwritten.

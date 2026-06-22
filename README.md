@@ -175,7 +175,7 @@ repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
 repomori release-check [repo] [--baseline file] [--fail-on low] [--drift-policy file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--drift-log file] [--json]
 repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--compat-handoff dir] [--compat-verify-pack] [--contract-fixture file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
-repomori verify-release <release-package-dir> [--format markdown|json] [--out file] [--json]
+repomori verify-release <release-package-dir> [--policy file] [--format markdown|json] [--out file] [--json]
 repomori release-evidence <release-package-dir> [--repo repo] [--release-check file] [--release-health file] [--out-dir dir] [--format markdown|json] [--out file] [--json]
 repomori drift-summary <log> [--limit n] [--json]
 repomori handoff-health-summary <log> [--limit n] [--format markdown|json] [--out file] [--json]
@@ -294,10 +294,13 @@ artifacts, byte sizes, and SHA-256 hashes:
 
 ```powershell
 python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --json
+python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --policy D:\Dev\RepoMori\tests\fixtures\release-policy-basic.json --json
 ```
 
 The release-candidate workflow writes `release-verify.json` and
 `release-verify.md` automatically for reviewers.
+`--policy` adds a deterministic `repomori.release_policy.v1` gate for required
+release evidence, schema versions, signatures, and warning/error thresholds.
 `release-evidence` combines verification, release-check status, signatures,
 artifact hashes, and workflow metadata into `repomori.release_evidence.v1`:
 
@@ -566,6 +569,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Release health](docs/release-health.md)
 - [Release integrity](docs/release-integrity.md)
 - [Release evidence](docs/release-evidence.md)
+- [Release policy](docs/release-policy.md)
 - [Release signing](docs/release-signing.md)
 - [Release candidate process](docs/release-candidate.md)
 - [Release publishing](docs/release-publishing.md)

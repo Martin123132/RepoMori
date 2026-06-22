@@ -389,6 +389,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "root", "resolved_root", "summary", "checks", "artifacts"],
     },
     {
+        "schema_version": "repomori.release_policy.v1",
+        "kind": "policy",
+        "title": "Release verification policy",
+        "producer": "evaluate_release_policy",
+        "required_fields": ["schema_version"],
+    },
+    {
         "schema_version": "repomori.release_evidence.v1",
         "kind": "report",
         "title": "Release evidence bundle",
@@ -9333,7 +9340,7 @@ def _format_release_package_manifest_markdown(manifest: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def verify_release_package(root: Path | str) -> dict[str, Any]:
+def verify_release_package(root: Path | str, *, policy: Path | str | dict[str, Any] | None = None) -> dict[str, Any]:
     """Verify a release package manifest, checksums, provenance, and SBOM."""
 
     started = time.time()
@@ -9358,7 +9365,7 @@ def verify_release_package(root: Path | str) -> dict[str, Any]:
             "Release package root could not be resolved.",
             {"requested_root": str(requested_root)},
         )
-        return _release_verify_report(
+        report = _release_verify_report(
             requested_root,
             None,
             started=started,
@@ -9367,6 +9374,7 @@ def verify_release_package(root: Path | str) -> dict[str, Any]:
             warnings=warnings,
             errors=errors,
         )
+        return _release_verify_apply_policy(report, requested_root, policy)
 
     _release_verify_add_check(
         checks,
@@ -9644,7 +9652,7 @@ def verify_release_package(root: Path | str) -> dict[str, Any]:
         {"missing": missing_sbom_packages},
     )
 
-    return _release_verify_report(
+    report = _release_verify_report(
         requested_root,
         resolved_root,
         started=started,
@@ -9660,6 +9668,107 @@ def verify_release_package(root: Path | str) -> dict[str, Any]:
         wheel_present=wheel_present,
         source_archive_present=source_present,
     )
+    return _release_verify_apply_policy(report, resolved_root, policy)
+
+
+def evaluate_release_policy(
+    package_dir: Path | str,
+    verify_report: dict[str, Any],
+    policy: Path | str | dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Evaluate a release package verification report against a small policy."""
+
+    root = Path(package_dir).resolve()
+    loaded, policy_path, load_error = _release_policy_load(policy)
+    checks: list[dict[str, Any]] = []
+    violations: list[dict[str, Any]] = []
+    if load_error is not None:
+        violations.append(load_error)
+        loaded = {}
+
+    schema_version = loaded.get("schema_version") if isinstance(loaded, dict) else None
+    if schema_version not in {None, "repomori.release_policy.v1"}:
+        violations.append(
+            {
+                "code": "release_policy_schema_mismatch",
+                "message": "Release policy has an unexpected schema_version.",
+                "expected": "repomori.release_policy.v1",
+                "actual": schema_version,
+                "path": policy_path,
+            }
+        )
+    _release_policy_add_check(
+        checks,
+        "policy_schema",
+        "pass" if not any(item.get("code") == "release_policy_schema_mismatch" for item in violations) else "fail",
+        "Release policy schema is supported.",
+        {"expected": "repomori.release_policy.v1", "actual": schema_version},
+    )
+
+    settings = _release_policy_settings(loaded if isinstance(loaded, dict) else {}, policy_path)
+    release_evidence = _release_policy_load_package_json(root / "release-evidence.json")
+    signature_report = (
+        release_evidence.get("checks", {}).get("signatures")
+        if isinstance(release_evidence, dict) and isinstance(release_evidence.get("checks"), dict)
+        else _release_evidence_signature_report(root)
+    )
+    if not isinstance(signature_report, dict):
+        signature_report = _release_evidence_signature_report(root)
+
+    _release_policy_check_requirements(
+        root,
+        settings.get("require", {}),
+        release_evidence,
+        signature_report,
+        checks,
+        violations,
+    )
+    _release_policy_check_statuses(
+        verify_report,
+        release_evidence,
+        signature_report,
+        settings.get("allowed_statuses", {}),
+        checks,
+        violations,
+    )
+    _release_policy_check_schemas(
+        verify_report,
+        release_evidence,
+        settings.get("required_schemas", {}),
+        checks,
+        violations,
+    )
+    _release_policy_check_thresholds(
+        verify_report,
+        release_evidence,
+        settings,
+        checks,
+        violations,
+    )
+
+    status = "fail" if violations or any(check.get("status") == "fail" for check in checks) else "pass"
+    evidence_summary = release_evidence.get("summary", {}) if isinstance(release_evidence, dict) else {}
+    return {
+        "schema_version": "repomori.release_policy.v1",
+        "status": status,
+        "path": policy_path,
+        "summary": {
+            "requirement_count": sum(1 for value in settings.get("require", {}).values() if value),
+            "check_count": len(checks),
+            "violation_count": len(violations),
+            "release_verify_status": verify_report.get("status"),
+            "release_evidence_status": release_evidence.get("status") if isinstance(release_evidence, dict) else None,
+            "release_check_status": _release_policy_evidence_check_status(release_evidence, "release_check"),
+            "release_health_status": _release_policy_evidence_check_status(release_evidence, "release_health"),
+            "signature_status": signature_report.get("status"),
+            "public_key_status": signature_report.get("public_key_status"),
+            "observed_warning_count": _release_policy_observed_count(verify_report, release_evidence, "warning_count"),
+            "observed_error_count": _release_policy_observed_count(verify_report, release_evidence, "error_count"),
+        },
+        "settings": settings,
+        "checks": checks,
+        "violations": violations,
+    }
 
 
 def format_release_verify_markdown(report: dict[str, Any]) -> str:
@@ -9678,6 +9787,7 @@ def format_release_verify_markdown(report: dict[str, Any]) -> str:
         f"- Checked files: `{summary.get('checked_files', 0)}`",
         f"- Errors: `{summary.get('error_count', 0)}`",
         f"- Warnings: `{summary.get('warning_count', 0)}`",
+        f"- Policy: `{summary.get('policy_status', 'not_applied')}`",
         "",
         "## Checks",
         "",
@@ -9710,7 +9820,387 @@ def format_release_verify_markdown(report: dict[str, Any]) -> str:
         for warning in report["warnings"]:
             path = f" `{warning.get('path')}`" if warning.get("path") else ""
             lines.append(f"- `{warning.get('code')}`{path} {warning.get('message')}")
+    policy = report.get("policy")
+    if isinstance(policy, dict):
+        lines.extend(["", "## Policy", ""])
+        lines.append(f"- Status: `{policy.get('status')}`")
+        lines.append(f"- Path: `{policy.get('path')}`")
+        summary = policy.get("summary", {})
+        lines.append(f"- Violations: `{summary.get('violation_count', 0)}`")
+        if policy.get("violations"):
+            lines.extend(["", "### Policy Violations", ""])
+            for violation in policy.get("violations", []):
+                path = f" `{violation.get('path')}`" if violation.get("path") else ""
+                lines.append(f"- `{violation.get('code')}`{path} {violation.get('message')}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _release_verify_apply_policy(
+    report: dict[str, Any],
+    package_root: Path,
+    policy: Path | str | dict[str, Any] | None,
+) -> dict[str, Any]:
+    if policy is None:
+        return report
+    policy_report = evaluate_release_policy(package_root, report, policy)
+    report["policy"] = policy_report
+    summary = report.setdefault("summary", {})
+    summary["policy_status"] = policy_report.get("status")
+    summary["policy_violation_count"] = policy_report.get("summary", {}).get("violation_count", 0)
+    _release_verify_add_check(
+        report.setdefault("checks", []),
+        "release_policy",
+        policy_report.get("status", "fail"),
+        "Release package satisfies the configured verification policy."
+        if policy_report.get("status") == "pass"
+        else "Release package does not satisfy the configured verification policy.",
+        {
+            "policy": policy_report.get("path"),
+            "violations": policy_report.get("summary", {}).get("violation_count", 0),
+        },
+    )
+    if policy_report.get("status") == "fail":
+        report["status"] = "fail"
+    return report
+
+
+def _release_policy_load(policy: Path | str | dict[str, Any] | None) -> tuple[dict[str, Any], str | None, dict[str, Any] | None]:
+    if policy is None:
+        return {}, None, None
+    if isinstance(policy, dict):
+        return dict(policy), None, None
+    path = Path(policy).resolve()
+    if not path.is_file():
+        return (
+            {},
+            str(path),
+            {
+                "code": "release_policy_not_found",
+                "path": str(path),
+                "message": "Release policy file was not found.",
+            },
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        return (
+            {},
+            str(path),
+            {
+                "code": "release_policy_json_invalid",
+                "path": str(path),
+                "message": f"Release policy must be valid JSON: {exc}",
+            },
+        )
+    if not isinstance(payload, dict):
+        return (
+            {},
+            str(path),
+            {
+                "code": "release_policy_not_object",
+                "path": str(path),
+                "message": "Release policy JSON must contain an object.",
+            },
+        )
+    return payload, str(path), None
+
+
+def _release_policy_settings(policy: dict[str, Any], path: str | None) -> dict[str, Any]:
+    require = policy.get("require", {})
+    allowed_statuses = policy.get("allowed_statuses", policy.get("allowed_status", {}))
+    required_schemas = policy.get("required_schemas", {})
+    return {
+        "path": path,
+        "schema_version": policy.get("schema_version"),
+        "require": {str(key): bool(value) for key, value in require.items()} if isinstance(require, dict) else {},
+        "allowed_statuses": {
+            str(key): _release_policy_allowed_statuses(value)
+            for key, value in allowed_statuses.items()
+        } if isinstance(allowed_statuses, dict) else {},
+        "required_schemas": {
+            str(key): str(value)
+            for key, value in required_schemas.items()
+            if isinstance(value, str)
+        } if isinstance(required_schemas, dict) else {},
+        "max_warnings": _release_policy_nonnegative_int(policy.get("max_warnings")),
+        "max_errors": _release_policy_nonnegative_int(policy.get("max_errors")),
+    }
+
+
+def _release_policy_allowed_statuses(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value if isinstance(item, str)]
+    return []
+
+
+def _release_policy_nonnegative_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        converted = int(value)
+    except (TypeError, ValueError):
+        return None
+    return converted if converted >= 0 else None
+
+
+def _release_policy_load_package_json(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _release_policy_check_requirements(
+    root: Path,
+    require: dict[str, bool],
+    release_evidence: dict[str, Any] | None,
+    signature_report: dict[str, Any],
+    checks: list[dict[str, Any]],
+    violations: list[dict[str, Any]],
+) -> None:
+    file_requirements = {
+        "manifest": "release-candidate.json",
+        "checksums": "checksums.txt",
+        "provenance": "release-provenance.json",
+        "sbom": "sbom.spdx.json",
+        "release_verify_report": "release-verify.json",
+        "release_verify_markdown": "release-verify.md",
+        "release_evidence": "release-evidence.json",
+        "release_evidence_markdown": "release-evidence.md",
+        "public_key": "repomori-release-public-key.asc",
+    }
+    for key, relative in file_requirements.items():
+        if not require.get(key):
+            continue
+        present = (root / relative).is_file()
+        parse_ok = key != "release_evidence" or isinstance(release_evidence, dict)
+        ok = present and parse_ok
+        _release_policy_add_check(
+            checks,
+            f"require_{key}",
+            "pass" if ok else "fail",
+            f"Required release artifact is present: {relative}",
+            {"path": relative, "present": present, "parse_ok": parse_ok},
+        )
+        if not ok:
+            violations.append(
+                {
+                    "code": "release_policy_required_file_missing" if not present else "release_policy_required_file_invalid",
+                    "path": relative,
+                    "message": f"Release policy requires a parseable {relative}.",
+                }
+            )
+
+    if require.get("signatures"):
+        missing_signatures = [
+            item.get("signature")
+            for item in signature_report.get("signatures", [])
+            if not item.get("present")
+        ]
+        ok = not missing_signatures and signature_report.get("status") == "signed"
+        _release_policy_add_check(
+            checks,
+            "require_signatures",
+            "pass" if ok else "fail",
+            "All expected detached signature files are present.",
+            {"missing": missing_signatures, "signature_status": signature_report.get("status")},
+        )
+        if not ok:
+            violations.append(
+                {
+                    "code": "release_policy_signatures_missing",
+                    "message": "Release policy requires the complete detached signature set.",
+                    "expected": "signed",
+                    "actual": signature_report.get("status"),
+                    "missing": missing_signatures,
+                }
+            )
+
+    for key in ("release_check", "release_health"):
+        if not require.get(key):
+            continue
+        status = _release_policy_evidence_check_status(release_evidence, key)
+        ok = status not in {None, "missing", "not_provided"}
+        _release_policy_add_check(
+            checks,
+            f"require_{key}",
+            "pass" if ok else "fail",
+            f"Release evidence includes {key}.",
+            {"status": status},
+        )
+        if not ok:
+            violations.append(
+                {
+                    "code": "release_policy_required_report_missing",
+                    "message": f"Release policy requires {key} in release-evidence.json.",
+                    "expected": "present",
+                    "actual": status,
+                    "path": "release-evidence.json",
+                }
+            )
+
+
+def _release_policy_check_statuses(
+    verify_report: dict[str, Any],
+    release_evidence: dict[str, Any] | None,
+    signature_report: dict[str, Any],
+    allowed_statuses: dict[str, list[str]],
+    checks: list[dict[str, Any]],
+    violations: list[dict[str, Any]],
+) -> None:
+    observed = {
+        "release_verify": verify_report.get("status"),
+        "release_evidence": release_evidence.get("status") if isinstance(release_evidence, dict) else None,
+        "release_check": _release_policy_evidence_check_status(release_evidence, "release_check"),
+        "release_health": _release_policy_evidence_check_status(release_evidence, "release_health"),
+        "signatures": signature_report.get("status"),
+    }
+    for key, allowed in allowed_statuses.items():
+        actual = observed.get(key)
+        ok = bool(allowed) and actual in allowed
+        _release_policy_add_check(
+            checks,
+            f"status_{key}",
+            "pass" if ok else "fail",
+            f"{key} status is allowed by release policy.",
+            {"allowed": allowed, "actual": actual},
+        )
+        if not ok:
+            violations.append(
+                {
+                    "code": "release_policy_status_not_allowed",
+                    "message": f"Release policy does not allow {key} status.",
+                    "expected": allowed,
+                    "actual": actual,
+                }
+            )
+
+
+def _release_policy_check_schemas(
+    verify_report: dict[str, Any],
+    release_evidence: dict[str, Any] | None,
+    required_schemas: dict[str, str],
+    checks: list[dict[str, Any]],
+    violations: list[dict[str, Any]],
+) -> None:
+    observed = {
+        "release_candidate": (verify_report.get("manifest") or {}).get("schema_version") if isinstance(verify_report.get("manifest"), dict) else None,
+        "manifest": (verify_report.get("manifest") or {}).get("schema_version") if isinstance(verify_report.get("manifest"), dict) else None,
+        "provenance": (verify_report.get("provenance") or {}).get("schema_version") if isinstance(verify_report.get("provenance"), dict) else None,
+        "sbom": (verify_report.get("sbom") or {}).get("spdxVersion") if isinstance(verify_report.get("sbom"), dict) else None,
+        "release_verify": verify_report.get("schema_version"),
+        "release_evidence": release_evidence.get("schema_version") if isinstance(release_evidence, dict) else None,
+        "release_check": _release_policy_evidence_check_schema(release_evidence, "release_check"),
+        "release_health": _release_policy_evidence_check_schema(release_evidence, "release_health"),
+    }
+    for key, expected in required_schemas.items():
+        actual = observed.get(key)
+        ok = actual == expected
+        _release_policy_add_check(
+            checks,
+            f"schema_{key}",
+            "pass" if ok else "fail",
+            f"{key} schema matches release policy.",
+            {"expected": expected, "actual": actual},
+        )
+        if not ok:
+            violations.append(
+                {
+                    "code": "release_policy_schema_required",
+                    "message": f"Release policy requires a specific {key} schema.",
+                    "expected": expected,
+                    "actual": actual,
+                }
+            )
+
+
+def _release_policy_check_thresholds(
+    verify_report: dict[str, Any],
+    release_evidence: dict[str, Any] | None,
+    settings: dict[str, Any],
+    checks: list[dict[str, Any]],
+    violations: list[dict[str, Any]],
+) -> None:
+    for field, label in (("max_warnings", "warning_count"), ("max_errors", "error_count")):
+        limit = settings.get(field)
+        if limit is None:
+            continue
+        actual = _release_policy_observed_count(verify_report, release_evidence, label)
+        ok = actual <= limit
+        _release_policy_add_check(
+            checks,
+            field,
+            "pass" if ok else "fail",
+            f"Observed {label} is within release policy threshold.",
+            {"expected_max": limit, "actual": actual},
+        )
+        if not ok:
+            violations.append(
+                {
+                    "code": "release_policy_threshold_exceeded",
+                    "message": f"Release policy threshold exceeded for {label}.",
+                    "expected": limit,
+                    "actual": actual,
+                }
+            )
+
+
+def _release_policy_observed_count(
+    verify_report: dict[str, Any],
+    release_evidence: dict[str, Any] | None,
+    field: str,
+) -> int:
+    total = _release_policy_count_from_summary(verify_report, field)
+    if isinstance(release_evidence, dict):
+        total += _release_policy_count_from_summary(release_evidence, field)
+    return total
+
+
+def _release_policy_count_from_summary(report: dict[str, Any], field: str) -> int:
+    value = report.get("summary", {}).get(field) if isinstance(report.get("summary"), dict) else None
+    return value if isinstance(value, int) else 0
+
+
+def _release_policy_evidence_check_status(release_evidence: dict[str, Any] | None, name: str) -> str | None:
+    if not isinstance(release_evidence, dict):
+        return None
+    checks = release_evidence.get("checks")
+    if not isinstance(checks, dict):
+        return None
+    check = checks.get(name)
+    return check.get("status") if isinstance(check, dict) else None
+
+
+def _release_policy_evidence_check_schema(release_evidence: dict[str, Any] | None, name: str) -> str | None:
+    if not isinstance(release_evidence, dict):
+        return None
+    checks = release_evidence.get("checks")
+    if not isinstance(checks, dict):
+        return None
+    check = checks.get(name)
+    return check.get("schema_version") if isinstance(check, dict) else None
+
+
+def _release_policy_add_check(
+    checks: list[dict[str, Any]],
+    check_id: str,
+    status: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    checks.append(
+        {
+            "id": check_id,
+            "status": status,
+            "message": message,
+            "details": details or {},
+        }
+    )
 
 
 def build_release_evidence(

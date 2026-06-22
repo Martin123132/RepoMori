@@ -39,6 +39,7 @@ from repomori.codec import (
     diagnose_query,
     doctor_snapshot_dir,
     evaluate_handoff_quality,
+    evaluate_release_policy,
     evaluate_pack,
     evaluate_context_quality,
     format_agent_brief_markdown,
@@ -1702,6 +1703,109 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("checksums.txt", markdown)
             self.assertIn("release-provenance.json", markdown)
             self.assertIn("sbom.spdx.json", markdown)
+
+    def test_verify_release_package_policy_passes_with_release_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            root = tmp_path / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            (dist / "repomori-0.2.0-py3-none-any.whl").write_bytes(b"wheel-bytes")
+            (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+            write_release_package_artifacts(
+                root,
+                version="0.2.0",
+                commit="abc123",
+                ref="main",
+                run_id="42",
+                repository="Martin123132/RepoMori",
+                generated_at=1700000000,
+            )
+            verify_report = verify_release_package(root)
+            (root / "release-verify.json").write_text(json.dumps(verify_report, indent=2), encoding="utf-8")
+            (root / "release-verify.md").write_text(format_release_verify_markdown(verify_report), encoding="utf-8")
+            release_check = tmp_path / "release-check.json"
+            release_check.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "repomori.release_check.v1",
+                        "status": "pass",
+                        "summary": {"failed_checks": [], "scan_findings": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            build_release_evidence(root, release_check=release_check, out_dir=root)
+            policy = {
+                "schema_version": "repomori.release_policy.v1",
+                "require": {
+                    "checksums": True,
+                    "provenance": True,
+                    "sbom": True,
+                    "release_verify_report": True,
+                    "release_evidence": True,
+                    "release_check": True,
+                },
+                "allowed_statuses": {
+                    "release_verify": ["pass"],
+                    "release_evidence": ["pass"],
+                    "release_check": ["pass"],
+                    "signatures": ["unsigned"],
+                },
+                "required_schemas": {
+                    "release_candidate": "repomori.release_candidate.v1",
+                    "provenance": "repomori.release_provenance.v1",
+                    "sbom": "SPDX-2.3",
+                    "release_verify": "repomori.release_verify.v1",
+                    "release_evidence": "repomori.release_evidence.v1",
+                    "release_check": "repomori.release_check.v1",
+                },
+                "max_warnings": 0,
+                "max_errors": 0,
+            }
+
+            report = verify_release_package(root, policy=policy)
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["policy"]["schema_version"], "repomori.release_policy.v1")
+            self.assertEqual(report["policy"]["status"], "pass")
+            self.assertEqual(report["summary"]["policy_status"], "pass")
+            self.assertTrue(any(check["id"] == "release_policy" and check["status"] == "pass" for check in report["checks"]))
+            direct = evaluate_release_policy(root, verify_report, policy)
+            self.assertEqual(direct["status"], "pass")
+
+    def test_verify_release_package_policy_fails_missing_required_evidence_and_signatures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            (dist / "repomori-0.2.0-py3-none-any.whl").write_bytes(b"wheel-bytes")
+            (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+            write_release_package_artifacts(root, version="0.2.0", generated_at=1700000000)
+            policy = {
+                "schema_version": "repomori.release_policy.v1",
+                "require": {
+                    "release_evidence": True,
+                    "release_check": True,
+                    "signatures": True,
+                    "public_key": True,
+                },
+                "allowed_statuses": {
+                    "release_verify": ["pass"],
+                    "release_evidence": ["pass"],
+                    "signatures": ["signed"],
+                },
+            }
+
+            report = verify_release_package(root, policy=policy)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["policy"]["status"], "fail")
+            codes = {violation["code"] for violation in report["policy"]["violations"]}
+            self.assertIn("release_policy_required_file_missing", codes)
+            self.assertIn("release_policy_required_report_missing", codes)
+            self.assertIn("release_policy_signatures_missing", codes)
+            self.assertIn("release_policy_status_not_allowed", codes)
 
     def test_build_release_evidence_outputs_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3661,6 +3765,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_candidate.v1", schema_versions)
         self.assertIn("repomori.release_provenance.v1", schema_versions)
         self.assertIn("repomori.release_evidence.v1", schema_versions)
+        self.assertIn("repomori.release_policy.v1", schema_versions)
         self.assertIn("repomori.health.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
@@ -3767,6 +3872,9 @@ class RepoMoriCodecTests(unittest.TestCase):
         release_evidence_schema = schema_catalog("repomori.release_evidence.v1")
         self.assertEqual(release_evidence_schema["selected"], "repomori.release_evidence.v1")
         self.assertEqual(release_evidence_schema["schema"]["producer"], "build_release_evidence")
+        release_policy_schema = schema_catalog("repomori.release_policy.v1")
+        self.assertEqual(release_policy_schema["selected"], "repomori.release_policy.v1")
+        self.assertEqual(release_policy_schema["schema"]["producer"], "evaluate_release_policy")
 
         agent_brief = schema_catalog("repomori.agent_brief.v1")
         self.assertEqual(agent_brief["selected"], "repomori.agent_brief.v1")
@@ -6612,6 +6720,57 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["schema_version"], "repomori.release_verify.v1")
             self.assertEqual(payload["status"], "pass")
+
+    def test_cli_verify_release_policy_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".repomori-release-candidate"
+            dist = root / "dist"
+            dist.mkdir(parents=True)
+            (dist / "repomori-0.2.0-py3-none-any.whl").write_bytes(b"wheel-bytes")
+            (dist / "repomori-0.2.0-source.zip").write_bytes(b"source-bytes")
+            write_release_package_artifacts(root, version="0.2.0", generated_at=1700000000)
+            policy = Path(tmp) / "release-policy.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "repomori.release_policy.v1",
+                        "require": {"checksums": True, "provenance": True, "sbom": True},
+                        "allowed_statuses": {"release_verify": ["pass"]},
+                        "required_schemas": {
+                            "release_candidate": "repomori.release_candidate.v1",
+                            "provenance": "repomori.release_provenance.v1",
+                            "sbom": "SPDX-2.3",
+                            "release_verify": "repomori.release_verify.v1",
+                        },
+                        "max_errors": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "verify-release",
+                    str(root),
+                    "--policy",
+                    str(policy),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.release_verify.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["policy"]["status"], "pass")
+            self.assertEqual(payload["summary"]["policy_status"], "pass")
 
     def test_cli_release_evidence_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

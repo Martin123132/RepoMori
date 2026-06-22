@@ -130,12 +130,14 @@ repomori release-health [--snapshot-dir SNAPSHOT_DIR] [--baseline BASELINE] [--f
 Verify a release package integrity bundle.
 
 ```text
-repomori verify-release [--format {markdown,json}] [--out OUT] [--json] package_dir
+repomori verify-release [--policy POLICY] [--format {markdown,json}] [--out OUT] [--json]
+        package_dir
 ```
 
 | Name | Kind | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- | --- |
 | package_dir | argument | yes |  |  | Release package directory containing release-candidate.json. |
+| --policy | option | no |  |  | Optional release verification policy JSON file. |
 | --format | option | no | markdown, json | markdown |  |
 | --out | option | no |  |  | Write the verification report to this file. |
 | --json | option | no |  | False | Print release verification JSON. |

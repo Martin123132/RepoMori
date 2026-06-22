@@ -226,6 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify_release = sub.add_parser("verify-release", help="Verify a release package integrity bundle.")
     verify_release.add_argument("package_dir", type=Path, help="Release package directory containing release-candidate.json.")
+    verify_release.add_argument("--policy", type=Path, help="Optional release verification policy JSON file.")
     verify_release.add_argument("--format", choices=("markdown", "json"), default="markdown")
     verify_release.add_argument("--out", type=Path, help="Write the verification report to this file.")
     verify_release.add_argument("--json", action="store_true", help="Print release verification JSON.")
@@ -808,7 +809,7 @@ def main(argv: list[str] | None = None) -> int:
             _print(report, args.json)
         return 0 if report["status"] != "fail" else 1
     if args.command == "verify-release":
-        report = verify_release_package(args.package_dir)
+        report = verify_release_package(args.package_dir, policy=args.policy)
         output_format = "json" if args.json else args.format
         output = (
             json.dumps(report, indent=2)

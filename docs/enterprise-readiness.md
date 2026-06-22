@@ -14,6 +14,8 @@ product.
 - Tamper-evident snapshot timelines and anchor verification.
 - Release package checksums, provenance, minimal SPDX SBOM artifacts, and local
   `verify-release` validation.
+- Policy-aware `verify-release --policy` checks for required evidence, schemas,
+  signatures, and warning/error thresholds.
 - Release evidence bundles for reviewer/procurement handoff.
 - Snapshot-memory backup and restore guidance with a read-only `restore-check`
   verification command.
@@ -34,6 +36,7 @@ product.
 - Release validation: [releases/0.2.0-validation.md](releases/0.2.0-validation.md)
 - Release integrity: [release-integrity.md](release-integrity.md)
 - Release evidence: [release-evidence.md](release-evidence.md)
+- Release policy: [release-policy.md](release-policy.md)
 - Release signing: [release-signing.md](release-signing.md)
 - Release publishing: [release-publishing.md](release-publishing.md)
 - Snapshot backup and restore: [snapshot-backup-restore.md](snapshot-backup-restore.md)
@@ -45,6 +48,8 @@ Before using RepoMori in a company setting:
 - confirm the intended use is covered by a written commercial license;
 - run from a pinned release tag or reviewed commit;
 - run `verify-release` before using a downloaded release artifact bundle;
+- run `verify-release --policy` when a release must meet written internal
+  evidence requirements;
 - verify release signatures and the public key fingerprint when signing is
   enabled;
 - publish new releases through the draft-first `publish-release` workflow when
@@ -79,5 +84,5 @@ Before using RepoMori in a company setting:
 - Add signed-release adoption evidence after GitHub signing secrets are
   configured.
 - Add external timestamping or transparency-log publication.
-- Add policy files for stricter CI drift and artifact retention.
+- Add stricter CI drift and artifact retention policies.
 - Add private commercial contact and support routing outside public issues.

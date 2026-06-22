@@ -36,11 +36,17 @@ provenance, SBOM, wheel, source archive, byte sizes, and SHA-256 values:
 ```powershell
 python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --json
 python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --format markdown --out D:\Dev\RepoMori\.repomori-release-candidate\release-verify.md
+python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --policy D:\Dev\RepoMori\tests\fixtures\release-policy-basic.json --json
 ```
 
 The report uses schema `repomori.release_verify.v1`. If you pass a downloaded
 GitHub artifact parent directory, RepoMori will use the single nested release
 package root when exactly one `release-candidate.json` is found.
+
+`--policy` adds a `repomori.release_policy.v1` block to the verification report.
+Use it to require release evidence, release-check status, schema versions,
+signature/public-key presence, or warning/error thresholds. See
+[release-policy.md](release-policy.md).
 
 ## Manual Verify On Windows
 
