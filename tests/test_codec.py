@@ -1888,6 +1888,7 @@ class RepoMoriCodecTests(unittest.TestCase):
     def test_release_policy_example_fixtures_are_documented_and_valid(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         release_policy_doc = (repo_root / "docs/release-policy.md").read_text(encoding="utf-8")
+        selection_doc = (repo_root / "docs/release-policy-selection.md").read_text(encoding="utf-8")
         readme = (repo_root / "README.md").read_text(encoding="utf-8")
         fixture_names = (
             "release-policy-basic.json",
@@ -1903,7 +1904,29 @@ class RepoMoriCodecTests(unittest.TestCase):
                 self.assertIsInstance(policy.get("profile"), str)
                 self.assertIsInstance(policy.get("description"), str)
                 self.assertIn(name, release_policy_doc)
+                self.assertIn(name, selection_doc)
                 self.assertIn(name, readme)
+
+    def test_release_policy_selection_guide_links_matrix_and_diagnostics(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        selection_doc = (repo_root / "docs/release-policy-selection.md").read_text(encoding="utf-8")
+        release_policy_doc = (repo_root / "docs/release-policy.md").read_text(encoding="utf-8")
+        readme = (repo_root / "README.md").read_text(encoding="utf-8")
+        enterprise = (repo_root / "docs/enterprise-readiness.md").read_text(encoding="utf-8")
+
+        self.assertIn("release-policy-selection.md", readme)
+        self.assertIn("release-policy-selection.md", enterprise)
+        self.assertIn("release-policy-selection.md", release_policy_doc)
+        self.assertIn("release-policy-matrix.md", selection_doc)
+        self.assertIn("release-policy.md#policy-diagnostics", selection_doc)
+        self.assertIn("## Policy Diagnostics", release_policy_doc)
+        for phrase in (
+            "When in doubt, start with `release-policy-basic.json`",
+            "OSS/dev candidate before signing is configured",
+            "enterprise signed review should use `enterprise_signed`",
+            "strict_no_warnings",
+        ):
+            self.assertIn(phrase, selection_doc)
 
     def test_release_policy_dev_unsigned_example_accepts_unsigned_package(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

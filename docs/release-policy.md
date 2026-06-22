@@ -122,7 +122,9 @@ verify the public key fingerprint through an independent channel.
 ## Checked Policy Profiles
 
 RepoMori keeps small policy examples under `tests/fixtures` so the examples are
-also executable regression fixtures. The checked comparison table lives in
+also executable regression fixtures. Use
+[release-policy-selection.md](release-policy-selection.md) to choose a profile,
+then confirm expected outcomes with
 [release-policy-matrix.md](release-policy-matrix.md).
 
 | Profile | File | Intended Use |
@@ -153,6 +155,8 @@ Reviewer output includes the selected profile and decision:
 If the decision is `blocked`, do not approve the candidate under that profile
 until the listed policy violations are fixed and `verify-release --policy`
 passes.
+
+## Policy Diagnostics
 
 Blocked reports include a compact diagnostics table that groups common failure
 reasons and gives the reviewer a next step:
