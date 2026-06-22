@@ -11573,6 +11573,12 @@ def format_release_review_decision_log_markdown(decision_log: dict[str, Any]) ->
             f"{confirmation.get('detail')} |"
         )
 
+    privacy_summary = privacy_guard.get("summary") if isinstance(privacy_guard.get("summary"), dict) else {}
+    issue_counts = (
+        privacy_summary.get("issue_counts_by_code")
+        if isinstance(privacy_summary.get("issue_counts_by_code"), dict)
+        else {}
+    )
     lines.extend(
         [
             "",
@@ -11589,6 +11595,10 @@ def format_release_review_decision_log_markdown(decision_log: dict[str, Any]) ->
         if not isinstance(check, dict):
             continue
         lines.append(f"| `{check.get('id')}` | `{check.get('status')}` | {check.get('message')} |")
+    if issue_counts:
+        lines.extend(["", "### Issue Counts By Category", "", "| Category | Count |", "| --- | ---: |"])
+        for code, count in sorted(issue_counts.items()):
+            lines.append(f"| `{code}` | {count} |")
     issues = [item for item in (privacy_guard.get("issues") or []) if isinstance(item, dict)]
     if issues:
         lines.extend(["", "### Privacy Guard Issues", "", "| Code | Surface | Detail |", "| --- | --- | --- |"])
@@ -11658,12 +11668,15 @@ def check_release_review_decision_log_privacy(
         }
     )
     status = "fail" if issues else "pass"
+    issue_counts = dict(sorted(Counter(str(issue.get("code") or "unknown") for issue in issues).items()))
     return {
         "schema_version": "repomori.release_review_privacy_guard.v1",
         "status": status,
         "checked_surfaces": sorted(surfaces),
         "summary": {
             "issue_count": len(issues),
+            "failed_check_count": sum(1 for check in checks if check.get("status") == "fail"),
+            "issue_counts_by_code": issue_counts,
             "check_count": len(checks),
             "json_bytes": len(surfaces["json"].encode("utf-8")),
             "markdown_bytes": len(surfaces.get("markdown", "").encode("utf-8")) if markdown is not None else 0,

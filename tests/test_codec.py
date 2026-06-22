@@ -1649,6 +1649,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("decision_log[\"status\"] == \"pass\"", workflow)
         self.assertIn("privacy_guard[\"status\"] == \"pass\"", workflow)
         self.assertIn("decision_log[\"privacy_guard\"][\"status\"] == \"pass\"", workflow)
+        self.assertIn("issue_counts_by_code\"] == {}", workflow)
         self.assertIn("decision_log[\"reviewer_outcome\"][\"decision\"] == \"pending\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
@@ -1672,6 +1673,13 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_review_handoff.v1", release_doc)
         self.assertIn("repomori.release_review_decision_log.v1", release_doc)
         self.assertIn("privacy guard", release_doc)
+        self.assertIn("Redacted Privacy Guard Failure Example", release_doc)
+        self.assertIn("issue_counts_by_code", release_doc)
+        self.assertIn("local_absolute_path", release_doc)
+        self.assertIn("If a failure summary includes the actual matched value", release_doc)
+        synthetic_private_host = "internal" + ".example"
+        self.assertNotIn(synthetic_private_host, release_doc)
+        self.assertNotIn("api" + "_key=", release_doc)
         self.assertIn("completeness feeds the handoff", release_doc)
         self.assertIn("final fail-fast completeness requires", release_doc)
         self.assertIn("Bundle Completeness Remediation", release_doc)
@@ -1762,6 +1770,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("decision_log[\"status\"] == \"pass\"", workflow)
         self.assertIn("privacy_guard[\"status\"] == \"pass\"", workflow)
         self.assertIn("decision_log[\"privacy_guard\"][\"status\"] == \"pass\"", workflow)
+        self.assertIn("issue_counts_by_code\"] == {}", workflow)
         self.assertIn("decision_log[\"reviewer_outcome\"][\"decision\"] == \"pending\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
@@ -2325,6 +2334,8 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(decision_log["summary"]["privacy_guard_status"], "pass")
             self.assertEqual(decision_log["privacy_guard"]["schema_version"], "repomori.release_review_privacy_guard.v1")
             self.assertEqual(decision_log["privacy_guard"]["status"], "pass")
+            self.assertEqual(decision_log["privacy_guard"]["summary"]["failed_check_count"], 0)
+            self.assertEqual(decision_log["privacy_guard"]["summary"]["issue_counts_by_code"], {})
             self.assertEqual(decision_log["reviewer_outcome"]["decision"], "pending")
             artifact_paths = {artifact["path"] for artifact in decision_log["reviewed_artifacts"]}
             self.assertIn("release-review-handoff.md", artifact_paths)
@@ -2389,27 +2400,45 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             self.assertEqual(clean_guard["status"], "pass")
             leaky = json.loads(json.dumps(clean))
-            fake_secret_value = "sk-" + "thisisnotrealbutlookslikesecret"
-            leaky["reviewed_artifacts"][0]["evidence_point"] = (
-                "C:\\Users\\ollet\\AppData\\Local\\Temp\\private.txt "
-                f"api_key={fake_secret_value}"
-            )
+            fake_secret_value = "s" + "k-" + "thisisnotrealbutlookslikesecret"
+            local_path = "C:" + "\\Users\\ollet\\AppData\\Local\\Temp\\private.txt "
+            private_url = "https://" + "internal" + ".example" + ".local/private"
+            secret_assignment = "api" + "_key=" + fake_secret_value
+            leaky["reviewed_artifacts"][0]["evidence_point"] = local_path + secret_assignment
             leaky["reports"] = {"release_check": {"findings": ["raw evidence dump"]}}
-            leaky_markdown = clean_markdown + "\nhttps://internal.example.local/private\n"
+            leaky_markdown = clean_markdown + f"\n{private_url}\n"
 
             guard = check_release_review_decision_log_privacy(leaky, leaky_markdown)
 
             self.assertEqual(guard["schema_version"], "repomori.release_review_privacy_guard.v1")
             self.assertEqual(guard["status"], "fail")
+            self.assertEqual(guard["summary"]["failed_check_count"], 5)
             codes = {issue["code"] for issue in guard["issues"]}
             self.assertIn("local_absolute_path", codes)
             self.assertIn("temp_directory", codes)
             self.assertIn("secret_like_value", codes)
             self.assertIn("private_url", codes)
             self.assertIn("raw_dump_key", codes)
+            counts = guard["summary"]["issue_counts_by_code"]
+            self.assertGreaterEqual(counts["local_absolute_path"], 1)
+            self.assertGreaterEqual(counts["temp_directory"], 1)
+            self.assertGreaterEqual(counts["secret_like_value"], 1)
+            self.assertGreaterEqual(counts["private_url"], 1)
+            self.assertGreaterEqual(counts["raw_dump_key"], 1)
             serialized_guard = json.dumps(guard)
             self.assertNotIn(fake_secret_value, serialized_guard)
-            self.assertNotIn("C:\\Users\\ollet", serialized_guard)
+            self.assertNotIn(local_path, serialized_guard)
+            self.assertNotIn(private_url, serialized_guard)
+            redacted_failure_log = json.loads(json.dumps(clean))
+            redacted_failure_log["privacy_guard"] = guard
+            redacted_failure_log["summary"]["privacy_guard_status"] = "fail"
+            redacted_markdown = format_release_review_decision_log_markdown(redacted_failure_log)
+            self.assertIn("Issue Counts By Category", redacted_markdown)
+            self.assertIn("`secret_like_value`", redacted_markdown)
+            self.assertIn("`raw_dump_key`", redacted_markdown)
+            self.assertNotIn(fake_secret_value, redacted_markdown)
+            self.assertNotIn(local_path, redacted_markdown)
+            self.assertNotIn(private_url, redacted_markdown)
 
     def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

@@ -149,6 +149,42 @@ workflow. Common failure groups are:
 | decision log privacy guard | `release-review-decision-log.json` reports a failed privacy guard or the workflow `privacy_guard` assertion fails. | Remove local paths, temp paths, secret-like values, private URLs, raw dump keys, or proprietary material from the generated decision log source fields, then regenerate it. |
 | selected profile | The policy report is present but `policy.profile` is empty. | Use one of the checked policy profiles or fix the policy JSON before approving the candidate. |
 
+### Redacted Privacy Guard Failure Example
+
+Privacy guard failures report categories and counts only. They must not echo the
+matched local path, secret-like value, private URL, raw payload, or proprietary
+material. A reviewer should expect a failed summary to look like this synthetic
+shape:
+
+```json
+{
+  "schema_version": "repomori.release_review_privacy_guard.v1",
+  "status": "fail",
+  "summary": {
+    "issue_count": 5,
+    "failed_check_count": 5,
+    "issue_counts_by_code": {
+      "local_absolute_path": 1,
+      "temp_directory": 1,
+      "secret_like_value": 1,
+      "private_url": 1,
+      "raw_dump_key": 1
+    }
+  },
+  "issues": [
+    {
+      "code": "local_absolute_path",
+      "surface": "json",
+      "message": "No local absolute paths or file URLs are present."
+    }
+  ]
+}
+```
+
+If a failure summary includes the actual matched value instead of a category and
+count, treat that as a release blocker and fix the guard before reviewing the
+candidate.
+
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
 SBOM verification guidance. See [release-signing.md](release-signing.md) for
 signing setup and key rotation.

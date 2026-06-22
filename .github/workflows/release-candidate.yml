@@ -344,8 +344,10 @@ jobs:
           assert decision_log["schema_version"] == "repomori.release_review_decision_log.v1"
           assert decision_log["status"] == "pass", decision_log
           assert decision_log["privacy_guard"]["status"] == "pass", decision_log["privacy_guard"]
+          assert decision_log["privacy_guard"]["summary"]["issue_counts_by_code"] == {}, decision_log["privacy_guard"]
           assert privacy_guard["schema_version"] == "repomori.release_review_privacy_guard.v1"
           assert privacy_guard["status"] == "pass", privacy_guard
+          assert privacy_guard["summary"]["issue_counts_by_code"] == {}, privacy_guard
           assert decision_log["reviewer_outcome"]["decision"] == "pending"
           assert "release-review-handoff.md" in decision_markdown
           assert "Public-Safety And Privacy Confirmations" in decision_markdown

@@ -320,8 +320,9 @@ status, selected gate results, public-safety/privacy confirmations, and pending
 reviewer outcome fields. That decision log includes a privacy guard, and the
 workflow checks both JSON and Markdown for local absolute paths, temp
 directories, secret-like values, private URLs, raw evidence dump keys, and
-proprietary-material markers before uploading the candidate artifact bundle. The
-workflow also validates the policy JSON/Markdown reviewer guidance.
+proprietary-material markers before uploading the candidate artifact bundle.
+Failed guard summaries report redacted categories and counts only. The workflow
+also validates the policy JSON/Markdown reviewer guidance.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
 The policy report includes the checked profile name and a reviewer decision:
