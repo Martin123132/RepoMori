@@ -450,7 +450,7 @@ SCHEMA_DEFINITIONS = (
     {
         "schema_version": "repomori.release_rehearsal.v1",
         "kind": "report",
-        "title": "Local release candidate evidence rehearsal",
+        "title": "Local release candidate evidence rehearsal with reviewer privacy and storage-path checks",
         "producer": "run_release_rehearsal",
         "required_fields": ["schema_version", "status", "out_dir", "summary", "artifacts", "checks"],
     },
@@ -12052,6 +12052,13 @@ def run_release_rehearsal(
         format_release_check_markdown(release_check),
         encoding="utf-8",
     )
+    release_health = _release_rehearsal_release_health_report(started)
+    release_health_path = root_path / "release-health.json"
+    _write_json(release_health_path, release_health)
+    (root_path / "release-health.md").write_text(
+        format_release_health_markdown(release_health),
+        encoding="utf-8",
+    )
 
     write_release_package_artifacts(
         root_path,
@@ -12074,6 +12081,7 @@ def run_release_rehearsal(
     evidence_report = build_release_evidence(
         root_path,
         release_check=release_check_path,
+        release_health=release_health_path,
         out_dir=root_path,
         run_meta={"source": "release_rehearsal", "sanitized_fixture": True},
     )
@@ -12110,6 +12118,7 @@ def run_release_rehearsal(
     (root_path / "release-review-decision-log.md").write_text(decision_markdown, encoding="utf-8")
 
     reviewer_privacy = _release_rehearsal_check_reviewer_artifacts(root_path)
+    storage_path_policy = _release_rehearsal_check_storage_path_policy(root_path)
     check_statuses = {
         "release_verify": verify_report.get("status"),
         "release_policy": policy_report.get("policy", {}).get("status")
@@ -12119,6 +12128,7 @@ def run_release_rehearsal(
         "bundle_completeness": final_bundle.get("status"),
         "decision_log_privacy": decision_privacy.get("status"),
         "reviewer_artifact_privacy": reviewer_privacy.get("status"),
+        "storage_path_policy": storage_path_policy.get("status"),
     }
     failed_checks = sorted(name for name, status in check_statuses.items() if status != "pass")
     privacy_demo = _release_review_privacy_demo_from_evidence(evidence_report)
@@ -12137,6 +12147,7 @@ def run_release_rehearsal(
             "failed_checks": failed_checks,
             "reviewer_artifact_count": reviewer_privacy.get("summary", {}).get("artifact_count"),
             "reviewer_privacy_status": reviewer_privacy.get("status"),
+            "storage_path_policy_status": storage_path_policy.get("status"),
             "privacy_guard_demo_status": privacy_demo.get("status"),
             "clean_guard_status": privacy_demo.get("clean_guard_status"),
             "failing_guard_status": privacy_demo.get("failing_guard_status"),
@@ -12159,10 +12170,12 @@ def run_release_rehearsal(
             "bundle_completeness": {"status": final_bundle.get("status"), "schema_version": final_bundle.get("schema_version")},
             "decision_log_privacy": decision_privacy,
             "reviewer_artifact_privacy": reviewer_privacy,
+            "storage_path_policy": storage_path_policy,
         },
         "notes": [
             "Synthetic fixture data only; no release, tag, upload, model call, or network call is performed.",
             "Reviewer-facing artifacts are checked for raw local paths, secrets, private URLs, raw dumps, proprietary markers, credentials, and private repo paths.",
+            "Reviewer-facing artifacts are checked for boot-drive save/output examples so generated release material stays aligned with the documented D-drive workflow.",
             "Machine JSON artifacts may retain local filesystem paths for traceability and are not treated as reviewer sign-off surfaces by this rehearsal.",
         ],
     }
@@ -12202,6 +12215,7 @@ def format_release_rehearsal_markdown(report: dict[str, Any]) -> str:
         f"- Version: `{summary.get('version')}`",
         f"- Policy profile: `{summary.get('policy_profile')}`",
         f"- Reviewer artifact privacy: `{summary.get('reviewer_privacy_status')}`",
+        f"- Storage path policy: `{summary.get('storage_path_policy_status')}`",
         f"- Privacy guard demo status: `{summary.get('privacy_guard_demo_status')}`",
         f"- Clean demo guard status: `{summary.get('clean_guard_status')}`",
         f"- Failing demo guard status: `{summary.get('failing_guard_status')}`",
@@ -12219,6 +12233,7 @@ def format_release_rehearsal_markdown(report: dict[str, Any]) -> str:
         "bundle_completeness",
         "decision_log_privacy",
         "reviewer_artifact_privacy",
+        "storage_path_policy",
     ):
         check = checks.get(name) if isinstance(checks.get(name), dict) else {}
         lines.append(f"| `{name}` | `{check.get('status')}` |")
@@ -12232,6 +12247,23 @@ def format_release_rehearsal_markdown(report: dict[str, Any]) -> str:
             lines.append(f"| `{code}` | {count} |")
     else:
         lines.append("- No reviewer-facing privacy issues were detected.")
+
+    storage_policy = checks.get("storage_path_policy") if isinstance(checks.get("storage_path_policy"), dict) else {}
+    storage_summary = storage_policy.get("summary") if isinstance(storage_policy.get("summary"), dict) else {}
+    storage_counts = (
+        storage_summary.get("issue_counts_by_code")
+        if isinstance(storage_summary.get("issue_counts_by_code"), dict)
+        else {}
+    )
+    lines.extend(["", "## Storage Path Policy", ""])
+    lines.append(f"- Checked artifacts: `{storage_summary.get('artifact_count', 0)}`")
+    lines.append(f"- Issue count: `{storage_summary.get('issue_count', 0)}`")
+    if storage_counts:
+        lines.extend(["", "| Issue Category | Count |", "| --- | ---: |"])
+        for code, count in sorted(storage_counts.items()):
+            lines.append(f"| `{code}` | {count} |")
+    else:
+        lines.append("- No boot-drive generated-output examples were detected.")
 
     reviewer_artifacts = report.get("reviewer_artifacts") if isinstance(report.get("reviewer_artifacts"), list) else []
     lines.extend(["", "## Reviewer-Facing Artifacts", "", "| Artifact | Status |", "| --- | --- |"])
@@ -12278,6 +12310,43 @@ def _release_rehearsal_release_check_report(started: float) -> dict[str, Any]:
         "checks": {
             "privacy_guard_demo": privacy_guard_demo,
         },
+    }
+
+
+def _release_rehearsal_release_health_report(started: float) -> dict[str, Any]:
+    return {
+        "schema_version": "repomori.health.v1",
+        "status": "pass",
+        "repo_path": "synthetic-rehearsal-repo",
+        "settings": {
+            "synthetic_rehearsal": True,
+            "run_tests": False,
+            "run_demo_smoke": False,
+        },
+        "summary": {
+            "elapsed_seconds": round(time.time() - started, 4),
+            "release_check_status": "pass",
+            "doctor_status": "pass",
+            "chain_status": "pass",
+            "timeline_status": "pass",
+            "drift_summary_status": "pass",
+            "compat_status": "pass",
+            "contract_status": "pass",
+            "failed_checks": [],
+        },
+        "checks": {
+            "release_check": {"status": "pass"},
+            "doctor": {"status": "pass"},
+            "chain": {"status": "pass"},
+            "timeline": {"status": "pass"},
+            "drift_summary": {"status": "pass"},
+            "compat": {"status": "pass"},
+            "contract": {"status": "pass"},
+        },
+        "artifacts": {},
+        "notes": [
+            "Synthetic fixture data only; this report prevents local parent-directory health artifacts from influencing release rehearsal.",
+        ],
     }
 
 
@@ -12413,6 +12482,97 @@ def _release_rehearsal_privacy_patterns() -> tuple[tuple[str, re.Pattern[str], s
         ),
     )
     return (*_RELEASE_REVIEW_PRIVACY_PATTERNS, *extra_patterns)
+
+
+def _release_rehearsal_check_storage_path_policy(root: Path) -> dict[str, Any]:
+    """Check reviewer-facing rehearsal artifacts for boot-drive output examples."""
+
+    issues: list[dict[str, Any]] = []
+    artifact_rows: list[dict[str, Any]] = []
+    patterns = _release_rehearsal_storage_path_patterns()
+    for relative in _release_rehearsal_reviewer_artifact_names():
+        path = root / relative
+        if not path.is_file():
+            artifact_rows.append({"path": relative, "status": "missing", "bytes": 0, "issue_count": 0})
+            issues.append(
+                {
+                    "code": "artifact_missing",
+                    "artifact": relative,
+                    "message": "Expected reviewer-facing rehearsal artifact is missing.",
+                }
+            )
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        normalized = text.replace("\\\\", "\\")
+        artifact_issue_count = 0
+        for code, pattern, message in patterns:
+            if pattern.search(normalized):
+                artifact_issue_count += 1
+                issues.append({"code": code, "artifact": relative, "message": message})
+        artifact_rows.append(
+            {
+                "path": relative,
+                "status": "fail" if artifact_issue_count else "pass",
+                "bytes": len(text.encode("utf-8")),
+                "issue_count": artifact_issue_count,
+            }
+        )
+
+    issue_counts = dict(sorted(Counter(str(issue.get("code") or "unknown") for issue in issues).items()))
+    status = "fail" if issues else "pass"
+    return {
+        "schema_version": "repomori.release_rehearsal.storage_paths.v1",
+        "status": status,
+        "summary": {
+            "artifact_count": len(artifact_rows),
+            "issue_count": len(issues),
+            "issue_counts_by_code": issue_counts,
+        },
+        "checks": [
+            {
+                "id": "reviewer_artifact_storage_paths_present",
+                "status": "fail" if any(row.get("status") == "missing" for row in artifact_rows) else "pass",
+                "message": "Expected reviewer-facing rehearsal artifacts are present for storage-path policy review.",
+            },
+            {
+                "id": "reviewer_artifact_storage_paths_d_drive",
+                "status": "fail" if issues else "pass",
+                "message": "Reviewer-facing rehearsal artifacts do not include boot-drive generated-output examples.",
+            },
+        ],
+        "artifacts": artifact_rows,
+        "issues": issues,
+    }
+
+
+def _release_rehearsal_storage_path_patterns() -> tuple[tuple[str, re.Pattern[str], str], ...]:
+    return (
+        (
+            "boot_drive_placeholder_path",
+            re.compile(r"(?i)\bC:[\\/]+path\b|C:/path\b"),
+            "No boot-drive placeholder save/output examples are present.",
+        ),
+        (
+            "boot_drive_dev_path",
+            re.compile(r"(?i)\bC:[\\/]+Dev\b|C:/Dev\b"),
+            "No boot-drive development save/output examples are present.",
+        ),
+        (
+            "boot_drive_temp_path",
+            re.compile(r"(?i)\bC:[\\/]+Temp\b|C:/Temp\b"),
+            "No boot-drive temporary save/output examples are present.",
+        ),
+        (
+            "boot_drive_user_path",
+            re.compile(r"(?i)\bC:[\\/]+Users[\\/]"),
+            "No user-profile save/output examples are present.",
+        ),
+        (
+            "onedrive_path",
+            re.compile(r"(?i)(?:\\|/|^)OneDrive(?:\\|/|$)"),
+            "No OneDrive save/output examples are present.",
+        ),
+    )
 
 
 def _release_rehearsal_artifact_records(root: Path) -> list[dict[str, Any]]:

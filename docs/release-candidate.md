@@ -71,16 +71,17 @@ python -m repomori release-rehearsal `
   --json
 ```
 
-The rehearsal writes fixture package bytes plus `release-check`, release
-evidence, policy verification, checklist, artifact index, handoff, decision log,
-and completeness artifacts. It records the executable `release-check`
-privacy-demo status in the checklist and verifies reviewer-facing artifacts do
-not echo raw synthetic paths, secrets, private URLs, raw dumps, proprietary
-markers, credentials, or private repo path markers.
+The rehearsal writes fixture package bytes plus synthetic `release-check` and
+release-health reports, release evidence, policy verification, checklist,
+artifact index, handoff, decision log, and completeness artifacts. It records
+the executable `release-check` privacy-demo status in the checklist and verifies
+reviewer-facing artifacts do not echo raw synthetic paths, secrets, private
+URLs, raw dumps, proprietary markers, credentials, private repo path markers, or
+boot-drive generated-output examples.
 The GitHub `tests` workflow runs the same no-upload command in `package-smoke`
 after installing the package, then asserts the rehearsal schema/status,
-privacy-demo summary, checklist wording, and reviewer-facing artifact privacy
-scan all pass.
+privacy-demo summary, checklist wording, reviewer-facing artifact privacy scan,
+and storage-path policy all pass.
 
 Generated outputs should stay under hidden `.repomori-*` directories so
 `release-check` remains strict about visible repository artifacts.

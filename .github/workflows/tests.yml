@@ -59,11 +59,16 @@ jobs:
           root = Path(os.environ["REHEARSAL_DIR"])
           assert report["schema_version"] == "repomori.release_rehearsal.v1"
           assert report["status"] == "pass"
+          assert report["checks"]["release_evidence"]["status"] == "pass"
+          assert report["checks"]["release_policy"]["status"] == "pass"
           assert report["summary"]["privacy_guard_demo_status"] == "pass"
           assert report["summary"]["clean_guard_status"] == "pass"
           assert report["summary"]["failing_guard_status"] == "fail"
           assert report["summary"]["leaked_marker_confirmation"] == "none"
           assert report["checks"]["reviewer_artifact_privacy"]["status"] == "pass"
+          assert report["summary"]["storage_path_policy_status"] == "pass"
+          assert report["checks"]["storage_path_policy"]["status"] == "pass"
+          assert report["checks"]["storage_path_policy"]["summary"]["issue_count"] == 0
           checklist = (root / "release-review-checklist.md").read_text(encoding="utf-8")
           assert "Release-Check Privacy Demo Result" in checklist
           raw_markers = (

@@ -2600,14 +2600,23 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["summary"]["clean_guard_status"], "pass")
             self.assertEqual(report["summary"]["failing_guard_status"], "fail")
             self.assertEqual(report["summary"]["leaked_marker_confirmation"], "none")
+            self.assertEqual(report["summary"]["storage_path_policy_status"], "pass")
             self.assertEqual(report["checks"]["reviewer_artifact_privacy"]["status"], "pass")
             self.assertEqual(report["checks"]["reviewer_artifact_privacy"]["summary"]["issue_count"], 0)
+            self.assertEqual(report["checks"]["storage_path_policy"]["status"], "pass")
+            self.assertEqual(report["checks"]["storage_path_policy"]["summary"]["issue_count"], 0)
+            self.assertEqual(report["checks"]["release_evidence"]["status"], "pass")
+            self.assertEqual(report["checks"]["release_policy"]["status"], "pass")
             self.assertIn("Release Candidate Evidence Rehearsal", markdown)
             self.assertIn("Privacy guard demo status: `pass`", markdown)
+            self.assertIn("Storage path policy: `pass`", markdown)
+            self.assertIn("No boot-drive generated-output examples were detected.", markdown)
 
             expected = {
                 "release-check.json",
                 "release-check.md",
+                "release-health.json",
+                "release-health.md",
                 "release-evidence.json",
                 "release-evidence.md",
                 "release-review-checklist.md",
@@ -2718,6 +2727,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], "repomori.release_rehearsal.v1")
             self.assertEqual(payload["status"], "pass")
             self.assertEqual(payload["checks"]["reviewer_artifact_privacy"]["status"], "pass")
+            self.assertEqual(payload["checks"]["storage_path_policy"]["status"], "pass")
+            self.assertEqual(payload["checks"]["release_evidence"]["status"], "pass")
+            self.assertEqual(payload["checks"]["release_policy"]["status"], "pass")
             self.assertTrue((out / "release-rehearsal.json").is_file())
             self.assertTrue((out / "release-rehearsal.md").is_file())
 
@@ -3004,6 +3016,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-review-checklist.md", workflow)
         self.assertIn("Release-Check Privacy Demo Result", workflow)
         self.assertIn("reviewer_artifact_privacy", workflow)
+        self.assertIn("storage_path_policy", workflow)
         self.assertIn("raw marker", workflow)
         self.assertIn("console script release-rehearsal smoke passed", workflow)
         self.assertIn('generated_dirs = {', workflow)
