@@ -122,6 +122,19 @@ Use `--anchor-freshness strict` only if you want CI-style hard failure when anch
 verification mismatches. `safe` is the default for backward-compatible local
 automation.
 
+## Backup And Restore Check
+
+Back up the whole snapshot directory, not just `latest.repomori`. After restoring
+it to a new location, verify it before use:
+
+```powershell
+python -m repomori restore-check D:\Restores\YourRepo\.repomori-packs --verify-packs --anchor D:\Restores\YourRepo\.repomori-packs\timeline-anchor.json --json
+```
+
+`restore-check` is read-only. It combines `doctor`, `chain`, `timeline`, and
+optional anchor verification into one `repomori.restore_check.v1` report. See
+[Snapshot backup and restore](snapshot-backup-restore.md) for the full runbook.
+
 ## CI and Nightly Automation
 
 Use a scheduled job to keep a repo timeline anchored on a cadence:
@@ -161,6 +174,7 @@ See [Reusable workflow guide](memory-anchor-reusable.md) for a complete template
 ## What To Read Next
 
 - [MCP setup](mcp-setup.md)
+- [Snapshot backup and restore](snapshot-backup-restore.md)
 - [Schema notes](schemas.md)
 - [Agent protocol](agent-protocol.md)
 - [Public safety scan](public-safety-scan.md)

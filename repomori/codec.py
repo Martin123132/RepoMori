@@ -284,6 +284,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "anchor_path", "out_dir", "summary", "errors", "warnings"],
     },
     {
+        "schema_version": "repomori.restore_check.v1",
+        "kind": "report",
+        "title": "Snapshot restore verification report",
+        "producer": "check_snapshot_restore",
+        "required_fields": ["schema_version", "status", "out_dir", "settings", "summary", "checks", "errors", "warnings"],
+    },
+    {
         "schema_version": "repomori.snapshot.v1",
         "kind": "report",
         "title": "Single snapshot build report",
@@ -8009,6 +8016,272 @@ def format_snapshot_anchor_verification_markdown(report: dict[str, Any]) -> str:
             lines.append(f"- `{warning.get('path')}` {warning.get('message')}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def check_snapshot_restore(
+    out_dir: Path | str,
+    *,
+    anchor: Path | str | dict[str, Any] | None = None,
+    verify_packs: bool = False,
+    timeline_limit: int = 5,
+) -> dict[str, Any]:
+    """Verify that a restored snapshot directory is coherent before use."""
+
+    if timeline_limit <= 0:
+        raise ValueError("timeline_limit must be greater than zero")
+
+    out_path = Path(out_dir).resolve()
+    checked_at = int(time.time())
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    doctor = doctor_snapshot_dir(out_path, verify_packs=verify_packs)
+    chain = verify_snapshot_chain(out_path)
+    timeline = _restore_check_timeline(out_path, timeline_limit)
+    warnings.extend(_restore_check_portability_warnings(out_path))
+    anchor_report = (
+        verify_snapshot_anchor(anchor, out_path, check_current=True)
+        if anchor is not None
+        else None
+    )
+
+    checks: dict[str, Any] = {
+        "doctor": doctor,
+        "chain": chain,
+        "timeline": timeline,
+        "anchor": anchor_report,
+    }
+    for name, check in checks.items():
+        if isinstance(check, dict):
+            _restore_check_collect_issues(name, check, errors, warnings)
+
+    snapshot_count = int(timeline.get("snapshot_count") or 0) if isinstance(timeline, dict) else 0
+    if snapshot_count <= 0:
+        errors.append(
+            {
+                "check": "timeline",
+                "path": str(out_path / "snapshots.json"),
+                "message": "No snapshots were found in the restored timeline.",
+            }
+        )
+
+    check_statuses = {
+        name: check.get("status")
+        for name, check in checks.items()
+        if isinstance(check, dict) and check.get("status") is not None
+    }
+    if isinstance(timeline, dict) and timeline.get("status") is None:
+        chain_status = timeline.get("summary", {}).get("chain_status")
+        check_statuses["timeline"] = chain_status if chain_status in {"pass", "warn", "fail"} else "pass"
+
+    status = "pass"
+    if errors or any(value == "fail" for value in check_statuses.values()):
+        status = "fail"
+    elif warnings or any(value == "warn" for value in check_statuses.values()):
+        status = "warn"
+
+    latest = timeline.get("latest") if isinstance(timeline.get("latest"), dict) else {}
+    chain_summary = chain.get("summary", {}) if isinstance(chain, dict) else {}
+    anchor_summary = anchor_report.get("summary", {}) if isinstance(anchor_report, dict) else {}
+    return {
+        "schema_version": "repomori.restore_check.v1",
+        "status": status,
+        "out_dir": str(out_path),
+        "checked_at": checked_at,
+        "settings": {
+            "anchor": str(Path(anchor).resolve()) if isinstance(anchor, (str, Path)) else None,
+            "verify_packs": verify_packs,
+            "timeline_limit": timeline_limit,
+        },
+        "summary": {
+            "restore_ready": status == "pass",
+            "usable_with_warnings": status == "warn",
+            "snapshot_count": snapshot_count,
+            "returned_count": timeline.get("returned_count") if isinstance(timeline, dict) else 0,
+            "latest_pack": latest.get("pack_path"),
+            "latest_pack_sha256": latest.get("pack_sha256"),
+            "doctor_status": doctor.get("status"),
+            "chain_status": chain.get("status"),
+            "chain_head_hash": chain_summary.get("head_chain_hash"),
+            "chain_checked_count": chain_summary.get("checked_count"),
+            "anchor_status": anchor_report.get("status") if isinstance(anchor_report, dict) else "not_checked",
+            "anchor_hash_valid": anchor_summary.get("anchor_hash_valid") if anchor_summary else None,
+            "anchor_chain_head_matches": anchor_summary.get("chain_head_matches") if anchor_summary else None,
+            "verify_packs": verify_packs,
+            "error_count": len(errors),
+            "warning_count": len(warnings),
+        },
+        "checks": checks,
+        "required_backup_contents": [
+            "snapshots.json",
+            "latest.repomori",
+            "indexed .repomori snapshot packs",
+            "indexed snapshot, compare, inspect-diff, diff-context, and handoff artifacts",
+            "external timeline anchors or anchor logs when used",
+        ],
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def format_restore_check_markdown(report: dict[str, Any]) -> str:
+    """Render snapshot restore verification as Markdown."""
+
+    summary = report.get("summary", {})
+    checks = report.get("checks", {})
+    lines = [
+        "# RepoMori Restore Check",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Output: `{report.get('out_dir')}`",
+        f"- Restore ready: `{summary.get('restore_ready')}`",
+        f"- Snapshots: `{summary.get('snapshot_count')}`",
+        f"- Latest pack: `{summary.get('latest_pack')}`",
+        f"- Latest SHA-256: `{summary.get('latest_pack_sha256')}`",
+        f"- Chain head: `{summary.get('chain_head_hash')}`",
+        f"- Anchor status: `{summary.get('anchor_status')}`",
+        "",
+        "## Checks",
+        "",
+    ]
+    for name in ("doctor", "chain", "timeline", "anchor"):
+        check = checks.get(name)
+        if check is None:
+            lines.append(f"- `{name}` status=`not_checked`")
+        elif isinstance(check, dict):
+            lines.append(f"- `{name}` status=`{check.get('status', 'pass')}` schema=`{check.get('schema_version')}`")
+    lines.append("")
+    contents = report.get("required_backup_contents", [])
+    if contents:
+        lines.extend(["## Backup Contents", ""])
+        for item in contents:
+            lines.append(f"- {item}")
+        lines.append("")
+    errors = report.get("errors", [])
+    warnings = report.get("warnings", [])
+    if errors:
+        lines.extend(["## Errors", ""])
+        for error in errors:
+            check = error.get("check", "unknown")
+            lines.append(f"- `{check}` `{error.get('path')}` {error.get('message')}")
+        lines.append("")
+    if warnings:
+        lines.extend(["## Warnings", ""])
+        for warning in warnings:
+            check = warning.get("check", "unknown")
+            lines.append(f"- `{check}` `{warning.get('path')}` {warning.get('message')}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _restore_check_timeline(out_path: Path, timeline_limit: int) -> dict[str, Any]:
+    try:
+        report = read_snapshot_timeline(out_path, limit=timeline_limit)
+    except (json.JSONDecodeError, ValueError, OSError) as exc:
+        return {
+            "schema_version": "repomori.timeline.v1",
+            "status": "fail",
+            "out_dir": str(out_path),
+            "snapshot_count": 0,
+            "returned_count": 0,
+            "latest": None,
+            "summary": {"chain_status": "fail", "error_count": 1},
+            "snapshots": [],
+            "errors": [
+                {
+                    "path": str(out_path / "snapshots.json"),
+                    "message": f"Snapshot timeline could not be read: {exc}",
+                }
+            ],
+        }
+    chain_status = report.get("summary", {}).get("chain_status")
+    report["status"] = chain_status if chain_status in {"pass", "warn", "fail"} else "pass"
+    return report
+
+
+def _restore_check_portability_warnings(out_path: Path) -> list[dict[str, Any]]:
+    index_path = out_path / "snapshots.json"
+    try:
+        index = _read_snapshot_index(index_path, out_path)
+    except (json.JSONDecodeError, ValueError, OSError):
+        return []
+
+    records = []
+    latest = index.get("latest")
+    if isinstance(latest, dict):
+        records.append(("latest", latest))
+    for offset, snapshot in enumerate(index.get("snapshots", []) or []):
+        if isinstance(snapshot, dict):
+            records.append((f"snapshot[{offset}]", snapshot))
+
+    fields = (
+        "pack_path",
+        "latest_pack",
+        "previous_latest_pack",
+        "incremental_base_pack",
+        "snapshot_json",
+        "snapshot_markdown",
+        "compare_json",
+        "compare_markdown",
+        "inspect_diff_json",
+        "inspect_diff_markdown",
+        "diff_context_json",
+        "diff_context_markdown",
+        "handoff_dir",
+        "handoff_score_json",
+        "handoff_score_markdown",
+        "handoff_triage_json",
+        "handoff_triage_markdown",
+    )
+    warnings: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for record_name, record in records:
+        for field in fields:
+            value = record.get(field)
+            if not value:
+                continue
+            path = Path(str(value))
+            if not path.is_absolute():
+                continue
+            resolved = path.resolve()
+            if _is_within_path(out_path, resolved):
+                continue
+            key = (field, str(resolved))
+            if key in seen:
+                continue
+            seen.add(key)
+            warnings.append(
+                {
+                    "check": "portability",
+                    "path": str(resolved),
+                    "message": (
+                        "Snapshot index records an absolute path outside the restored directory; "
+                        "restore to the original path or rebuild/rewrite the timeline before relying on this copy."
+                    ),
+                    "record": record_name,
+                    "field": field,
+                }
+            )
+    return warnings
+
+
+def _restore_check_collect_issues(
+    name: str,
+    check: dict[str, Any],
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+) -> None:
+    for source, target in (("errors", errors), ("warnings", warnings)):
+        for issue in check.get(source, []) or []:
+            if isinstance(issue, dict):
+                target.append(
+                    {
+                        "check": name,
+                        "path": issue.get("path") or issue.get("scope") or check.get("out_dir"),
+                        "message": issue.get("message", f"{name} reported {source[:-1]}."),
+                        **{key: value for key, value in issue.items() if key not in {"check", "path", "scope", "message"}},
+                    }
+                )
 
 
 def read_snapshot_stats(out_dir: Path | str, *, limit: int | None = 10) -> dict[str, Any]:

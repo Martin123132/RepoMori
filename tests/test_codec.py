@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,7 @@ from repomori.codec import (
     check_handoff_package,
     check_compatibility,
     check_contract_fixture,
+    check_snapshot_restore,
     archive_handoff_package,
     compare_packs,
     diagnose_query,
@@ -57,6 +59,7 @@ from repomori.codec import (
     format_pack_inspect_markdown,
     format_release_evidence_markdown,
     format_release_verify_markdown,
+    format_restore_check_markdown,
     format_context_markdown,
     format_context_eval_markdown,
     format_diff_context_markdown,
@@ -3683,6 +3686,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.snapshot_chain.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.v1", schema_versions)
         self.assertIn("repomori.snapshot_anchor.verify.v1", schema_versions)
+        self.assertIn("repomori.restore_check.v1", schema_versions)
         self.assertIn("repomori.stats.v1", schema_versions)
         self.assertIn("repomori.diff_context.v1", schema_versions)
         self.assertIn("anchor.build", catalog["agent_methods"])
@@ -3791,6 +3795,9 @@ class RepoMoriCodecTests(unittest.TestCase):
         anchor_verify = schema_catalog("repomori.snapshot_anchor.verify.v1")
         self.assertEqual(anchor_verify["selected"], "repomori.snapshot_anchor.verify.v1")
         self.assertEqual(anchor_verify["schema"]["producer"], "verify_snapshot_anchor")
+        restore_check = schema_catalog("repomori.restore_check.v1")
+        self.assertEqual(restore_check["selected"], "repomori.restore_check.v1")
+        self.assertEqual(restore_check["schema"]["producer"], "check_snapshot_restore")
 
         handoff_score_schema = schema_catalog("repomori.handoff_score.v1")
         self.assertEqual(handoff_score_schema["selected"], "repomori.handoff_score.v1")
@@ -5175,6 +5182,103 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("doctor:", process.stderr)
             self.assertTrue(report.exists())
             self.assertIn("snapshot directory does not exist", process.stderr.lower())
+
+    def test_check_snapshot_restore_passes_for_snapshot_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "restore-source"
+            snapshot_repo(repo, out)
+            (repo / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
+            snapshot_repo(repo, out)
+
+            report = check_snapshot_restore(out, verify_packs=True, timeline_limit=1)
+
+            self.assertEqual(report["schema_version"], "repomori.restore_check.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["summary"]["restore_ready"])
+            self.assertEqual(report["summary"]["snapshot_count"], 2)
+            self.assertEqual(report["summary"]["doctor_status"], "pass")
+            self.assertEqual(report["summary"]["chain_status"], "pass")
+            self.assertEqual(report["checks"]["timeline"]["returned_count"], 1)
+            markdown = format_restore_check_markdown(report)
+            self.assertIn("# RepoMori Restore Check", markdown)
+            self.assertIn("Backup Contents", markdown)
+
+    def test_check_snapshot_restore_warns_for_relocated_absolute_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            source = Path(tmp) / "restore-source"
+            restored = Path(tmp) / "restore-target"
+            snapshot_repo(repo, source)
+            shutil.copytree(source, restored)
+
+            report = check_snapshot_restore(restored)
+
+            self.assertEqual(report["schema_version"], "repomori.restore_check.v1")
+            self.assertEqual(report["status"], "warn")
+            self.assertFalse(report["summary"]["restore_ready"])
+            self.assertTrue(report["summary"]["usable_with_warnings"])
+            self.assertFalse(report["errors"])
+            self.assertTrue(any(warning.get("check") == "portability" for warning in report["warnings"]))
+
+    def test_check_snapshot_restore_verifies_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "restore-anchor"
+            snapshot_repo(repo, out)
+            anchor = Path(tmp) / "timeline-anchor.json"
+            anchor.write_text(json.dumps(build_snapshot_anchor(out), indent=2), encoding="utf-8")
+
+            report = check_snapshot_restore(out, anchor=anchor)
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["anchor_status"], "pass")
+            self.assertTrue(report["summary"]["anchor_hash_valid"])
+            self.assertTrue(report["summary"]["anchor_chain_head_matches"])
+
+    def test_check_snapshot_restore_fails_for_missing_indexed_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "restore-missing-pack"
+            snapshot_repo(repo, out)
+            index = json.loads((out / "snapshots.json").read_text(encoding="utf-8"))
+            missing = Path(index["latest"]["pack_path"])
+            missing.unlink()
+
+            report = check_snapshot_restore(out)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["summary"]["restore_ready"])
+            self.assertGreater(report["summary"]["error_count"], 0)
+            self.assertTrue(any("does not exist" in error["message"] for error in report["errors"]))
+
+    def test_cli_restore_check_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _pack = self._demo_pack(Path(tmp))
+            out = Path(tmp) / "restore-check-cli"
+            snapshot_repo(repo, out)
+            anchor = Path(tmp) / "restore-anchor.json"
+            anchor.write_text(json.dumps(build_snapshot_anchor(out), indent=2), encoding="utf-8")
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "restore-check",
+                    str(out),
+                    "--anchor",
+                    str(anchor),
+                    "--verify-packs",
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+            )
+
+            payload = json.loads(output)
+            self.assertEqual(payload["schema_version"], "repomori.restore_check.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["summary"]["anchor_status"], "pass")
 
     def test_cli_prune_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

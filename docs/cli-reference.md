@@ -3,7 +3,7 @@
 Generated from the live `argparse` command surface.
 
 - Schema: `repomori.cli_commands.v1`
-- Commands: `50`
+- Commands: `51`
 
 ## Commands
 
@@ -370,6 +370,25 @@ repomori doctor [--verify-packs] [--json] [--out OUT] out_dir
 | --verify-packs | option | no |  | False | Run full pack verification for indexed packs. |
 | --json | option | no |  | False | Print doctor JSON. |
 | --out | option | no |  |  | Write the doctor report to this file. |
+
+### `restore-check`
+
+Verify a restored snapshot directory before use.
+
+```text
+repomori restore-check [--anchor ANCHOR] [--verify-packs] [--timeline-limit TIMELINE_LIMIT]
+        [--format {markdown,json}] [--out OUT] [--json] out_dir
+```
+
+| Name | Kind | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- | --- |
+| out_dir | argument | yes |  |  | Restored snapshot directory to check. |
+| --anchor | option | no |  |  | Optional exported timeline anchor to compare with the restored directory. |
+| --verify-packs | option | no |  | False | Run full pack verification for indexed packs. |
+| --timeline-limit | option | no |  | 5 | Recent snapshots to include in the report. |
+| --format | option | no | markdown, json | markdown |  |
+| --out | option | no |  |  | Write the restore-check report to this file. |
+| --json | option | no |  | False | Print restore-check JSON. |
 
 ### `prune`
 

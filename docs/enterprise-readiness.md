@@ -15,6 +15,8 @@ product.
 - Release package checksums, provenance, minimal SPDX SBOM artifacts, and local
   `verify-release` validation.
 - Release evidence bundles for reviewer/procurement handoff.
+- Snapshot-memory backup and restore guidance with a read-only `restore-check`
+  verification command.
 - Optional GPG detached signatures for release integrity artifacts.
 - Draft-first GitHub Release publishing workflow with verifier-gated assets.
 - JSON schema catalog for supported reports and bridge contracts.
@@ -34,6 +36,7 @@ product.
 - Release evidence: [release-evidence.md](release-evidence.md)
 - Release signing: [release-signing.md](release-signing.md)
 - Release publishing: [release-publishing.md](release-publishing.md)
+- Snapshot backup and restore: [snapshot-backup-restore.md](snapshot-backup-restore.md)
 
 ## Operational Checklist
 
@@ -53,6 +56,8 @@ Before using RepoMori in a company setting:
 - run `release-check` before publishing repository changes;
 - run `memory`, `doctor`, `chain`, and `release-health` for recurring project
   state snapshots;
+- run `restore-check` after restoring a snapshot directory and before using it
+  as audit memory;
 - keep snapshot anchors or logs outside the mutable snapshot directory when
   stronger audit trails matter;
 - avoid uploading source-bearing artifacts to public issue trackers or chat
@@ -75,5 +80,4 @@ Before using RepoMori in a company setting:
   configured.
 - Add external timestamping or transparency-log publication.
 - Add policy files for stricter CI drift and artifact retention.
-- Add documented backup and restore guidance for snapshot timelines.
 - Add private commercial contact and support routing outside public issues.

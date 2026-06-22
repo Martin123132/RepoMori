@@ -23,6 +23,7 @@ from .codec import (
     build_pack,
     check_handoff_package,
     check_compatibility,
+    check_snapshot_restore,
     check_contract_fixture,
     compare_packs,
     diagnose_query,
@@ -51,6 +52,7 @@ from .codec import (
     format_pack_inspect_markdown,
     format_release_verify_markdown,
     format_release_evidence_markdown,
+    format_restore_check_markdown,
     format_snapshot_chain_markdown,
     format_snapshot_anchor_markdown,
     format_snapshot_anchor_verification_markdown,
@@ -342,6 +344,15 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--verify-packs", action="store_true", help="Run full pack verification for indexed packs.")
     doctor.add_argument("--json", action="store_true", help="Print doctor JSON.")
     doctor.add_argument("--out", type=Path, help="Write the doctor report to this file.")
+
+    restore_check = sub.add_parser("restore-check", help="Verify a restored snapshot directory before use.")
+    restore_check.add_argument("out_dir", type=Path, help="Restored snapshot directory to check.")
+    restore_check.add_argument("--anchor", type=Path, help="Optional exported timeline anchor to compare with the restored directory.")
+    restore_check.add_argument("--verify-packs", action="store_true", help="Run full pack verification for indexed packs.")
+    restore_check.add_argument("--timeline-limit", type=int, default=5, help="Recent snapshots to include in the report.")
+    restore_check.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    restore_check.add_argument("--out", type=Path, help="Write the restore-check report to this file.")
+    restore_check.add_argument("--json", action="store_true", help="Print restore-check JSON.")
 
     prune = sub.add_parser("prune", help="Plan or apply safe snapshot cleanup.")
     prune.add_argument("out_dir", type=Path)
@@ -1062,6 +1073,27 @@ def main(argv: list[str] | None = None) -> int:
                 _print_report_status_hint(result, "doctor")
         else:
             _print(result, args.json)
+        return 0 if result["status"] != "fail" else 1
+    if args.command == "restore-check":
+        result = check_snapshot_restore(
+            args.out_dir,
+            anchor=args.anchor,
+            verify_packs=args.verify_packs,
+            timeline_limit=args.timeline_limit,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(result, indent=2)
+            if output_format == "json"
+            else format_restore_check_markdown(result)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+            if result.get("status") != "pass" and not args.json:
+                _print_report_status_hint(result, "restore-check")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
         return 0 if result["status"] != "fail" else 1
     if args.command == "prune":
         result = prune_snapshots(args.out_dir, keep=args.keep, apply=args.apply)

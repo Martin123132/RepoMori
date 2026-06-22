@@ -129,6 +129,7 @@ python -m repomori anchor D:\Dev\RepoMori\.repomori-packs --out D:\Dev\RepoMori\
 python -m repomori verify-anchor D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json D:\Dev\RepoMori\.repomori-packs --json
 python -m repomori timeline D:\Dev\RepoMori\.repomori-packs --format json
 python -m repomori doctor D:\Dev\RepoMori\.repomori-packs --json
+python -m repomori restore-check D:\Dev\RepoMori\.repomori-packs --verify-packs --anchor D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json --json
 python -m repomori prune D:\Dev\RepoMori\.repomori-packs --keep 20 --json
 python -m repomori prune D:\Dev\RepoMori\.repomori-packs --keep 20 --apply --json
 python -m repomori info C:\path\to\repo.repomori
@@ -194,6 +195,7 @@ repomori timeline <snapshot-dir> [--format markdown|json] [--limit n] [--out fil
 repomori timeline-search <snapshot-dir> <text> [--limit n] [--per-snapshot-limit n] [--format markdown|json] [--out file] [--json]
 repomori stats <snapshot-dir> [--format markdown|json] [--limit n] [--out file]
 repomori doctor <snapshot-dir> [--verify-packs] [--json]
+repomori restore-check <snapshot-dir> [--anchor anchor.json] [--verify-packs] [--timeline-limit n] [--format markdown|json] [--out file] [--json]
 repomori prune <snapshot-dir> [--keep n] [--apply] [--json]
 repomori info <pack>
 repomori inspect <pack> [--format markdown|json] [--verify] [--out file]
@@ -475,6 +477,11 @@ indexed pack existence and SHA-256 hashes, recorded snapshot/compare artifacts,
 Add `--verify-packs` when you want a full pack verification pass for each
 indexed snapshot.
 
+`restore-check` is the read-only post-restore gate for snapshot memory. It wraps
+`doctor`, `chain`, `timeline`, and optional `verify-anchor` checks into one
+`repomori.restore_check.v1` report so a copied backup can be verified before it
+is used or pruned. See [Snapshot backup and restore](docs/snapshot-backup-restore.md).
+
 `prune` plans safe cleanup of old generated snapshot artifacts. It is a dry run
 unless `--apply` is supplied. It keeps `latest.repomori`, `snapshots.json`, the
 latest indexed snapshot, and the newest `--keep` snapshots, then only removes
@@ -568,6 +575,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [0.2.0 final promotion](docs/releases/0.2.0-final-promotion.md)
 - [Baseline drift watchlist](docs/baseline-drift-watchlist.md)
 - [Reusable anchor workflow](docs/memory-anchor-reusable.md)
+- [Snapshot backup and restore](docs/snapshot-backup-restore.md)
 - [Incremental packs](docs/incremental-packs.md)
 - [License FAQ](docs/license-faq.md)
 - [Commercial use](docs/commercial-use.md)

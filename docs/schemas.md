@@ -40,6 +40,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.snapshot_chain.v1`: snapshot timeline hash-chain verification report.
 - `repomori.snapshot_anchor.v1`: external proof record for the current snapshot chain head.
 - `repomori.snapshot_anchor.verify.v1`: verification report for an exported snapshot anchor proof.
+- `repomori.restore_check.v1`: read-only restore verification bundle for a snapshot directory.
 - `repomori.timeline.v1`: snapshot timeline report.
 - `repomori.timeline_search.v1`: query report across indexed snapshot packs.
 - `repomori.stats.v1`: snapshot incremental reuse and storage statistics.
