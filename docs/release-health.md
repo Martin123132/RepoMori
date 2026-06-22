@@ -2,8 +2,10 @@
 
 `release-health` is the consolidated local health bundle for a repository:
 
-- If `--snapshot-dir` is omitted, it reads snapshots from `<repo>/.repomori-packs` by
-  default.
+If `--snapshot-dir` is omitted, it reads snapshots from `<repo>/.repomori-packs`
+by default.
+
+It runs:
 
 - release readiness (scan, schema sanity, optional unit-test/demo steps),
 - snapshot health (`doctor`),
@@ -28,6 +30,13 @@ Use this command for a predictable post-memory check after CI or after local wor
 ```powershell
 python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --json
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --drift-policy D:\Dev\RepoMori\.repomori-drift-policy.json --json
+```
+
+For release-health docs or runbook edits, a reasonable local sequence is:
+
+```powershell
+python -m unittest discover -s tests
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --skip-demo --json
 ```
 
 Output schema is `repomori.health.v1`. The result includes:

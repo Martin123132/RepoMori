@@ -21,6 +21,8 @@ The release package workflow writes:
   pointing to the checksum, provenance, and SBOM artifacts.
 - `release-verify.json` / `release-verify.md`: machine-readable and readable
   reports from `verify-release` when the release-candidate workflow runs.
+- `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
+  bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when
   release signing secrets are configured.
 - `repomori-release-public-key.asc`: optional public key artifact when release
@@ -99,6 +101,21 @@ passphrase.
 
 See [release-signing.md](release-signing.md) for key generation, GitHub
 configuration, public-key distribution, and rotation guidance.
+
+## Read Evidence
+
+`release-evidence.json` records release verification, release-check status,
+optional release-health status, artifact hashes, signature presence, and workflow
+metadata. Use it as the fastest procurement or reviewer entry point:
+
+```powershell
+python -m repomori release-evidence D:\Dev\RepoMori\.repomori-release-candidate `
+  --release-check D:\Dev\RepoMori\.repomori-release-check\release-check.json `
+  --out-dir D:\Dev\RepoMori\.repomori-release-candidate `
+  --json
+```
+
+See [release-evidence.md](release-evidence.md) for the evidence pack runbook.
 
 ## Read Provenance
 

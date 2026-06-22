@@ -102,6 +102,13 @@ python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.rep
 
 ## Fast Variants
 
+Run the unit test command directly when you only need the same test pass that
+`release-check` invokes:
+
+```powershell
+python -m unittest discover -s tests
+```
+
 Skip the slower pieces when iterating on scan or schema work:
 
 ```powershell

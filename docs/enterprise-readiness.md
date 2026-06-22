@@ -14,6 +14,7 @@ product.
 - Tamper-evident snapshot timelines and anchor verification.
 - Release package checksums, provenance, minimal SPDX SBOM artifacts, and local
   `verify-release` validation.
+- Release evidence bundles for reviewer/procurement handoff.
 - Optional GPG detached signatures for release integrity artifacts.
 - Draft-first GitHub Release publishing workflow with verifier-gated assets.
 - JSON schema catalog for supported reports and bridge contracts.
@@ -30,6 +31,7 @@ product.
 - Security reporting: [../SECURITY.md](../SECURITY.md)
 - Release validation: [releases/0.2.0-validation.md](releases/0.2.0-validation.md)
 - Release integrity: [release-integrity.md](release-integrity.md)
+- Release evidence: [release-evidence.md](release-evidence.md)
 - Release signing: [release-signing.md](release-signing.md)
 - Release publishing: [release-publishing.md](release-publishing.md)
 

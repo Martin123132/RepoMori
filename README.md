@@ -19,7 +19,7 @@ The first version is deliberately local and dependency-light:
 - Language, import, symbol, heading, and top-term indexes.
 - Exact source recovery when the machine summary is not enough.
 
-Latest release: [`v0.2.0`](https://github.com/Martin123132/RepoMori/releases/tag/v0.2.0).
+Release record: [`v0.2.0`](https://github.com/Martin123132/RepoMori/releases/tag/v0.2.0).
 See [docs/releases/0.2.0-validation.md](docs/releases/0.2.0-validation.md)
 for the post-release install validation record.
 
@@ -84,6 +84,22 @@ Generated outputs should stay under `D:\Temp` or hidden `.repomori-*` folders
 inside the repo, so public release checks do not trip on visible artifact
 directories. `pip install .` may leave `build/` and `repomori.egg-info/` in
 the checkout; remove those generated folders before running `release-check`.
+
+## Local Validation
+
+Use the focused unit test command for code changes:
+
+```powershell
+python -m unittest discover -s tests
+```
+
+For release-health or documentation-only edits, start with the faster local gate,
+then run the full gate before tagging or publishing:
+
+```powershell
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --skip-demo --json
+python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --fail-on low --json
+```
 
 ## Quick Start
 
@@ -159,6 +175,7 @@ repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [
 repomori release-check [repo] [--baseline file] [--fail-on low] [--drift-policy file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--drift-log file] [--json]
 repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--compat-handoff dir] [--compat-verify-pack] [--contract-fixture file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
 repomori verify-release <release-package-dir> [--format markdown|json] [--out file] [--json]
+repomori release-evidence <release-package-dir> [--repo repo] [--release-check file] [--release-health file] [--out-dir dir] [--format markdown|json] [--out file] [--json]
 repomori drift-summary <log> [--limit n] [--json]
 repomori handoff-health-summary <log> [--limit n] [--format markdown|json] [--out file] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
@@ -279,6 +296,21 @@ python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --
 
 The release-candidate workflow writes `release-verify.json` and
 `release-verify.md` automatically for reviewers.
+`release-evidence` combines verification, release-check status, signatures,
+artifact hashes, and workflow metadata into `repomori.release_evidence.v1`:
+
+```powershell
+python -m repomori release-evidence D:\Dev\RepoMori\.repomori-release-candidate `
+  --repo D:\Dev\RepoMori `
+  --release-check D:\Dev\RepoMori\.repomori-release-check\release-check.json `
+  --out-dir D:\Dev\RepoMori\.repomori-release-candidate `
+  --json
+```
+
+Point `release-evidence` at the exact package root that contains
+`release-candidate.json`; parent artifact folders are accepted only when they
+contain a single nested release package.
+
 When GPG signing secrets are configured, release workflows also emit detached
 `.asc` signatures for integrity artifacts. See
 [docs/release-signing.md](docs/release-signing.md) for public-key distribution
@@ -526,6 +558,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Release check](docs/release-check.md)
 - [Release health](docs/release-health.md)
 - [Release integrity](docs/release-integrity.md)
+- [Release evidence](docs/release-evidence.md)
 - [Release signing](docs/release-signing.md)
 - [Release candidate process](docs/release-candidate.md)
 - [Release publishing](docs/release-publishing.md)

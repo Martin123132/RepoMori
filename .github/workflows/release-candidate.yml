@@ -213,6 +213,32 @@ jobs:
           echo "signed=true" >> "$GITHUB_OUTPUT"
           echo "key_fingerprint=$key_fingerprint" >> "$GITHUB_OUTPUT"
           echo "release signing complete: key_fingerprint=$key_fingerprint"
+      - name: Write release evidence package
+        run: |
+          set -euo pipefail
+          python -m repomori release-evidence .repomori-release-candidate \
+            --repo . \
+            --release-check .repomori-release-check/release-check.json \
+            --out-dir .repomori-release-candidate
+          for artifact in \
+            .repomori-release-candidate/release-evidence.json \
+            .repomori-release-candidate/release-evidence.md; do
+            if [ ! -s "$artifact" ]; then
+              echo "::error::release evidence artifact was not created: $artifact"
+              exit 1
+            fi
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path(".repomori-release-candidate/release-evidence.json").read_text(encoding="utf-8"))
+          assert report["schema_version"] == "repomori.release_evidence.v1"
+          assert report["status"] != "fail"
+          assert report["checks"]["release_verify"]["status"] == "pass"
+          assert report["checks"]["release_check"]["status"] == "pass"
+          print("release evidence package passed")
+          PY
       - name: Upload release-candidate artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -226,6 +252,8 @@ jobs:
             .repomori-release-candidate/sbom.spdx.json
             .repomori-release-candidate/release-verify.json
             .repomori-release-candidate/release-verify.md
+            .repomori-release-candidate/release-evidence.json
+            .repomori-release-candidate/release-evidence.md
             .repomori-release-candidate/*.asc
             .repomori-release-check/release-check.json
             .repomori-release-check/release-check.md

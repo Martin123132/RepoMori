@@ -30,6 +30,7 @@ from .codec import (
     evaluate_context_quality,
     evaluate_handoff_quality,
     evaluate_pack,
+    build_release_evidence,
     format_agent_brief_markdown,
     format_brief_markdown,
     format_compare_markdown,
@@ -49,6 +50,7 @@ from .codec import (
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_release_verify_markdown,
+    format_release_evidence_markdown,
     format_snapshot_chain_markdown,
     format_snapshot_anchor_markdown,
     format_snapshot_anchor_verification_markdown,
@@ -225,6 +227,16 @@ def build_parser() -> argparse.ArgumentParser:
     verify_release.add_argument("--format", choices=("markdown", "json"), default="markdown")
     verify_release.add_argument("--out", type=Path, help="Write the verification report to this file.")
     verify_release.add_argument("--json", action="store_true", help="Print release verification JSON.")
+
+    release_evidence = sub.add_parser("release-evidence", help="Build a release evidence bundle from local artifacts.")
+    release_evidence.add_argument("package_dir", type=Path, help="Release package directory containing release-candidate.json.")
+    release_evidence.add_argument("--repo", type=Path, help="Repository folder associated with the release.")
+    release_evidence.add_argument("--release-check", type=Path, help="Optional release-check JSON report.")
+    release_evidence.add_argument("--release-health", type=Path, help="Optional release-health JSON report.")
+    release_evidence.add_argument("--out-dir", type=Path, help="Write release-evidence.json and release-evidence.md to this directory.")
+    release_evidence.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    release_evidence.add_argument("--out", type=Path, help="Write the selected evidence report format to this file.")
+    release_evidence.add_argument("--json", action="store_true", help="Print release evidence JSON.")
 
     init = sub.add_parser("init", help="Write a RepoMori config file.")
     init.add_argument("repo", type=Path, help="Repository folder to remember.")
@@ -796,6 +808,26 @@ def main(argv: list[str] | None = None) -> int:
             args.out.parent.mkdir(parents=True, exist_ok=True)
             args.out.write_text(output, encoding="utf-8")
         else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
+    if args.command == "release-evidence":
+        report = build_release_evidence(
+            args.package_dir,
+            repo=args.repo,
+            release_check=args.release_check,
+            release_health=args.release_health,
+            out_dir=args.out_dir,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_release_evidence_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        elif args.json or args.out_dir is None:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0 if report["status"] != "fail" else 1
     if args.command == "compat":

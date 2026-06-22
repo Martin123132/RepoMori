@@ -4,9 +4,9 @@ RepoMori release candidates are source-available pre-releases. They prove the
 local package, public-release scan, compatibility contracts, and operational
 health gates before a final release tag is cut.
 
-Latest validated candidate: `0.2.0rc1`.
-
-Final release: `0.2.0`.
+The `0.2.0` release line used validated candidate `0.2.0rc1` before the final
+`0.2.0` release. Treat those as historical release records; use this runbook
+for the next candidate by substituting the version, tag, and notes paths.
 
 ## Local Gate
 
@@ -73,6 +73,8 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - `sbom.spdx.json`
 - `release-verify.json`
 - `release-verify.md`
+- `release-evidence.json`
+- `release-evidence.md`
 - `release-candidate.json`
 - `release-candidate.md`
 - `release-check` JSON, Markdown, and drift log

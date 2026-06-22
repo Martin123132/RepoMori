@@ -3,7 +3,7 @@
 Generated from the live `argparse` command surface.
 
 - Schema: `repomori.cli_commands.v1`
-- Commands: `49`
+- Commands: `50`
 
 ## Commands
 
@@ -139,6 +139,27 @@ repomori verify-release [--format {markdown,json}] [--out OUT] [--json] package_
 | --format | option | no | markdown, json | markdown |  |
 | --out | option | no |  |  | Write the verification report to this file. |
 | --json | option | no |  | False | Print release verification JSON. |
+
+### `release-evidence`
+
+Build a release evidence bundle from local artifacts.
+
+```text
+repomori release-evidence [--repo REPO] [--release-check RELEASE_CHECK] [--release-health
+        RELEASE_HEALTH] [--out-dir OUT_DIR] [--format {markdown,json}] [--out OUT] [--json]
+        package_dir
+```
+
+| Name | Kind | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- | --- |
+| package_dir | argument | yes |  |  | Release package directory containing release-candidate.json. |
+| --repo | option | no |  |  | Repository folder associated with the release. |
+| --release-check | option | no |  |  | Optional release-check JSON report. |
+| --release-health | option | no |  |  | Optional release-health JSON report. |
+| --out-dir | option | no |  |  | Write release-evidence.json and release-evidence.md to this directory. |
+| --format | option | no | markdown, json | markdown |  |
+| --out | option | no |  |  | Write the selected evidence report format to this file. |
+| --json | option | no |  | False | Print release evidence JSON. |
 
 ### `init`
 

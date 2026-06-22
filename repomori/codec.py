@@ -382,6 +382,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "root", "resolved_root", "summary", "checks", "artifacts"],
     },
     {
+        "schema_version": "repomori.release_evidence.v1",
+        "kind": "report",
+        "title": "Release evidence bundle",
+        "producer": "build_release_evidence",
+        "required_fields": ["schema_version", "status", "package_dir", "summary", "checks", "release", "artifacts"],
+    },
+    {
         "schema_version": "repomori.health.v1",
         "kind": "report",
         "title": "Release health and trend bundle",
@@ -443,6 +450,9 @@ _RELEASE_CHECK_ARTIFACT_DIR_NAME = ".repomori-release-check"
 _RELEASE_CHECK_ARTIFACT_MARKDOWN = "release-check.md"
 _RELEASE_CHECK_ARTIFACT_REPORT = "release-check.json"
 _RELEASE_CHECK_ARTIFACT_DRIFT_LOG = "baseline-drift.jsonl"
+
+_RELEASE_EVIDENCE_ARTIFACT_MARKDOWN = "release-evidence.md"
+_RELEASE_EVIDENCE_ARTIFACT_REPORT = "release-evidence.json"
 
 _RELEASE_HEALTH_ARTIFACT_DIR_NAME = ".repomori-health"
 _RELEASE_HEALTH_ARTIFACT_MARKDOWN = "release-health.md"
@@ -9428,6 +9438,414 @@ def format_release_verify_markdown(report: dict[str, Any]) -> str:
             path = f" `{warning.get('path')}`" if warning.get("path") else ""
             lines.append(f"- `{warning.get('code')}`{path} {warning.get('message')}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def build_release_evidence(
+    package_dir: Path | str,
+    *,
+    repo: Path | str | None = None,
+    release_check: Path | str | None = None,
+    release_health: Path | str | None = None,
+    out_dir: Path | str | None = None,
+    run_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a procurement-friendly release evidence bundle from local artifacts."""
+
+    started = time.time()
+    requested_package = Path(package_dir).resolve()
+    verify_report = verify_release_package(requested_package)
+    resolved_package = Path(verify_report["resolved_root"]).resolve() if verify_report.get("resolved_root") else requested_package
+    repo_path = Path(repo).resolve() if repo is not None else None
+    warnings: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+
+    release_check_path = Path(release_check).resolve() if release_check is not None else _release_evidence_default_release_check(resolved_package)
+    release_health_path = Path(release_health).resolve() if release_health is not None else _release_evidence_default_release_health(resolved_package)
+    release_check_report = _release_evidence_load_json_report(release_check_path, "repomori.release_check.v1", warnings, errors, required=True)
+    release_health_report = _release_evidence_load_json_report(release_health_path, "repomori.health.v1", warnings, errors, required=False)
+
+    signature_report = _release_evidence_signature_report(resolved_package)
+    artifacts = _release_evidence_artifacts(resolved_package)
+    release_verify_artifact = _release_evidence_file_record(resolved_package, resolved_package / "release-verify.json", role="release_verify_report")
+    release_verify_markdown = _release_evidence_file_record(resolved_package, resolved_package / "release-verify.md", role="release_verify_markdown")
+    if release_verify_artifact is not None and all(item["path"] != release_verify_artifact["path"] for item in artifacts):
+        artifacts.append(release_verify_artifact)
+    if release_verify_markdown is not None and all(item["path"] != release_verify_markdown["path"] for item in artifacts):
+        artifacts.append(release_verify_markdown)
+    artifacts.sort(key=lambda item: item["path"])
+
+    manifest = verify_report.get("manifest") if isinstance(verify_report.get("manifest"), dict) else {}
+    provenance = verify_report.get("provenance") if isinstance(verify_report.get("provenance"), dict) else {}
+    sbom = verify_report.get("sbom") if isinstance(verify_report.get("sbom"), dict) else {}
+    release = {
+        "version": manifest.get("version") or verify_report.get("summary", {}).get("manifest_version"),
+        "commit": manifest.get("commit") or verify_report.get("summary", {}).get("commit"),
+        "ref": manifest.get("ref") or verify_report.get("summary", {}).get("ref"),
+        "run_id": manifest.get("run_id") or verify_report.get("summary", {}).get("run_id"),
+        "repository": provenance.get("repository"),
+        "workflow": provenance.get("workflow"),
+        "run_url": _release_evidence_run_url(provenance.get("repository"), manifest.get("run_id") or verify_report.get("summary", {}).get("run_id")),
+        "license": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+    }
+
+    checks = {
+        "release_verify": {
+            "status": verify_report.get("status"),
+            "schema_version": verify_report.get("schema_version"),
+            "summary": verify_report.get("summary", {}),
+        },
+        "release_check": {
+            "status": release_check_report.get("status") if isinstance(release_check_report, dict) else "missing",
+            "path": str(release_check_path) if release_check_path is not None else None,
+            "schema_version": release_check_report.get("schema_version") if isinstance(release_check_report, dict) else None,
+            "summary": release_check_report.get("summary", {}) if isinstance(release_check_report, dict) else {},
+        },
+        "release_health": {
+            "status": release_health_report.get("status") if isinstance(release_health_report, dict) else "not_provided",
+            "path": str(release_health_path) if release_health_path is not None else None,
+            "schema_version": release_health_report.get("schema_version") if isinstance(release_health_report, dict) else None,
+            "summary": release_health_report.get("summary", {}) if isinstance(release_health_report, dict) else {},
+        },
+        "signatures": signature_report,
+    }
+    status = _release_evidence_status(checks, errors, warnings)
+    output_dir_path = Path(out_dir).resolve() if out_dir is not None else None
+    report = {
+        "schema_version": "repomori.release_evidence.v1",
+        "status": status,
+        "created_at": int(started),
+        "package_dir": str(requested_package),
+        "resolved_package_dir": str(resolved_package) if resolved_package.exists() else None,
+        "repo_path": str(repo_path) if repo_path is not None else None,
+        "settings": {
+            "release_check": str(release_check_path) if release_check_path is not None else None,
+            "release_health": str(release_health_path) if release_health_path is not None else None,
+            "out_dir": str(output_dir_path) if output_dir_path is not None else None,
+        },
+        "summary": {
+            "elapsed_seconds": round(time.time() - started, 4),
+            "version": release.get("version"),
+            "commit": release.get("commit"),
+            "ref": release.get("ref"),
+            "run_id": release.get("run_id"),
+            "release_verify_status": checks["release_verify"]["status"],
+            "release_check_status": checks["release_check"]["status"],
+            "release_health_status": checks["release_health"]["status"],
+            "signature_status": signature_report["status"],
+            "artifact_count": len(artifacts),
+            "warning_count": len(warnings) + len(signature_report.get("warnings", [])),
+            "error_count": len(errors),
+        },
+        "release": release,
+        "checks": checks,
+        "artifacts": artifacts,
+        "reports": {
+            "release_verify": verify_report,
+            "release_check": release_check_report,
+            "release_health": release_health_report,
+        },
+        "run_meta": run_meta or {},
+        "outputs": {
+            "json": str(output_dir_path / _RELEASE_EVIDENCE_ARTIFACT_REPORT) if output_dir_path is not None else None,
+            "markdown": str(output_dir_path / _RELEASE_EVIDENCE_ARTIFACT_MARKDOWN) if output_dir_path is not None else None,
+        },
+        "warnings": [*warnings, *signature_report.get("warnings", [])],
+        "errors": errors,
+    }
+    if output_dir_path is not None:
+        output_dir_path.mkdir(parents=True, exist_ok=True)
+        _write_json(output_dir_path / _RELEASE_EVIDENCE_ARTIFACT_REPORT, report)
+        (output_dir_path / _RELEASE_EVIDENCE_ARTIFACT_MARKDOWN).write_text(
+            format_release_evidence_markdown(report),
+            encoding="utf-8",
+        )
+    return report
+
+
+def format_release_evidence_markdown(report: dict[str, Any]) -> str:
+    """Render a compact release evidence report."""
+
+    summary = report.get("summary", {})
+    release = report.get("release", {})
+    checks = report.get("checks", {})
+    lines = [
+        "# RepoMori Release Evidence",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Version: `{summary.get('version')}`",
+        f"- Commit: `{summary.get('commit')}`",
+        f"- Ref: `{summary.get('ref')}`",
+        f"- Run ID: `{summary.get('run_id')}`",
+        f"- Workflow: `{release.get('workflow')}`",
+        f"- Repository: `{release.get('repository')}`",
+        f"- Run URL: `{release.get('run_url')}`",
+        f"- Release verification: `{summary.get('release_verify_status')}`",
+        f"- Release check: `{summary.get('release_check_status')}`",
+        f"- Release health: `{summary.get('release_health_status')}`",
+        f"- Signatures: `{summary.get('signature_status')}`",
+        "",
+        "## Checks",
+        "",
+    ]
+    for name in ("release_verify", "release_check", "release_health"):
+        check = checks.get(name, {})
+        lines.append(f"- `{name}` status=`{check.get('status')}` schema=`{check.get('schema_version')}`")
+    signatures = checks.get("signatures", {})
+    lines.append(
+        f"- `signatures` status=`{signatures.get('status')}` "
+        f"signed=`{signatures.get('signed_count')}` expected=`{signatures.get('expected_count')}` "
+        f"public_key=`{signatures.get('public_key_status')}`"
+    )
+
+    artifacts = report.get("artifacts", [])
+    if artifacts:
+        lines.extend(["", "## Artifacts", ""])
+        lines.append("| Path | Role | Bytes | SHA-256 |")
+        lines.append("| --- | --- | ---: | --- |")
+        for artifact in artifacts:
+            lines.append(
+                f"| `{artifact.get('path')}` | `{artifact.get('role')}` | "
+                f"{artifact.get('bytes')} | `{artifact.get('sha256')}` |"
+            )
+    if report.get("warnings"):
+        lines.extend(["", "## Warnings", ""])
+        for item in report.get("warnings", []):
+            path = f" `{item.get('path')}`" if item.get("path") else ""
+            lines.append(f"- `{item.get('code')}`{path} {item.get('message')}")
+    if report.get("errors"):
+        lines.extend(["", "## Errors", ""])
+        for item in report.get("errors", []):
+            path = f" `{item.get('path')}`" if item.get("path") else ""
+            lines.append(f"- `{item.get('code')}`{path} {item.get('message')}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _release_evidence_default_release_check(package_root: Path) -> Path | None:
+    candidates = (
+        package_root.parent / ".repomori-release-check" / _RELEASE_CHECK_ARTIFACT_REPORT,
+        package_root / _RELEASE_CHECK_ARTIFACT_REPORT,
+        package_root / "release-check" / _RELEASE_CHECK_ARTIFACT_REPORT,
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _release_evidence_default_release_health(package_root: Path) -> Path | None:
+    candidates = (
+        package_root.parent / ".repomori-health" / _RELEASE_HEALTH_ARTIFACT_REPORT,
+        package_root.parent / ".repomori-release-health" / _RELEASE_HEALTH_ARTIFACT_REPORT,
+        package_root / _RELEASE_HEALTH_ARTIFACT_REPORT,
+        package_root / "release-health" / _RELEASE_HEALTH_ARTIFACT_REPORT,
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _release_evidence_load_json_report(
+    path: Path | None,
+    expected_schema: str,
+    warnings: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    *,
+    required: bool,
+) -> dict[str, Any] | None:
+    if path is None:
+        if not required:
+            return None
+        target = errors if required else warnings
+        target.append(
+            {
+                "code": "report_missing",
+                "schema_version": expected_schema,
+                "message": f"{expected_schema} report was not supplied or discoverable.",
+            }
+        )
+        return None
+    if not path.is_file():
+        target = errors if required else warnings
+        target.append(
+            {
+                "code": "report_not_found",
+                "schema_version": expected_schema,
+                "path": str(path),
+                "message": f"{expected_schema} report file was not found.",
+            }
+        )
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(
+            {
+                "code": "report_json_invalid",
+                "schema_version": expected_schema,
+                "path": str(path),
+                "message": f"Could not parse report JSON: {exc}",
+            }
+        )
+        return None
+    if not isinstance(payload, dict):
+        errors.append(
+            {
+                "code": "report_json_not_object",
+                "schema_version": expected_schema,
+                "path": str(path),
+                "message": "Report JSON must contain an object.",
+            }
+        )
+        return None
+    if payload.get("schema_version") != expected_schema:
+        errors.append(
+            {
+                "code": "report_schema_mismatch",
+                "path": str(path),
+                "message": "Report schema_version did not match expected value.",
+                "expected": expected_schema,
+                "actual": payload.get("schema_version"),
+            }
+        )
+    return payload
+
+
+def _release_evidence_signature_report(package_root: Path) -> dict[str, Any]:
+    expected_targets = (
+        "checksums.txt",
+        "release-provenance.json",
+        "sbom.spdx.json",
+        "release-verify.json",
+    )
+    signatures: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    for target in expected_targets:
+        signature_path = package_root / f"{target}.asc"
+        record = {
+            "target": target,
+            "signature": f"{target}.asc",
+            "present": signature_path.is_file(),
+            "bytes": signature_path.stat().st_size if signature_path.is_file() else 0,
+            "sha256": _path_sha256(signature_path) if signature_path.is_file() else None,
+        }
+        signatures.append(record)
+    signed_count = sum(1 for item in signatures if item["present"])
+    expected_count = len(expected_targets)
+    if signed_count == 0:
+        status = "unsigned"
+    elif signed_count == expected_count:
+        status = "signed"
+    else:
+        status = "partial"
+        warnings.append(
+            {
+                "code": "signature_set_partial",
+                "message": "Some release signature files are present, but the expected set is incomplete.",
+            }
+        )
+    public_key = package_root / "repomori-release-public-key.asc"
+    public_key_record = _release_evidence_file_record(package_root, public_key, role="public_key")
+    if status == "signed" and public_key_record is None:
+        warnings.append(
+            {
+                "code": "public_key_missing",
+                "message": "Release is signed, but repomori-release-public-key.asc is not present in the package.",
+            }
+        )
+    return {
+        "status": status,
+        "expected_count": expected_count,
+        "signed_count": signed_count,
+        "public_key_status": "present" if public_key_record is not None else "missing",
+        "public_key": public_key_record,
+        "signatures": signatures,
+        "warnings": warnings,
+        "note": "Signature presence is checked locally; trust still depends on verifying the public key fingerprint independently.",
+    }
+
+
+def _release_evidence_artifacts(package_root: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for path in sorted(package_root.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.name in {_RELEASE_EVIDENCE_ARTIFACT_REPORT, _RELEASE_EVIDENCE_ARTIFACT_MARKDOWN}:
+            continue
+        record = _release_evidence_file_record(package_root, path, role=_release_evidence_artifact_role(package_root, path))
+        if record is not None:
+            records.append(record)
+    return records
+
+
+def _release_evidence_file_record(root: Path, path: Path, *, role: str) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        relative = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        relative = str(path.resolve())
+    return {
+        "path": relative,
+        "role": role,
+        "bytes": path.stat().st_size,
+        "sha256": _path_sha256(path),
+    }
+
+
+def _release_evidence_artifact_role(root: Path, path: Path) -> str:
+    relative = path.relative_to(root).as_posix()
+    name = path.name
+    if relative.startswith("dist/") and name.endswith(".whl"):
+        return "wheel"
+    if relative.startswith("dist/") and name.endswith(".zip"):
+        return "source_archive"
+    if name == "checksums.txt":
+        return "checksums"
+    if name == "release-provenance.json":
+        return "provenance"
+    if name == "sbom.spdx.json":
+        return "sbom"
+    if name == "release-candidate.json":
+        return "manifest"
+    if name == "release-candidate.md":
+        return "manifest_markdown"
+    if name == "release-verify.json":
+        return "release_verify_report"
+    if name == "release-verify.md":
+        return "release_verify_markdown"
+    if name == "repomori-release-public-key.asc":
+        return "public_key"
+    if name.endswith(".asc"):
+        return "signature"
+    return "release_artifact"
+
+
+def _release_evidence_run_url(repository: Any, run_id: Any) -> str | None:
+    if not repository or not run_id:
+        return None
+    return f"https://github.com/{repository}/actions/runs/{run_id}"
+
+
+def _release_evidence_status(
+    checks: dict[str, Any],
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+) -> str:
+    if errors:
+        return "fail"
+    release_verify_status = checks.get("release_verify", {}).get("status")
+    release_check_status = checks.get("release_check", {}).get("status")
+    release_health_status = checks.get("release_health", {}).get("status")
+    signature_status = checks.get("signatures", {}).get("status")
+    signature_warnings = checks.get("signatures", {}).get("warnings", [])
+    if release_verify_status == "fail" or release_check_status == "fail" or release_health_status == "fail":
+        return "fail"
+    if release_verify_status != "pass" or release_check_status != "pass":
+        return "warn"
+    if release_health_status == "warn" or signature_status == "partial" or warnings or signature_warnings:
+        return "warn"
+    return "pass"
 
 
 def _resolve_release_package_root(

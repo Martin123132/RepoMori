@@ -48,6 +48,8 @@ The draft release receives:
 - `sbom.spdx.json`
 - `release-verify.json`
 - `release-verify.md`
+- `release-evidence.json`
+- `release-evidence.md`
 - `release-candidate.json`
 - `release-candidate.md`
 - optional `*.asc` detached signatures for integrity artifacts
@@ -78,4 +80,4 @@ python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --
 ```
 
 Also confirm the tag target, release notes, license posture, checksums,
-provenance, SBOM, and commercial-use language.
+provenance, SBOM, release evidence, and commercial-use language.
