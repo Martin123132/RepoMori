@@ -1434,6 +1434,16 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertTrue(report["checks"]["scan"]["ok"])
             self.assertEqual(report["checks"]["tests"]["status"], "skipped")
             self.assertEqual(report["checks"]["demo"]["demo_status"], "pass")
+            privacy_demo = report["checks"]["privacy_guard_demo"]
+            self.assertTrue(privacy_demo["ok"])
+            self.assertEqual(privacy_demo["status"], "pass")
+            self.assertEqual(report["summary"]["privacy_guard_demo_status"], "pass")
+            self.assertEqual(privacy_demo["summary"]["clean_guard_status"], "pass")
+            self.assertEqual(privacy_demo["summary"]["failing_guard_status"], "fail")
+            self.assertEqual(privacy_demo["summary"]["leaked_marker_codes"], [])
+            observed_codes = set(privacy_demo["summary"]["observed_issue_counts_by_code"])
+            self.assertIn("secret_like_value", observed_codes)
+            self.assertIn("raw_dump_key", observed_codes)
             self.assertFalse(demo_out.exists())
 
     def test_run_release_check_fails_on_workspace_generated_artifacts(self) -> None:
@@ -1573,6 +1583,9 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("if [ -n \"$DRIFT_LOG\" ] && [ ! -f \"$DRIFT_LOG\" ]", workflow)
         for doc in (release_health_doc, release_check_doc, readme):
             self.assertIn("python -m unittest discover -s tests", doc)
+        self.assertIn("privacy-guard demo preflight", release_check_doc)
+        self.assertIn("without echoing synthetic paths", release_check_doc)
+        self.assertIn("privacy-guard demo preflight", readme)
         self.assertIn("--skip-demo --json", release_health_doc)
         self.assertIn("--skip-demo --json", release_check_doc)
 
@@ -7238,6 +7251,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "pass")
             self.assertEqual(payload["checks"]["tests"]["status"], "skipped")
             self.assertEqual(payload["checks"]["demo"]["status"], "skipped")
+            self.assertEqual(payload["checks"]["privacy_guard_demo"]["status"], "pass")
+            self.assertEqual(payload["checks"]["privacy_guard_demo"]["summary"]["failing_guard_status"], "fail")
+            self.assertEqual(payload["checks"]["privacy_guard_demo"]["summary"]["leaked_marker_codes"], [])
 
     def test_cli_release_check_fails_with_workspace_generated_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

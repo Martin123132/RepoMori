@@ -1186,6 +1186,108 @@ def _release_check_scan_failure_reasons(scan_report: dict[str, Any]) -> list[str
     return reasons
 
 
+def _release_check_privacy_guard_demo_preflight() -> dict[str, Any]:
+    """Run synthetic privacy-guard demos and prove the failure stays redacted."""
+
+    expected_codes = {
+        "local_absolute_path",
+        "temp_directory",
+        "secret_like_value",
+        "private_url",
+        "proprietary_marker",
+        "raw_dump_key",
+    }
+    clean = build_release_review_privacy_guard_demo(mode="clean")
+    failing = build_release_review_privacy_guard_demo(mode="fail")
+    failing_markdown = format_release_review_privacy_guard_demo_markdown(failing)
+    clean_summary = clean.get("summary") if isinstance(clean.get("summary"), dict) else {}
+    failing_summary = failing.get("summary") if isinstance(failing.get("summary"), dict) else {}
+    clean_counts = (
+        clean_summary.get("issue_counts_by_code")
+        if isinstance(clean_summary.get("issue_counts_by_code"), dict)
+        else {}
+    )
+    failing_counts = (
+        failing_summary.get("issue_counts_by_code")
+        if isinstance(failing_summary.get("issue_counts_by_code"), dict)
+        else {}
+    )
+    clean_guard = clean.get("privacy_guard") if isinstance(clean.get("privacy_guard"), dict) else {}
+    failing_guard = failing.get("privacy_guard") if isinstance(failing.get("privacy_guard"), dict) else {}
+    clean_ok = clean.get("status") == "pass" and clean_guard.get("status") == "pass" and clean_counts == {}
+    failing_ok = (
+        failing.get("status") == "pass"
+        and failing_guard.get("status") == "fail"
+        and expected_codes.issubset(set(failing_counts))
+    )
+    raw_markers = [
+        ("local_absolute_path", "C:" + "\\" + "Users" + "\\" + "reviewer" + "\\" + "Temp" + "\\" + "SYNTHETIC_PATH.txt"),
+        ("secret_like_value", "api" + "_key=" + "s" + "k-" + "syntheticplaceholdernotreal"),
+        ("private_url", "https://" + "internal" + ".example" + ".local/synthetic"),
+        ("proprietary_marker", "proprietary" + " source"),
+        ("raw_dump", "SYNTHETIC_RAW_DUMP_PLACEHOLDER"),
+    ]
+    combined_output = json.dumps(failing, sort_keys=True) + "\n" + failing_markdown
+    leaked_marker_codes = sorted(code for code, marker in raw_markers if marker in combined_output)
+    redaction_ok = not leaked_marker_codes
+    checks = [
+        {
+            "id": "clean_demo_expected_pass",
+            "status": "pass" if clean_ok else "fail",
+            "message": "Clean demo top-level and embedded privacy guard pass with no issue counts.",
+            "expected": {"status": "pass", "privacy_guard.status": "pass", "issue_counts_by_code": {}},
+            "actual": {
+                "status": clean.get("status"),
+                "privacy_guard.status": clean_guard.get("status"),
+                "issue_counts_by_code": clean_counts,
+            },
+        },
+        {
+            "id": "failing_demo_expected_redacted_fail",
+            "status": "pass" if failing_ok else "fail",
+            "message": "Failing demo has a passing dry-run wrapper, failing embedded guard, and expected redacted categories.",
+            "expected": {
+                "status": "pass",
+                "privacy_guard.status": "fail",
+                "issue_codes": sorted(expected_codes),
+            },
+            "actual": {
+                "status": failing.get("status"),
+                "privacy_guard.status": failing_guard.get("status"),
+                "issue_counts_by_code": failing_counts,
+            },
+        },
+        {
+            "id": "failing_demo_raw_values_redacted",
+            "status": "pass" if redaction_ok else "fail",
+            "message": "Failing demo output does not echo synthetic paths, secrets, private URLs, raw dumps, or proprietary markers.",
+            "leaked_marker_codes": leaked_marker_codes,
+        },
+    ]
+    failed = [check for check in checks if check.get("status") == "fail"]
+    status = "fail" if failed else "pass"
+    return {
+        "name": "privacy_guard_demo",
+        "ok": status == "pass",
+        "status": status,
+        "summary": {
+            "clean_status": clean.get("status"),
+            "clean_guard_status": clean_guard.get("status"),
+            "failing_status": failing.get("status"),
+            "failing_guard_status": failing_guard.get("status"),
+            "expected_issue_codes": sorted(expected_codes),
+            "observed_issue_counts_by_code": failing_counts,
+            "leaked_marker_codes": leaked_marker_codes,
+        },
+        "checks": checks,
+        "status_reason": (
+            "privacy-guard demo preflight failed; inspect redacted check categories."
+            if failed
+            else "privacy-guard demo preflight passed."
+        ),
+    }
+
+
 def _release_health_artifacts_dir(repo_path: Path, artifacts_dir: Path | str | None) -> Path:
     if artifacts_dir is not None:
         return Path(artifacts_dir).resolve()
@@ -1515,6 +1617,7 @@ def run_release_check(
         if run_demo_smoke
         else _release_skipped_check("demo")
     )
+    privacy_guard_demo_check = _release_check_privacy_guard_demo_preflight()
 
     checks = {
         "workspace": {
@@ -1541,6 +1644,7 @@ def run_release_check(
         },
         "tests": tests_check,
         "demo": demo_check,
+        "privacy_guard_demo": privacy_guard_demo_check,
     }
     failed = [name for name, check in checks.items() if not check.get("ok")]
     status = _release_check_summary_status(checks)
@@ -1587,6 +1691,7 @@ def run_release_check(
             "scan_ignored_findings": scan.get("summary", {}).get("ignored_findings"),
             "tests_returncode": tests_check.get("returncode"),
             "demo_status": demo_check.get("demo_status"),
+            "privacy_guard_demo_status": privacy_guard_demo_check.get("status"),
             "drift_policy_status": drift_policy_report.get("status"),
             "failure_reason_count": len(failure_reasons),
         },
@@ -2327,6 +2432,14 @@ def format_release_check_markdown(report: dict[str, Any]) -> str:
                     message = issue.get("message")
                     if message:
                         lines.append(f"  - {message}")
+            elif name == "privacy_guard_demo":
+                demo_summary = check.get("summary", {})
+                line = line[:-1] + (
+                    " "
+                    f"clean_guard={demo_summary.get('clean_guard_status', 'unknown')} "
+                    f"failing_guard={demo_summary.get('failing_guard_status', 'unknown')} "
+                    f"leaked_markers={len(demo_summary.get('leaked_marker_codes') or [])}`"
+                )
             lines.append(line)
         if report.get("failure_reasons"):
             lines.append("")

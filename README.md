@@ -264,9 +264,10 @@ local policy choices.
 
 `release-check` is the local pre-push/public-release gate. It runs schema
 catalog sanity checks, strict `scan`, `python -m unittest discover -s tests`,
-and a quickstart `demo` smoke, then returns one `repomori.release_check.v1`
-report. Add `--drift-log` to persist baseline-match drift telemetry and use
-`drift-summary <log> --json` to review trend deltas in CI or nightly scripts.
+the privacy-guard demo preflight, and a quickstart `demo` smoke, then returns
+one `repomori.release_check.v1` report. Add `--drift-log` to persist
+baseline-match drift telemetry and use `drift-summary <log> --json` to review
+trend deltas in CI or nightly scripts.
 `release-check` is intentionally strict about generated snapshot artifacts (such as
 local `packs/` or `bench*` directories and `.repomori` files). Keep generated
 snapshot output in hidden paths (like `.repomori-packs`) and run from a clean

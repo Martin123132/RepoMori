@@ -15,9 +15,17 @@ It runs:
 - strict public-safety scan, using the baseline when supplied
 - `python -m unittest discover -s tests`
 - quickstart `demo` smoke in a temporary sibling directory
+- privacy-guard demo preflight for both clean and synthetic failing outputs
 
 The report uses schema `repomori.release_check.v1` and includes a pass/fail
 status, settings, summary, and nested check reports.
+
+The privacy-guard demo preflight runs the same synthetic clean/fail paths as
+`python -m repomori privacy-guard-demo`. It expects the clean demo to pass with
+empty issue counts, the failing demo to have a passing dry-run wrapper plus an
+embedded failing guard, and the failing output to report redacted
+category/count summaries without echoing synthetic paths, secret-like values,
+private URLs, raw dumps, or proprietary markers.
 
 `release-check` inherits the same baseline match behavior as `scan`: strict
 `code + path + severity + line + match`, then semi-strict when line numbers drift,
