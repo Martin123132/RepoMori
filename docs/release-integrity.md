@@ -39,7 +39,8 @@ The release package workflow writes:
 - `release-review-handoff.json` / `release-review-handoff.md`: concise
   `repomori.release_review_handoff.v1` reviewer summary pointing to the
   selected profile, policy outcome, completeness status, artifact index,
-  checklist, diagnostics references, and any remediation list.
+  checklist, diagnostics references, and any remediation list. The final bundle
+  completeness report checks these handoff artifacts before upload.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when

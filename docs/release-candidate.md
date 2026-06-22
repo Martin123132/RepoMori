@@ -112,7 +112,9 @@ next repair step from the uploaded CI artifact.
 The final first-read artifact is `release-review-handoff.md`, backed by
 `release-review-handoff.json` using `repomori.release_review_handoff.v1`. It
 summarises the selected profile, policy outcome, completeness status, artifact
-index, checklist, diagnostics references, and any remediation list.
+index, checklist, diagnostics references, and any remediation list. The final
+bundle completeness check also expects these handoff artifacts and fails fast if
+they are missing or no longer match the selected policy profile/outcome.
 
 ## Bundle Completeness Remediation
 
@@ -127,6 +129,7 @@ workflow. Common failure groups are:
 | checksums, provenance, and SBOM | `checksums.txt`, `release-provenance.json`, `sbom.spdx.json`, or `release-candidate.json` is missing or stale. | Rebuild the candidate package so `write_release_package_artifacts` regenerates integrity files from the current `dist` artifacts. |
 | reviewer checklist | `release-review-checklist.md` is missing selected profile, policy outcome, hash/provenance checks, or final decision placeholders. | Regenerate the checklist from the policy report and release evidence before review. |
 | artifact index and diagnostics references | `release-artifact-index.md` is missing the policy report, checklist, matrix, diagnostics guide, or evidence references. | Regenerate the artifact index and confirm links to the selection guide, matrix, diagnostics guide, integrity guide, and evidence runbook. |
+| reviewer handoff | `release-review-handoff.json` or `.md` is missing, stale, or no longer matches the selected profile/policy outcome. | Regenerate the handoff after the policy report, evidence, artifact index, checklist, and provisional completeness report are current. |
 | selected profile | The policy report is present but `policy.profile` is empty. | Use one of the checked policy profiles or fix the policy JSON before approving the candidate. |
 
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and

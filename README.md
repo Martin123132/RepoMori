@@ -312,6 +312,7 @@ index, selected profile, or diagnostics references. It also writes
 `release-review-handoff.md` and `.json` as the concise first-read reviewer
 summary linking the selected profile, policy outcome, completeness status,
 artifact index, checklist, diagnostics references, and remediation list. The
+final completeness pass also checks those handoff artifacts before upload. The
 workflow validates the policy JSON/Markdown reviewer guidance before uploading
 the candidate artifact bundle.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required

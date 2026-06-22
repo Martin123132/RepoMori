@@ -289,12 +289,13 @@ jobs:
           index = format_release_candidate_artifact_index_markdown(report, evidence)
           Path(".repomori-release-candidate/release-review-checklist.md").write_text(checklist, encoding="utf-8")
           Path(".repomori-release-candidate/release-artifact-index.md").write_text(index, encoding="utf-8")
-          bundle = check_release_candidate_review_bundle(".repomori-release-candidate")
-          Path(".repomori-release-candidate/release-bundle-completeness.json").write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
-          handoff = build_release_candidate_reviewer_handoff(report, evidence, bundle)
+          provisional_bundle = check_release_candidate_review_bundle(".repomori-release-candidate", require_handoff=False)
+          handoff = build_release_candidate_reviewer_handoff(report, evidence, provisional_bundle)
           handoff_markdown = format_release_candidate_reviewer_handoff_markdown(handoff)
           Path(".repomori-release-candidate/release-review-handoff.json").write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
           Path(".repomori-release-candidate/release-review-handoff.md").write_text(handoff_markdown, encoding="utf-8")
+          bundle = check_release_candidate_review_bundle(".repomori-release-candidate")
+          Path(".repomori-release-candidate/release-bundle-completeness.json").write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
           assert report["schema_version"] == "repomori.release_verify.v1"
           assert report["status"] == "pass"
           assert report["policy"]["schema_version"] == "repomori.release_policy.v1"

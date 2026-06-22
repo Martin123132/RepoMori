@@ -10829,6 +10829,16 @@ def _release_review_bundle_remediation(check_id: str, path: str | None = None) -
     }
     checklist_ids = {"artifact:release-review-checklist.md", "content:review_checklist"}
     index_ids = {"artifact:release-artifact-index.md", "content:artifact_index"}
+    handoff_ids = {
+        "artifact:release-review-handoff.json",
+        "artifact:release-review-handoff.md",
+        "json:release-review-handoff.json",
+        "schema:review_handoff",
+        "content:review_handoff",
+        "content:handoff_profile",
+        "content:handoff_policy_outcome",
+        "content:handoff_completeness",
+    }
     dist_ids = {"artifact:dist_wheel", "artifact:dist_source_archive"}
 
     if check_id == "release_review_root_missing":
@@ -10877,6 +10887,12 @@ def _release_review_bundle_remediation(check_id: str, path: str | None = None) -
                 "docs/release-policy.md#policy-diagnostics",
             ],
         }
+    if check_id in handoff_ids:
+        return {
+            "category": "reviewer handoff",
+            "next_step": "Regenerate release-review-handoff.json and release-review-handoff.md after the policy report, release evidence, artifact index, checklist, and completeness report are current.",
+            "docs": ["docs/release-candidate.md#bundle-completeness-remediation"],
+        }
     if check_id in dist_ids:
         return {
             "category": "build artifacts",
@@ -10896,7 +10912,7 @@ def _release_review_bundle_remediation(check_id: str, path: str | None = None) -
     }
 
 
-def check_release_candidate_review_bundle(root: Path | str) -> dict[str, Any]:
+def check_release_candidate_review_bundle(root: Path | str, *, require_handoff: bool = True) -> dict[str, Any]:
     """Verify that a release candidate contains the reviewer-facing bundle."""
 
     root_path = Path(root)
@@ -10940,6 +10956,11 @@ def check_release_candidate_review_bundle(root: Path | str) -> dict[str, Any]:
         "release-evidence.json",
         "release-evidence.md",
     )
+    if require_handoff:
+        required_artifacts = required_artifacts + (
+            "release-review-handoff.json",
+            "release-review-handoff.md",
+        )
     for name in required_artifacts:
         path = root_path / name
         add_check(
@@ -10968,6 +10989,11 @@ def check_release_candidate_review_bundle(root: Path | str) -> dict[str, Any]:
     provenance = _release_review_bundle_load_json(root_path, "release-provenance.json", checks, errors)
     policy_report = _release_review_bundle_load_json(root_path, "release-verify-policy.json", checks, errors)
     evidence_report = _release_review_bundle_load_json(root_path, "release-evidence.json", checks, errors)
+    handoff_report = (
+        _release_review_bundle_load_json(root_path, "release-review-handoff.json", checks, errors)
+        if require_handoff
+        else None
+    )
 
     add_check(
         "schema:release_candidate",
@@ -11002,6 +11028,7 @@ def check_release_candidate_review_bundle(root: Path | str) -> dict[str, Any]:
         actual=evidence_report.get("schema_version") if isinstance(evidence_report, dict) else None,
     )
     policy = policy_report.get("policy") if isinstance(policy_report, dict) and isinstance(policy_report.get("policy"), dict) else {}
+    diagnostics = policy.get("diagnostics") if isinstance(policy.get("diagnostics"), dict) else {}
     add_check(
         "content:selected_profile",
         "pass" if policy.get("profile") else "fail",
@@ -11058,6 +11085,75 @@ def check_release_candidate_review_bundle(root: Path | str) -> dict[str, Any]:
             "Diagnostics References",
         ),
     )
+    if require_handoff:
+        add_check(
+            "schema:review_handoff",
+            "pass"
+            if isinstance(handoff_report, dict)
+            and handoff_report.get("schema_version") == "repomori.release_review_handoff.v1"
+            else "fail",
+            "release-review-handoff.json has the expected schema.",
+            expected="repomori.release_review_handoff.v1",
+            actual=handoff_report.get("schema_version") if isinstance(handoff_report, dict) else None,
+        )
+        handoff_policy = (
+            handoff_report.get("policy")
+            if isinstance(handoff_report, dict) and isinstance(handoff_report.get("policy"), dict)
+            else {}
+        )
+        handoff_completeness = (
+            handoff_report.get("completeness")
+            if isinstance(handoff_report, dict) and isinstance(handoff_report.get("completeness"), dict)
+            else {}
+        )
+        add_check(
+            "content:handoff_profile",
+            "pass"
+            if isinstance(handoff_report, dict)
+            and policy.get("profile")
+            and handoff_report.get("profile") == policy.get("profile")
+            else "fail",
+            "release-review-handoff.json matches the selected policy profile.",
+            path="release-review-handoff.json",
+            expected=policy.get("profile"),
+            actual=handoff_report.get("profile") if isinstance(handoff_report, dict) else None,
+        )
+        add_check(
+            "content:handoff_policy_outcome",
+            "pass"
+            if isinstance(handoff_report, dict)
+            and diagnostics.get("outcome")
+            and handoff_policy.get("outcome") == diagnostics.get("outcome")
+            else "fail",
+            "release-review-handoff.json matches the policy outcome.",
+            path="release-review-handoff.json",
+            expected=diagnostics.get("outcome"),
+            actual=handoff_policy.get("outcome") if isinstance(handoff_policy, dict) else None,
+        )
+        add_check(
+            "content:handoff_completeness",
+            "pass" if handoff_completeness.get("status") == "pass" else "fail",
+            "release-review-handoff.json records a passing completeness status.",
+            path="release-review-handoff.json",
+            expected="pass",
+            actual=handoff_completeness.get("status") if isinstance(handoff_completeness, dict) else None,
+        )
+        _release_review_bundle_text_check(
+            root_path,
+            checks,
+            errors,
+            "release-review-handoff.md",
+            "content:review_handoff",
+            (
+                "RepoMori Release Candidate Reviewer Handoff",
+                "Selected policy profile:",
+                "Policy outcome:",
+                "Completeness status:",
+                "release-artifact-index.md",
+                "release-review-checklist.md",
+                "docs/release-policy.md#policy-diagnostics",
+            ),
+        )
 
     return _release_review_bundle_report(root_path, checks, errors, policy_report, evidence_report)
 

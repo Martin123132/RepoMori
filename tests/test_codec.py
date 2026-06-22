@@ -1631,6 +1631,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("format_release_candidate_artifact_index_markdown", workflow)
         self.assertIn("format_release_candidate_reviewer_handoff_markdown", workflow)
         self.assertIn("format_release_review_checklist_markdown", workflow)
+        self.assertIn("require_handoff=False", workflow)
         self.assertIn("bundle[\"status\"] == \"pass\"", workflow)
         self.assertIn("handoff[\"status\"] == \"pass\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
@@ -1724,6 +1725,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("format_release_candidate_artifact_index_markdown", workflow)
         self.assertIn("format_release_candidate_reviewer_handoff_markdown", workflow)
         self.assertIn("format_release_review_checklist_markdown", workflow)
+        self.assertIn("require_handoff=False", workflow)
         self.assertIn("bundle[\"status\"] == \"pass\"", workflow)
         self.assertIn("handoff[\"status\"] == \"pass\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
@@ -2083,6 +2085,16 @@ class RepoMoriCodecTests(unittest.TestCase):
                 format_release_candidate_artifact_index_markdown(report, evidence),
                 encoding="utf-8",
             )
+            provisional = check_release_candidate_review_bundle(root, require_handoff=False)
+            handoff = build_release_candidate_reviewer_handoff(report, evidence, provisional)
+            (root / "release-review-handoff.json").write_text(
+                json.dumps(handoff, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "release-review-handoff.md").write_text(
+                format_release_candidate_reviewer_handoff_markdown(handoff),
+                encoding="utf-8",
+            )
 
             complete = check_release_candidate_review_bundle(root)
 
@@ -2093,6 +2105,32 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(complete["summary"]["remediation_count"], 0)
             self.assertEqual(complete["errors"], [])
             self.assertEqual(complete["remediation"], [])
+
+            (root / "release-review-handoff.md").unlink()
+            missing_handoff = check_release_candidate_review_bundle(root)
+            handoff_error = next(item for item in missing_handoff["errors"] if item["code"] == "artifact:release-review-handoff.md")
+            self.assertEqual(handoff_error["remediation"]["category"], "reviewer handoff")
+            self.assertIn("Regenerate release-review-handoff.json", handoff_error["remediation"]["next_step"])
+            (root / "release-review-handoff.md").write_text(
+                format_release_candidate_reviewer_handoff_markdown(handoff),
+                encoding="utf-8",
+            )
+
+            stale_handoff = dict(handoff)
+            stale_handoff["profile"] = "old_profile"
+            (root / "release-review-handoff.json").write_text(
+                json.dumps(stale_handoff, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            stale = check_release_candidate_review_bundle(root)
+            stale_error = next(item for item in stale["errors"] if item["code"] == "content:handoff_profile")
+            self.assertEqual(stale_error["remediation"]["category"], "reviewer handoff")
+            self.assertEqual(stale_error["expected"], "dev_unsigned")
+            self.assertEqual(stale_error["actual"], "old_profile")
+            (root / "release-review-handoff.json").write_text(
+                json.dumps(handoff, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
             (root / "release-artifact-index.md").unlink()
             failed = check_release_candidate_review_bundle(root)
@@ -2115,6 +2153,14 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             (root / "release-artifact-index.md").write_text(
                 format_release_candidate_artifact_index_markdown(report, evidence),
+                encoding="utf-8",
+            )
+            (root / "release-review-handoff.json").write_text(
+                json.dumps(handoff, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "release-review-handoff.md").write_text(
+                format_release_candidate_reviewer_handoff_markdown(handoff),
                 encoding="utf-8",
             )
             policy_payload = json.loads((root / "release-verify-policy.json").read_text(encoding="utf-8"))
@@ -2148,7 +2194,7 @@ class RepoMoriCodecTests(unittest.TestCase):
                 format_release_candidate_artifact_index_markdown(report, evidence),
                 encoding="utf-8",
             )
-            bundle = check_release_candidate_review_bundle(root)
+            bundle = check_release_candidate_review_bundle(root, require_handoff=False)
 
             handoff = build_release_candidate_reviewer_handoff(report, evidence, bundle)
             markdown = format_release_candidate_reviewer_handoff_markdown(handoff)
