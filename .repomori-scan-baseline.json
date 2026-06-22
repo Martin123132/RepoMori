@@ -2,7 +2,7 @@
   "schema_version": "repomori.scan.baseline.v1",
   "source_schema_version": "repomori.scan.v1",
   "repo_path": "D:\\Dev\\RepoMori",
-  "created_at": 1781806090,
+  "created_at": 1782156338,
   "ignore": [
     {
       "severity": "low",
@@ -25,7 +25,7 @@
       "code": "temp_drive_path",
       "path": "README.md",
       "message": "D-drive temp path appears in source.",
-      "line": 91,
+      "line": 111,
       "match": "D:\\T...demo"
     },
     {
@@ -57,7 +57,7 @@
       "code": "temp_drive_path",
       "path": "docs/quickstart.md",
       "message": "D-drive temp path appears in source.",
-      "line": 16,
+      "line": 19,
       "match": "D:\\T...demo"
     },
     {
@@ -65,24 +65,8 @@
       "code": "temp_drive_path",
       "path": "docs/quickstart.md",
       "message": "D-drive temp path appears in source.",
-      "line": 17,
+      "line": 20,
       "match": "D:\\T...demo"
-    },
-    {
-      "severity": "low",
-      "code": "temp_drive_path",
-      "path": "docs/release-check.md",
-      "message": "D-drive temp path appears in source.",
-      "line": 67,
-      "match": "D:\\T...sonl"
-    },
-    {
-      "severity": "low",
-      "code": "temp_drive_path",
-      "path": "docs/release-check.md",
-      "message": "D-drive temp path appears in source.",
-      "line": 70,
-      "match": "D:\\T...sonl"
     },
     {
       "severity": "low",
@@ -95,9 +79,25 @@
     {
       "severity": "low",
       "code": "temp_drive_path",
+      "path": "docs/release-check.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 82,
+      "match": "D:\\T...sonl"
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
+      "path": "docs/release-check.md",
+      "message": "D-drive temp path appears in source.",
+      "line": 91,
+      "match": "D:\\T...sonl"
+    },
+    {
+      "severity": "low",
+      "code": "temp_drive_path",
       "path": "docs/release-health.md",
       "message": "D-drive temp path appears in source.",
-      "line": 101,
+      "line": 110,
       "match": "D:\\T...alth"
     },
     {
