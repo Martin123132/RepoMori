@@ -37,6 +37,7 @@ product.
 - Release integrity: [release-integrity.md](release-integrity.md)
 - Release evidence: [release-evidence.md](release-evidence.md)
 - Release policy: [release-policy.md](release-policy.md)
+- Release policy matrix: [release-policy-matrix.md](release-policy-matrix.md)
 - Release signing: [release-signing.md](release-signing.md)
 - Release publishing: [release-publishing.md](release-publishing.md)
 - Snapshot backup and restore: [snapshot-backup-restore.md](snapshot-backup-restore.md)

@@ -122,7 +122,8 @@ verify the public key fingerprint through an independent channel.
 ## Checked Policy Profiles
 
 RepoMori keeps small policy examples under `tests/fixtures` so the examples are
-also executable regression fixtures:
+also executable regression fixtures. The checked comparison table lives in
+[release-policy-matrix.md](release-policy-matrix.md).
 
 | Profile | File | Intended Use |
 | --- | --- | --- |

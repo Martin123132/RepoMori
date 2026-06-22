@@ -582,6 +582,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Release integrity](docs/release-integrity.md)
 - [Release evidence](docs/release-evidence.md)
 - [Release policy](docs/release-policy.md)
+- [Release policy matrix](docs/release-policy-matrix.md)
 - [Release signing](docs/release-signing.md)
 - [Release candidate process](docs/release-candidate.md)
 - [Release publishing](docs/release-publishing.md)

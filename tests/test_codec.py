@@ -1991,6 +1991,76 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("warning_or_error_threshold_exceeded", markdown)
             self.assertIn("Resolve the warnings or errors", markdown)
 
+    def test_release_policy_profile_matrix_matches_documented_outcomes(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        matrix_doc = (repo_root / "docs/release-policy-matrix.md").read_text(encoding="utf-8")
+        policies = {
+            "basic": repo_root / "tests/fixtures/release-policy-basic.json",
+            "dev_unsigned": repo_root / "tests/fixtures/release-policy-dev-unsigned.json",
+            "enterprise_signed": repo_root / "tests/fixtures/release-policy-enterprise-signed.json",
+            "strict_no_warnings": repo_root / "tests/fixtures/release-policy-strict-no-warnings.json",
+        }
+        expected = {
+            ("unsigned_clean", "basic"): ("reviewable", "policy_passed", set()),
+            ("unsigned_clean", "dev_unsigned"): ("reviewable", "policy_passed", set()),
+            (
+                "unsigned_clean",
+                "enterprise_signed",
+            ): (
+                "blocked",
+                "signature_requirements_not_met",
+                {
+                    "release_policy_required_file_missing",
+                    "release_policy_signatures_missing",
+                    "release_policy_status_not_allowed",
+                },
+            ),
+            ("unsigned_clean", "strict_no_warnings"): ("reviewable", "policy_passed", set()),
+            ("signed_clean", "basic"): ("reviewable", "policy_passed", set()),
+            ("signed_clean", "dev_unsigned"): ("reviewable", "policy_passed", set()),
+            ("signed_clean", "enterprise_signed"): ("reviewable", "policy_passed", set()),
+            ("signed_clean", "strict_no_warnings"): ("reviewable", "policy_passed", set()),
+            ("signed_warning", "basic"): ("reviewable", "policy_passed", set()),
+            ("signed_warning", "dev_unsigned"): ("reviewable", "policy_passed", set()),
+            ("signed_warning", "enterprise_signed"): ("reviewable", "policy_passed", set()),
+            (
+                "signed_warning",
+                "strict_no_warnings",
+            ): ("blocked", "warning_or_error_threshold_exceeded", {"release_policy_threshold_exceeded"}),
+        }
+        for text in (
+            "unsigned_clean",
+            "signed_clean",
+            "signed_warning",
+            "signature_requirements_not_met",
+            "warning_or_error_threshold_exceeded",
+            "release_policy_threshold_exceeded",
+        ):
+            self.assertIn(text, matrix_doc)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            states = {
+                "unsigned_clean": self._release_policy_package(tmp_path / "unsigned", signed=False),
+                "signed_clean": self._release_policy_package(tmp_path / "signed", signed=True),
+                "signed_warning": self._release_policy_package(
+                    tmp_path / "signed-warning",
+                    signed=True,
+                    evidence_warning_count=1,
+                ),
+            }
+            for (state_name, profile), (decision, outcome, reason_codes) in expected.items():
+                with self.subTest(state=state_name, profile=profile):
+                    report = verify_release_package(states[state_name], policy=policies[profile])
+                    policy_report = report["policy"]
+                    self.assertEqual(policy_report["review"]["decision"], decision)
+                    self.assertEqual(policy_report["diagnostics"]["outcome"], outcome)
+                    actual_reason_codes = {
+                        reason["code"]
+                        for reason in policy_report["diagnostics"]["reasons"]
+                    }
+                    self.assertTrue(reason_codes.issubset(actual_reason_codes))
+
     def test_build_release_evidence_outputs_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
