@@ -60,7 +60,8 @@ gh workflow run release-candidate.yml `
   --repo Martin123132/RepoMori `
   --ref main `
   -f version=0.2.0rc1 `
-  -f ref=main
+  -f ref=main `
+  -f release_policy=tests/fixtures/release-policy-basic.json
 ```
 
 It also runs automatically for pushed tags matching `v*`. The workflow does
@@ -73,6 +74,8 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - `sbom.spdx.json`
 - `release-verify.json`
 - `release-verify.md`
+- `release-verify-policy.json`
+- `release-verify-policy.md`
 - `release-evidence.json`
 - `release-evidence.md`
 - `release-candidate.json`
@@ -91,6 +94,9 @@ bundle locally:
 
 ```powershell
 python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --json
+python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate `
+  --policy D:\Dev\RepoMori\tests\fixtures\release-policy-basic.json `
+  --json
 ```
 
 ## Tag And Pre-Release
@@ -124,7 +130,8 @@ gh workflow run publish-release.yml `
   -f version=0.2.1 `
   -f ref=main `
   -f tag=v0.2.1 `
-  -f prerelease=false
+  -f prerelease=false `
+  -f release_policy=tests/fixtures/release-policy-basic.json
 ```
 
 See [release-publishing.md](release-publishing.md) for the draft-release

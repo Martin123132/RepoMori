@@ -19,11 +19,15 @@ gh workflow run publish-release.yml `
   -f ref=main `
   -f tag=v0.2.1 `
   -f prerelease=false `
-  -f overwrite_draft=true
+  -f overwrite_draft=true `
+  -f release_policy=tests/fixtures/release-policy-basic.json
 ```
 
 If `tag` is omitted, the workflow uses `v<version>`. If `notes_file` is omitted,
 it uses `docs/releases/<version>.md`.
+If `release_policy` is omitted, the workflow uses
+`tests/fixtures/release-policy-basic.json`; point it at a stricter internal
+policy file when signature/public-key requirements are mandatory.
 
 ## Safety Rules
 
@@ -50,6 +54,8 @@ The draft release receives:
 - `sbom.spdx.json`
 - `release-verify.json`
 - `release-verify.md`
+- `release-verify-policy.json`
+- `release-verify-policy.md`
 - `release-evidence.json`
 - `release-evidence.md`
 - `release-candidate.json`
@@ -79,6 +85,9 @@ Before turning the draft into a public release:
 
 ```powershell
 python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --json
+python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate `
+  --policy D:\Dev\RepoMori\tests\fixtures\release-policy-basic.json `
+  --json
 ```
 
 Also confirm the tag target, release notes, license posture, checksums,

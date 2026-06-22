@@ -11,6 +11,10 @@ on:
         description: Branch, tag, or SHA to build.
         required: true
         default: main
+      release_policy:
+        description: Optional release policy JSON file to enforce after release evidence is written.
+        required: false
+        default: tests/fixtures/release-policy-basic.json
   push:
     tags:
       - "v*"
@@ -239,6 +243,45 @@ jobs:
           assert report["checks"]["release_check"]["status"] == "pass"
           print("release evidence package passed")
           PY
+      - name: Verify release policy gate
+        env:
+          RELEASE_POLICY: ${{ inputs.release_policy || 'tests/fixtures/release-policy-basic.json' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_POLICY:-}" ]; then
+            echo "release policy gate skipped: no release_policy input"
+            exit 0
+          fi
+          if [ ! -f "$RELEASE_POLICY" ]; then
+            echo "::error::release policy file was not found: $RELEASE_POLICY"
+            exit 1
+          fi
+          python -m repomori verify-release .repomori-release-candidate \
+            --policy "$RELEASE_POLICY" \
+            --json > .repomori-release-candidate/release-verify-policy.json
+          python -m repomori verify-release .repomori-release-candidate \
+            --policy "$RELEASE_POLICY" \
+            --format markdown \
+            --out .repomori-release-candidate/release-verify-policy.md
+          for artifact in \
+            .repomori-release-candidate/release-verify-policy.json \
+            .repomori-release-candidate/release-verify-policy.md; do
+            if [ ! -s "$artifact" ]; then
+              echo "::error::release policy verification artifact was not created: $artifact"
+              exit 1
+            fi
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path(".repomori-release-candidate/release-verify-policy.json").read_text(encoding="utf-8"))
+          assert report["schema_version"] == "repomori.release_verify.v1"
+          assert report["status"] == "pass"
+          assert report["policy"]["schema_version"] == "repomori.release_policy.v1"
+          assert report["policy"]["status"] == "pass"
+          print("release policy gate passed")
+          PY
       - name: Upload release-candidate artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -252,6 +295,8 @@ jobs:
             .repomori-release-candidate/sbom.spdx.json
             .repomori-release-candidate/release-verify.json
             .repomori-release-candidate/release-verify.md
+            .repomori-release-candidate/release-verify-policy.json
+            .repomori-release-candidate/release-verify-policy.md
             .repomori-release-candidate/release-evidence.json
             .repomori-release-candidate/release-evidence.md
             .repomori-release-candidate/*.asc

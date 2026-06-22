@@ -21,6 +21,9 @@ The release package workflow writes:
   pointing to the checksum, provenance, and SBOM artifacts.
 - `release-verify.json` / `release-verify.md`: machine-readable and readable
   reports from `verify-release` when the release-candidate workflow runs.
+- `release-verify-policy.json` / `release-verify-policy.md`: optional policy
+  gate reports from `verify-release --policy` when a release policy is
+  configured.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when

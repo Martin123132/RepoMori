@@ -114,6 +114,14 @@ verify the public key fingerprint through an independent channel.
 
 ## Recommended Use
 
+The `release-candidate` and `publish-release` workflows expose a
+`release_policy` input and default it to
+`tests/fixtures/release-policy-basic.json`. The policy gate runs after
+`release-evidence` is written so it can require release evidence, release-check
+status, and schema versions without needing secrets or publishing anything.
+When it runs, the workflow emits `release-verify-policy.json` and
+`release-verify-policy.md` beside the rest of the release package.
+
 Use the basic policy for candidate review:
 
 ```powershell

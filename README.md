@@ -297,8 +297,10 @@ python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --
 python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate --policy D:\Dev\RepoMori\tests\fixtures\release-policy-basic.json --json
 ```
 
-The release-candidate workflow writes `release-verify.json` and
-`release-verify.md` automatically for reviewers.
+The release-candidate workflow writes `release-verify.json`,
+`release-verify.md`, `release-verify-policy.json`, and
+`release-verify-policy.md` automatically for reviewers when its configured
+release policy is present.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
 `release-evidence` combines verification, release-check status, signatures,
