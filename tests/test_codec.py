@@ -2651,6 +2651,35 @@ class RepoMoriCodecTests(unittest.TestCase):
                 for raw_value in raw_values:
                     self.assertNotIn(raw_value, text)
 
+    def test_release_rehearsal_storage_path_policy_failure_is_redacted_and_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / ".repomori-release-rehearsal"
+            report = run_release_rehearsal(out)
+            raw_output_path = "C:" + "\\" + "Temp" + "\\" + "synthetic-output.repomori"
+            checklist = out / "release-review-checklist.md"
+            checklist.write_text(
+                checklist.read_text(encoding="utf-8") + f"\nSynthetic bad output: {raw_output_path}\n",
+                encoding="utf-8",
+            )
+
+            storage_policy = codec._release_rehearsal_check_storage_path_policy(out)
+            report["checks"]["storage_path_policy"] = storage_policy
+            report["summary"]["storage_path_policy_status"] = storage_policy["status"]
+            markdown = format_release_rehearsal_markdown(report)
+            serialized = json.dumps(storage_policy, sort_keys=True)
+
+            self.assertEqual(storage_policy["schema_version"], "repomori.release_rehearsal.storage_paths.v1")
+            self.assertEqual(storage_policy["status"], "fail")
+            self.assertEqual(storage_policy["summary"]["issue_counts_by_code"]["boot_drive_temp_path"], 1)
+            self.assertEqual(storage_policy["summary"]["remediation_count"], 1)
+            self.assertEqual(storage_policy["issues"][0]["artifact"], "release-review-checklist.md")
+            self.assertIn("storage path policy", storage_policy["remediation"][0]["category"])
+            self.assertIn("D-drive or hidden .repomori-*", storage_policy["remediation"][0]["next_step"])
+            self.assertIn("Storage Path Remediation", markdown)
+            self.assertIn("Replace boot-drive save/output examples", markdown)
+            self.assertNotIn(raw_output_path, serialized)
+            self.assertNotIn(raw_output_path, markdown)
+
     def test_cli_privacy_guard_demo_json_and_markdown_are_safe(self) -> None:
         repo = Path(__file__).resolve().parents[1]
         output = subprocess.check_output(

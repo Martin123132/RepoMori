@@ -12264,6 +12264,17 @@ def format_release_rehearsal_markdown(report: dict[str, Any]) -> str:
             lines.append(f"| `{code}` | {count} |")
     else:
         lines.append("- No boot-drive generated-output examples were detected.")
+    storage_remediation = (
+        storage_policy.get("remediation")
+        if isinstance(storage_policy.get("remediation"), list)
+        else []
+    )
+    if storage_remediation:
+        lines.extend(["", "### Storage Path Remediation", "", "| Category | Next Step |", "| --- | --- |"])
+        for item in storage_remediation:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"| {item.get('category')} | {item.get('next_step')} |")
 
     reviewer_artifacts = report.get("reviewer_artifacts") if isinstance(report.get("reviewer_artifacts"), list) else []
     lines.extend(["", "## Reviewer-Facing Artifacts", "", "| Artifact | Status |", "| --- | --- |"])
@@ -12409,6 +12420,7 @@ def _release_rehearsal_check_reviewer_artifacts(root: Path) -> dict[str, Any]:
                 "code": "artifact_missing",
                 "artifact": relative,
                 "message": "Expected reviewer-facing rehearsal artifact is missing.",
+                "remediation": _release_rehearsal_storage_path_remediation("artifact_missing"),
             }
             issues.append(issue)
             artifact_rows.append({"path": relative, "status": "missing", "bytes": 0})
@@ -12508,7 +12520,14 @@ def _release_rehearsal_check_storage_path_policy(root: Path) -> dict[str, Any]:
         for code, pattern, message in patterns:
             if pattern.search(normalized):
                 artifact_issue_count += 1
-                issues.append({"code": code, "artifact": relative, "message": message})
+                issues.append(
+                    {
+                        "code": code,
+                        "artifact": relative,
+                        "message": message,
+                        "remediation": _release_rehearsal_storage_path_remediation(code),
+                    }
+                )
         artifact_rows.append(
             {
                 "path": relative,
@@ -12519,6 +12538,17 @@ def _release_rehearsal_check_storage_path_policy(root: Path) -> dict[str, Any]:
         )
 
     issue_counts = dict(sorted(Counter(str(issue.get("code") or "unknown") for issue in issues).items()))
+    remediation: list[dict[str, Any]] = []
+    seen_remediation: set[tuple[str, str]] = set()
+    for issue in issues:
+        item = issue.get("remediation")
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("category") or ""), str(item.get("next_step") or ""))
+        if key in seen_remediation:
+            continue
+        seen_remediation.add(key)
+        remediation.append(item)
     status = "fail" if issues else "pass"
     return {
         "schema_version": "repomori.release_rehearsal.storage_paths.v1",
@@ -12527,6 +12557,7 @@ def _release_rehearsal_check_storage_path_policy(root: Path) -> dict[str, Any]:
             "artifact_count": len(artifact_rows),
             "issue_count": len(issues),
             "issue_counts_by_code": issue_counts,
+            "remediation_count": len(remediation),
         },
         "checks": [
             {
@@ -12542,6 +12573,7 @@ def _release_rehearsal_check_storage_path_policy(root: Path) -> dict[str, Any]:
         ],
         "artifacts": artifact_rows,
         "issues": issues,
+        "remediation": remediation,
     }
 
 
@@ -12573,6 +12605,20 @@ def _release_rehearsal_storage_path_patterns() -> tuple[tuple[str, re.Pattern[st
             "No OneDrive save/output examples are present.",
         ),
     )
+
+
+def _release_rehearsal_storage_path_remediation(code: str) -> dict[str, Any]:
+    if code == "artifact_missing":
+        return {
+            "category": "missing reviewer artifact",
+            "next_step": "Regenerate the release rehearsal so all reviewer-facing artifacts are present before review.",
+            "docs": ["docs/release-candidate.md#local-rehearsal"],
+        }
+    return {
+        "category": "storage path policy",
+        "next_step": "Replace boot-drive save/output examples with D-drive or hidden .repomori-* generated-output paths, then rerun release-rehearsal.",
+        "docs": ["docs/release-candidate.md#local-rehearsal", "docs/quickstart.md"],
+    }
 
 
 def _release_rehearsal_artifact_records(root: Path) -> list[dict[str, Any]]:

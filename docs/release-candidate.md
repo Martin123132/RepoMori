@@ -61,6 +61,8 @@ run should still report top-level `status: "pass"` because the dry-run behaved
 as expected, while the embedded `privacy_guard.status` is `"fail"` and only
 redacted category/count summaries are shown.
 
+## Local Rehearsal
+
 To rehearse the full reviewer evidence path without uploading or publishing
 anything, generate a sanitized local candidate bundle:
 
@@ -85,6 +87,11 @@ and storage-path policy all pass.
 
 Generated outputs should stay under hidden `.repomori-*` directories so
 `release-check` remains strict about visible repository artifacts.
+
+If the rehearsal storage-path policy fails, the report lists only issue
+categories, artifact names, and remediation steps. Replace boot-drive
+save/output examples with D-drive or hidden `.repomori-*` generated-output paths,
+then rerun `release-rehearsal`.
 
 ## GitHub Candidate Workflow
 
