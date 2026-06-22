@@ -10703,6 +10703,88 @@ def format_release_review_checklist_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def format_release_candidate_artifact_index_markdown(
+    verify_report: dict[str, Any],
+    evidence_report: dict[str, Any] | None = None,
+) -> str:
+    """Render a compact index of release candidate reviewer artifacts."""
+
+    evidence = evidence_report if isinstance(evidence_report, dict) else {}
+    verify_summary = verify_report.get("summary", {}) if isinstance(verify_report.get("summary"), dict) else {}
+    evidence_summary = evidence.get("summary", {}) if isinstance(evidence.get("summary"), dict) else {}
+    release = evidence.get("release", {}) if isinstance(evidence.get("release"), dict) else {}
+    policy = verify_report.get("policy") if isinstance(verify_report.get("policy"), dict) else {}
+    policy_summary = policy.get("summary", {}) if isinstance(policy.get("summary"), dict) else {}
+    review = policy.get("review", {}) if isinstance(policy.get("review"), dict) else {}
+    diagnostics = policy.get("diagnostics", {}) if isinstance(policy.get("diagnostics"), dict) else {}
+
+    profile = policy.get("profile") or "not_applied"
+    policy_status = policy.get("status") or verify_summary.get("policy_status") or "not_applied"
+    policy_outcome = diagnostics.get("outcome") or "not_applicable"
+    review_decision = review.get("decision") or "pending"
+    release_check_status = policy_summary.get("release_check_status") or evidence_summary.get("release_check_status") or "unknown"
+
+    artifacts = [
+        ("release-candidate.json", "Machine-readable candidate manifest.", _release_review_check_status(verify_report, "manifest_schema")),
+        ("release-candidate.md", "Readable package manifest.", "generated"),
+        ("dist/*.whl", "Installable wheel artifact.", "present" if verify_summary.get("wheel_present") else "missing"),
+        ("dist/*-source.zip", "Source archive from the checked commit.", "present" if verify_summary.get("source_archive_present") else "missing"),
+        ("checksums.txt", "SHA-256 checksum material.", _release_review_check_status(verify_report, "checksum_files")),
+        ("release-provenance.json", "Commit/ref/run provenance.", _release_review_check_status(verify_report, "provenance_artifacts")),
+        ("sbom.spdx.json", "SPDX package and artifact inventory.", _release_review_check_status(verify_report, "sbom_artifacts")),
+        ("release-verify.json", "Raw release verification report.", str(verify_report.get("status") or "unknown")),
+        ("release-verify.md", "Readable release verification report.", str(verify_report.get("status") or "unknown")),
+        ("release-verify-policy.json", "Raw selected policy report.", str(policy_status)),
+        ("release-verify-policy.md", "Readable selected policy report.", str(policy_status)),
+        ("release-review-checklist.md", "Reviewer decision checklist and final decision log.", "generated"),
+        ("release-evidence.json", "Raw release evidence bundle.", str(evidence.get("status") or "missing")),
+        ("release-evidence.md", "Readable release evidence bundle.", str(evidence.get("status") or "missing")),
+        ("*.asc", "Optional detached signatures for integrity artifacts.", str(policy_summary.get("signature_status") or evidence_summary.get("signature_status") or "optional")),
+        ("repomori-release-public-key.asc", "Optional public key for signature review.", str(policy_summary.get("public_key_status") or "optional")),
+    ]
+
+    lines = [
+        "# RepoMori Release Candidate Artifact Index",
+        "",
+        "Use this index as the first stop when reviewing a candidate bundle.",
+        "",
+        "## Review Snapshot",
+        "",
+        f"- Version: `{verify_summary.get('manifest_version') or evidence_summary.get('version') or 'unknown'}`",
+        f"- Commit: `{verify_summary.get('commit') or evidence_summary.get('commit') or 'unknown'}`",
+        f"- Ref: `{verify_summary.get('ref') or evidence_summary.get('ref') or 'unknown'}`",
+        f"- Run ID: `{verify_summary.get('run_id') or evidence_summary.get('run_id') or 'unknown'}`",
+        f"- Repository: `{release.get('repository') or 'unknown'}`",
+        f"- Workflow: `{release.get('workflow') or 'unknown'}`",
+        f"- Selected policy profile: `{profile}`",
+        f"- Policy status: `{policy_status}`",
+        f"- Policy outcome: `{policy_outcome}`",
+        f"- Review decision: `{review_decision}`",
+        f"- Release check: `{release_check_status}`",
+        "",
+        "## Expected Reviewer Artifacts",
+        "",
+        "| Artifact | Review Purpose | Status Source |",
+        "| --- | --- | --- |",
+    ]
+    for path, purpose, status in artifacts:
+        lines.append(f"| `{path}` | {purpose} | `{status}` |")
+
+    lines.extend(
+        [
+            "",
+            "## Diagnostics References",
+            "",
+            "- Profile selection checklist: [docs/release-policy-selection.md](docs/release-policy-selection.md)",
+            "- Profile outcome matrix: [docs/release-policy-matrix.md](docs/release-policy-matrix.md)",
+            "- Policy diagnostics guide: [docs/release-policy.md#policy-diagnostics](docs/release-policy.md#policy-diagnostics)",
+            "- Release integrity verification: [docs/release-integrity.md](docs/release-integrity.md)",
+            "- Release evidence runbook: [docs/release-evidence.md](docs/release-evidence.md)",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _release_review_check_status(report: dict[str, Any], check_id: str) -> str:
     for check in report.get("checks", []):
         if isinstance(check, dict) and check.get("id") == check_id:

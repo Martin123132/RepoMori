@@ -302,9 +302,10 @@ The release-candidate workflow writes `release-verify.json`,
 `release-verify-policy.md` automatically for reviewers when its configured
 release policy is present. It also writes `release-review-checklist.md` as a
 fill-in decision log for the selected profile, policy outcome, diagnostics,
-hash/provenance checks, and final reviewer decision. The workflow validates the
-policy JSON/Markdown reviewer guidance before uploading the candidate artifact
-bundle.
+hash/provenance checks, and final reviewer decision, plus
+`release-artifact-index.md` as the at-a-glance map of expected reviewer
+artifacts and diagnostics references. The workflow validates the policy
+JSON/Markdown reviewer guidance before uploading the candidate artifact bundle.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
 The policy report includes the checked profile name and a reviewer decision:

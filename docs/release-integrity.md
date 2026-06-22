@@ -29,6 +29,8 @@ The release package workflow writes:
 - `release-review-checklist.md`: fill-in reviewer decision log for selected
   profile, policy outcome, diagnostics, hash/provenance checks, and final
   reviewer decision.
+- `release-artifact-index.md`: compact reviewer index for expected candidate
+  artifacts, selected profile, policy outcome, and diagnostics references.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when
