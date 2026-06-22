@@ -17,6 +17,10 @@ It runs:
 - quickstart `demo` smoke in a temporary sibling directory
 - privacy-guard demo preflight for both clean and synthetic failing outputs
 
+The unit-test leg includes a RepoMori docs/workflow contract that keeps
+generated-output examples on `D:\...` or hidden `.repomori-*` paths, with only
+explicit privacy-scan fixtures allowed to mention boot-drive path strings.
+
 The report uses schema `repomori.release_check.v1` and includes a pass/fail
 status, settings, summary, and nested check reports.
 
