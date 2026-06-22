@@ -1614,6 +1614,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-verify-policy.json", workflow)
         self.assertIn("release-verify-policy.md", workflow)
         self.assertIn("repomori.release_policy.v1", workflow)
+        self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
+        self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
+        self.assertIn("Review decision: `reviewable`", workflow)
+        self.assertIn("### Reviewer Next Steps", workflow)
         self.assertIn("Sign release integrity artifacts", workflow)
         self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", workflow)
         self.assertIn("REPOMORI_RELEASE_GPG_PASSPHRASE", workflow)
@@ -1671,6 +1675,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-verify-policy.md", workflow)
         self.assertIn("release-verify-policy.*", workflow)
         self.assertIn("repomori.release_policy.v1", workflow)
+        self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
+        self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
+        self.assertIn("Review decision: `reviewable`", workflow)
+        self.assertIn("### Reviewer Next Steps", workflow)
         self.assertIn("release-candidate.json", workflow)
         self.assertIn("release-candidate.md", workflow)
         self.assertIn("include-hidden-files: true", workflow)
@@ -6933,6 +6941,66 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(payload["status"], "pass")
             self.assertEqual(payload["policy"]["status"], "pass")
             self.assertEqual(payload["summary"]["policy_status"], "pass")
+
+    def test_cli_verify_release_policy_writes_reviewer_artifacts(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        policy = repo_root / "tests/fixtures/release-policy-dev-unsigned.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._release_policy_package(Path(tmp), signed=False)
+            json_out = root / "release-verify-policy.json"
+            markdown_out = root / "release-verify-policy.md"
+
+            json_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "verify-release",
+                    str(root),
+                    "--policy",
+                    str(policy),
+                    "--json",
+                    "--out",
+                    str(json_out),
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            markdown_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "verify-release",
+                    str(root),
+                    "--policy",
+                    str(policy),
+                    "--format",
+                    "markdown",
+                    "--out",
+                    str(markdown_out),
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(json_result.returncode, 0, json_result.stderr)
+            self.assertEqual(markdown_result.returncode, 0, markdown_result.stderr)
+            self.assertTrue(json_out.is_file())
+            self.assertTrue(markdown_out.is_file())
+            payload = json.loads(json_out.read_text(encoding="utf-8"))
+            markdown = markdown_out.read_text(encoding="utf-8")
+            self.assertEqual(payload["schema_version"], "repomori.release_verify.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["policy"]["profile"], "dev_unsigned")
+            self.assertEqual(payload["policy"]["review"]["decision"], "reviewable")
+            self.assertIn("Profile: `dev_unsigned`", markdown)
+            self.assertIn("Review decision: `reviewable`", markdown)
+            self.assertIn("### Reviewer Next Steps", markdown)
 
     def test_cli_release_evidence_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

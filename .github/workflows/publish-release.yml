@@ -276,10 +276,16 @@ jobs:
           from pathlib import Path
 
           report = json.loads(Path(".repomori-release-candidate/release-verify-policy.json").read_text(encoding="utf-8"))
+          markdown = Path(".repomori-release-candidate/release-verify-policy.md").read_text(encoding="utf-8")
           assert report["schema_version"] == "repomori.release_verify.v1"
           assert report["status"] == "pass"
           assert report["policy"]["schema_version"] == "repomori.release_policy.v1"
           assert report["policy"]["status"] == "pass"
+          assert report["policy"]["review"]["decision"] == "reviewable"
+          assert report["policy"]["review"]["profile"]
+          assert "## Policy" in markdown
+          assert "Review decision: `reviewable`" in markdown
+          assert "### Reviewer Next Steps" in markdown
           print("release policy gate passed")
           PY
       - name: Publish draft GitHub release

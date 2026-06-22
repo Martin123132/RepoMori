@@ -23,7 +23,9 @@ The release package workflow writes:
   reports from `verify-release` when the release-candidate workflow runs.
 - `release-verify-policy.json` / `release-verify-policy.md`: optional policy
   gate reports from `verify-release --policy` when a release policy is
-  configured.
+  configured. Candidate workflows validate that the JSON and Markdown reports
+  include the selected policy profile, reviewer decision, and reviewer next
+  steps before upload.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when

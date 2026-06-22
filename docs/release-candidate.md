@@ -85,6 +85,10 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - optional `repomori-release-public-key.asc` when the public key variable is
   configured
 
+The workflow validates that `release-verify-policy.json` contains a
+`policy.review.decision` of `reviewable` and that `release-verify-policy.md`
+renders the same reviewer guidance before the artifact bundle is uploaded.
+
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
 SBOM verification guidance. See [release-signing.md](release-signing.md) for
 signing setup and key rotation.
