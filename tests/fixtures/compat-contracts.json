@@ -44,6 +44,7 @@
     "repomori.release_evidence.v1",
     "repomori.release_policy.v1",
     "repomori.release_provenance.v1",
+    "repomori.release_rehearsal.v1",
     "repomori.release_review_bundle.v1",
     "repomori.release_review_decision_log.v1",
     "repomori.release_review_handoff.v1",

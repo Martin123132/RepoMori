@@ -448,6 +448,13 @@ SCHEMA_DEFINITIONS = (
         ],
     },
     {
+        "schema_version": "repomori.release_rehearsal.v1",
+        "kind": "report",
+        "title": "Local release candidate evidence rehearsal",
+        "producer": "run_release_rehearsal",
+        "required_fields": ["schema_version", "status", "out_dir", "summary", "artifacts", "checks"],
+    },
+    {
         "schema_version": "repomori.release_evidence.v1",
         "kind": "report",
         "title": "Release evidence bundle",
@@ -9953,7 +9960,7 @@ def format_release_verify_markdown(report: dict[str, Any]) -> str:
         "# RepoMori Release Verification",
         "",
         f"- Status: `{report.get('status')}`",
-        f"- Root: `{report.get('resolved_root') or report.get('root')}`",
+        f"- Root: `{_release_reviewer_path_label(report.get('resolved_root') or report.get('root'))}`",
         f"- Version: `{summary.get('manifest_version')}`",
         f"- Commit: `{summary.get('commit')}`",
         f"- Ref: `{summary.get('ref')}`",
@@ -9999,7 +10006,7 @@ def format_release_verify_markdown(report: dict[str, Any]) -> str:
         lines.extend(["", "## Policy", ""])
         lines.append(f"- Status: `{policy.get('status')}`")
         lines.append(f"- Profile: `{policy.get('profile') or 'custom'}`")
-        lines.append(f"- Path: `{policy.get('path')}`")
+        lines.append(f"- Path: `{_release_reviewer_path_label(policy.get('path'))}`")
         summary = policy.get("summary", {})
         review = policy.get("review", {}) if isinstance(policy.get("review"), dict) else {}
         lines.append(f"- Review decision: `{review.get('decision', 'unknown')}`")
@@ -12015,6 +12022,417 @@ def format_release_review_privacy_guard_demo_markdown(report: dict[str, Any]) ->
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def run_release_rehearsal(
+    out_dir: Path | str = ".repomori-release-rehearsal",
+    *,
+    force: bool = False,
+    version: str = "0.0.0-rehearsal",
+    policy: Path | str | dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a sanitized local release-candidate evidence rehearsal bundle."""
+
+    started = time.time()
+    root_path = Path(out_dir)
+    _prepare_demo_dir(root_path, force)
+    dist_path = root_path / "dist"
+    dist_path.mkdir(parents=True, exist_ok=True)
+    (dist_path / f"repomori-{version}-py3-none-any.whl").write_bytes(
+        b"synthetic rehearsal wheel bytes\n"
+    )
+    (dist_path / f"repomori-{version}-source.zip").write_bytes(
+        b"synthetic rehearsal source archive bytes\n"
+    )
+
+    release_check = _release_rehearsal_release_check_report(started)
+    release_check_path = root_path / "release-check.json"
+    _write_json(release_check_path, release_check)
+    (root_path / "release-check.md").write_text(
+        format_release_check_markdown(release_check),
+        encoding="utf-8",
+    )
+
+    write_release_package_artifacts(
+        root_path,
+        version=version,
+        commit="rehearsal-commit",
+        ref="local-rehearsal",
+        run_id="rehearsal",
+        repository="Martin123132/RepoMori",
+        workflow="local-release-rehearsal",
+        generated_at=1700000000,
+    )
+
+    verify_report = verify_release_package(root_path)
+    _write_json(root_path / "release-verify.json", verify_report)
+    (root_path / "release-verify.md").write_text(
+        format_release_verify_markdown(verify_report),
+        encoding="utf-8",
+    )
+
+    evidence_report = build_release_evidence(
+        root_path,
+        release_check=release_check_path,
+        out_dir=root_path,
+        run_meta={"source": "release_rehearsal", "sanitized_fixture": True},
+    )
+    policy_input = policy if policy is not None else _release_rehearsal_default_policy()
+    policy_report = verify_release_package(root_path, policy=policy_input)
+    _write_json(root_path / "release-verify-policy.json", policy_report)
+    (root_path / "release-verify-policy.md").write_text(
+        format_release_verify_markdown(policy_report),
+        encoding="utf-8",
+    )
+
+    (root_path / "release-review-checklist.md").write_text(
+        format_release_review_checklist_markdown(policy_report, evidence_report),
+        encoding="utf-8",
+    )
+    (root_path / "release-artifact-index.md").write_text(
+        format_release_candidate_artifact_index_markdown(policy_report, evidence_report),
+        encoding="utf-8",
+    )
+    provisional_bundle = check_release_candidate_review_bundle(root_path, require_handoff=False)
+    handoff = build_release_candidate_reviewer_handoff(policy_report, evidence_report, provisional_bundle)
+    _write_json(root_path / "release-review-handoff.json", handoff)
+    (root_path / "release-review-handoff.md").write_text(
+        format_release_candidate_reviewer_handoff_markdown(handoff),
+        encoding="utf-8",
+    )
+    final_bundle = check_release_candidate_review_bundle(root_path)
+    _write_json(root_path / "release-bundle-completeness.json", final_bundle)
+
+    decision_log = build_release_review_decision_log(policy_report, evidence_report, final_bundle, handoff)
+    decision_markdown = format_release_review_decision_log_markdown(decision_log)
+    decision_privacy = check_release_review_decision_log_privacy(decision_log, decision_markdown)
+    _write_json(root_path / "release-review-decision-log.json", decision_log)
+    (root_path / "release-review-decision-log.md").write_text(decision_markdown, encoding="utf-8")
+
+    reviewer_privacy = _release_rehearsal_check_reviewer_artifacts(root_path)
+    check_statuses = {
+        "release_verify": verify_report.get("status"),
+        "release_policy": policy_report.get("policy", {}).get("status")
+        if isinstance(policy_report.get("policy"), dict)
+        else None,
+        "release_evidence": evidence_report.get("status"),
+        "bundle_completeness": final_bundle.get("status"),
+        "decision_log_privacy": decision_privacy.get("status"),
+        "reviewer_artifact_privacy": reviewer_privacy.get("status"),
+    }
+    failed_checks = sorted(name for name, status in check_statuses.items() if status != "pass")
+    privacy_demo = _release_review_privacy_demo_from_evidence(evidence_report)
+    report = {
+        "schema_version": "repomori.release_rehearsal.v1",
+        "status": "fail" if failed_checks else "pass",
+        "out_dir": str(root_path),
+        "summary": {
+            "elapsed_seconds": round(time.time() - started, 4),
+            "version": version,
+            "policy_profile": (
+                policy_report.get("policy", {}).get("profile")
+                if isinstance(policy_report.get("policy"), dict)
+                else None
+            ),
+            "failed_checks": failed_checks,
+            "reviewer_artifact_count": reviewer_privacy.get("summary", {}).get("artifact_count"),
+            "reviewer_privacy_status": reviewer_privacy.get("status"),
+            "privacy_guard_demo_status": privacy_demo.get("status"),
+            "clean_guard_status": privacy_demo.get("clean_guard_status"),
+            "failing_guard_status": privacy_demo.get("failing_guard_status"),
+            "leaked_marker_confirmation": privacy_demo.get("leaked_marker_confirmation"),
+            "issue_counts_by_code": privacy_demo.get("issue_counts_by_code"),
+        },
+        "artifacts": _release_rehearsal_artifact_records(root_path),
+        "reviewer_artifacts": reviewer_privacy.get("artifacts", []),
+        "checks": {
+            "release_verify": {"status": verify_report.get("status"), "schema_version": verify_report.get("schema_version")},
+            "release_policy": {
+                "status": check_statuses["release_policy"],
+                "schema_version": (
+                    policy_report.get("policy", {}).get("schema_version")
+                    if isinstance(policy_report.get("policy"), dict)
+                    else None
+                ),
+            },
+            "release_evidence": {"status": evidence_report.get("status"), "schema_version": evidence_report.get("schema_version")},
+            "bundle_completeness": {"status": final_bundle.get("status"), "schema_version": final_bundle.get("schema_version")},
+            "decision_log_privacy": decision_privacy,
+            "reviewer_artifact_privacy": reviewer_privacy,
+        },
+        "notes": [
+            "Synthetic fixture data only; no release, tag, upload, model call, or network call is performed.",
+            "Reviewer-facing artifacts are checked for raw local paths, secrets, private URLs, raw dumps, proprietary markers, credentials, and private repo paths.",
+            "Machine JSON artifacts may retain local filesystem paths for traceability and are not treated as reviewer sign-off surfaces by this rehearsal.",
+        ],
+    }
+    _write_json(root_path / "release-rehearsal.json", report)
+    (root_path / "release-rehearsal.md").write_text(format_release_rehearsal_markdown(report), encoding="utf-8")
+    return report
+
+
+def format_release_rehearsal_markdown(report: dict[str, Any]) -> str:
+    """Render a local release candidate evidence rehearsal report."""
+
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    checks = report.get("checks") if isinstance(report.get("checks"), dict) else {}
+    reviewer_privacy = (
+        checks.get("reviewer_artifact_privacy")
+        if isinstance(checks.get("reviewer_artifact_privacy"), dict)
+        else {}
+    )
+    privacy_summary = (
+        reviewer_privacy.get("summary")
+        if isinstance(reviewer_privacy.get("summary"), dict)
+        else {}
+    )
+    issue_counts = (
+        privacy_summary.get("issue_counts_by_code")
+        if isinstance(privacy_summary.get("issue_counts_by_code"), dict)
+        else {}
+    )
+    lines = [
+        "# RepoMori Release Candidate Evidence Rehearsal",
+        "",
+        "This local rehearsal builds sanitized release-candidate evidence artifacts without publishing anything.",
+        "",
+        "## Result",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Version: `{summary.get('version')}`",
+        f"- Policy profile: `{summary.get('policy_profile')}`",
+        f"- Reviewer artifact privacy: `{summary.get('reviewer_privacy_status')}`",
+        f"- Privacy guard demo status: `{summary.get('privacy_guard_demo_status')}`",
+        f"- Clean demo guard status: `{summary.get('clean_guard_status')}`",
+        f"- Failing demo guard status: `{summary.get('failing_guard_status')}`",
+        f"- Leaked marker confirmation: `{summary.get('leaked_marker_confirmation')}`",
+        "",
+        "## Gate Statuses",
+        "",
+        "| Gate | Status |",
+        "| --- | --- |",
+    ]
+    for name in (
+        "release_verify",
+        "release_policy",
+        "release_evidence",
+        "bundle_completeness",
+        "decision_log_privacy",
+        "reviewer_artifact_privacy",
+    ):
+        check = checks.get(name) if isinstance(checks.get(name), dict) else {}
+        lines.append(f"| `{name}` | `{check.get('status')}` |")
+
+    lines.extend(["", "## Reviewer Artifact Privacy", ""])
+    lines.append(f"- Checked artifacts: `{privacy_summary.get('artifact_count', 0)}`")
+    lines.append(f"- Issue count: `{privacy_summary.get('issue_count', 0)}`")
+    if issue_counts:
+        lines.extend(["", "| Issue Category | Count |", "| --- | ---: |"])
+        for code, count in sorted(issue_counts.items()):
+            lines.append(f"| `{code}` | {count} |")
+    else:
+        lines.append("- No reviewer-facing privacy issues were detected.")
+
+    reviewer_artifacts = report.get("reviewer_artifacts") if isinstance(report.get("reviewer_artifacts"), list) else []
+    lines.extend(["", "## Reviewer-Facing Artifacts", "", "| Artifact | Status |", "| --- | --- |"])
+    for artifact in reviewer_artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        lines.append(f"| `{artifact.get('path')}` | `{artifact.get('status')}` |")
+
+    failed_checks = summary.get("failed_checks") if isinstance(summary.get("failed_checks"), list) else []
+    if failed_checks:
+        lines.extend(["", "## Failed Checks", ""])
+        for check in failed_checks:
+            lines.append(f"- `{check}`")
+
+    lines.extend(["", "## Notes", ""])
+    for note in report.get("notes", []):
+        lines.append(f"- {note}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _release_rehearsal_release_check_report(started: float) -> dict[str, Any]:
+    privacy_guard_demo = _release_check_privacy_guard_demo_preflight()
+    status = "pass" if privacy_guard_demo.get("status") == "pass" else "fail"
+    return {
+        "schema_version": "repomori.release_check.v1",
+        "status": status,
+        "repo_path": "synthetic-rehearsal-repo",
+        "settings": {
+            "public_release": True,
+            "run_tests": False,
+            "run_demo_smoke": False,
+            "synthetic_rehearsal": True,
+        },
+        "summary": {
+            "elapsed_seconds": round(time.time() - started, 4),
+            "failed_checks": [] if status == "pass" else ["privacy_guard_demo"],
+            "scan_findings": 0,
+            "tests_returncode": 0,
+            "demo_status": "skipped",
+            "privacy_guard_demo_status": privacy_guard_demo.get("status"),
+            "failure_reason_count": 0 if status == "pass" else 1,
+        },
+        "failure_reasons": [] if status == "pass" else [privacy_guard_demo.get("status_reason")],
+        "checks": {
+            "privacy_guard_demo": privacy_guard_demo,
+        },
+    }
+
+
+def _release_rehearsal_default_policy() -> dict[str, Any]:
+    return {
+        "schema_version": "repomori.release_policy.v1",
+        "profile": "dev_unsigned",
+        "description": "Built-in release rehearsal policy; unsigned local candidates are allowed but evidence and release-check must pass.",
+        "require": {
+            "checksums": True,
+            "provenance": True,
+            "sbom": True,
+            "release_verify_report": True,
+            "release_verify_markdown": True,
+            "release_evidence": True,
+            "release_evidence_markdown": True,
+            "release_check": True,
+        },
+        "allowed_statuses": {
+            "release_verify": ["pass"],
+            "release_evidence": ["pass"],
+            "release_check": ["pass"],
+            "signatures": ["unsigned", "signed"],
+        },
+        "required_schemas": {
+            "release_candidate": "repomori.release_candidate.v1",
+            "provenance": "repomori.release_provenance.v1",
+            "sbom": "SPDX-2.3",
+            "release_verify": "repomori.release_verify.v1",
+            "release_evidence": "repomori.release_evidence.v1",
+            "release_check": "repomori.release_check.v1",
+        },
+        "max_errors": 0,
+    }
+
+
+def _release_rehearsal_reviewer_artifact_names() -> tuple[str, ...]:
+    return (
+        "release-candidate.md",
+        "release-check.md",
+        "release-verify.md",
+        "release-verify-policy.md",
+        "release-evidence.md",
+        "release-review-checklist.md",
+        "release-artifact-index.md",
+        "release-review-handoff.md",
+        "release-review-decision-log.json",
+        "release-review-decision-log.md",
+    )
+
+
+def _release_rehearsal_check_reviewer_artifacts(root: Path) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    artifact_rows: list[dict[str, Any]] = []
+    for relative in _release_rehearsal_reviewer_artifact_names():
+        path = root / relative
+        if not path.is_file():
+            issue = {
+                "code": "artifact_missing",
+                "artifact": relative,
+                "message": "Expected reviewer-facing rehearsal artifact is missing.",
+            }
+            issues.append(issue)
+            artifact_rows.append({"path": relative, "status": "missing", "bytes": 0})
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        artifact_issue_count = 0
+        for code, pattern, message in _release_rehearsal_privacy_patterns():
+            if pattern.search(text):
+                artifact_issue_count += 1
+                issues.append(
+                    {
+                        "code": code,
+                        "artifact": relative,
+                        "message": message,
+                    }
+                )
+        artifact_rows.append(
+            {
+                "path": relative,
+                "status": "fail" if artifact_issue_count else "pass",
+                "bytes": len(text.encode("utf-8")),
+                "issue_count": artifact_issue_count,
+            }
+        )
+    issue_counts = dict(sorted(Counter(str(issue.get("code") or "unknown") for issue in issues).items()))
+    checks.append(
+        {
+            "id": "reviewer_artifacts_present",
+            "status": "fail" if any(row.get("status") == "missing" for row in artifact_rows) else "pass",
+            "message": "Expected reviewer-facing rehearsal artifacts are present.",
+        }
+    )
+    checks.append(
+        {
+            "id": "reviewer_artifacts_public_safe",
+            "status": "fail" if issues else "pass",
+            "message": "Reviewer-facing rehearsal artifacts do not echo local paths, secrets, private URLs, raw dumps, credentials, private repo paths, or proprietary markers.",
+        }
+    )
+    status = "fail" if issues else "pass"
+    return {
+        "schema_version": "repomori.release_rehearsal.privacy.v1",
+        "status": status,
+        "summary": {
+            "artifact_count": len(artifact_rows),
+            "issue_count": len(issues),
+            "issue_counts_by_code": issue_counts,
+        },
+        "checks": checks,
+        "artifacts": artifact_rows,
+        "issues": issues,
+    }
+
+
+def _release_rehearsal_privacy_patterns() -> tuple[tuple[str, re.Pattern[str], str], ...]:
+    extra_patterns = (
+        (
+            "credential_marker",
+            re.compile(r"(?i)\bcredentials?\s*[:=]"),
+            "No credential assignments are present.",
+        ),
+        (
+            "raw_dump_marker",
+            re.compile(r"(?i)\bSYNTHETIC_RAW_DUMP_PLACEHOLDER\b|\braw[_ -]?dump\b\s*[:=]"),
+            "No raw dump markers or assignments are present.",
+        ),
+        (
+            "private_repo_marker",
+            re.compile(r"(?i)\bprivate\s+(?:repo|repository)\b"),
+            "No private repository markers are present.",
+        ),
+    )
+    return (*_RELEASE_REVIEW_PRIVACY_PATTERNS, *extra_patterns)
+
+
+def _release_rehearsal_artifact_records(root: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        records.append(_release_artifact_record(root, path, kind=_release_artifact_kind(path)))
+    return records
+
+
+def _release_reviewer_path_label(value: Any) -> str:
+    if value in (None, ""):
+        return "not_recorded"
+    raw = str(value)
+    try:
+        path = Path(raw)
+    except (TypeError, ValueError):
+        return raw
+    return path.name or raw
 
 
 def _synthetic_release_review_privacy_guard_demo_log() -> dict[str, Any]:

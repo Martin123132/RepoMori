@@ -3,7 +3,7 @@
 Generated from the live `argparse` command surface.
 
 - Schema: `repomori.cli_commands.v1`
-- Commands: `52`
+- Commands: `53`
 
 ## Commands
 
@@ -177,6 +177,24 @@ repomori privacy-guard-demo [--mode {clean,fail}] [--format {markdown,json}] [--
 | --format | option | no | markdown, json | markdown |  |
 | --out | option | no |  |  | Write the selected dry-run report to this file. |
 | --json | option | no |  | False | Print dry-run JSON. |
+
+### `release-rehearsal`
+
+Build a sanitized local release-candidate evidence rehearsal bundle.
+
+```text
+repomori release-rehearsal [--out OUT] [--force] [--version VERSION] [--policy POLICY] [--format
+        {markdown,json}] [--json]
+```
+
+| Name | Kind | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- | --- |
+| --out | option | no |  | .repomori-release-rehearsal | Directory for sanitized rehearsal artifacts. |
+| --force | option | no |  | False | Overwrite an existing rehearsal directory. |
+| --version | option | no |  | 0.0.0-rehearsal | Synthetic candidate version. |
+| --policy | option | no |  |  | Optional policy JSON; defaults to a built-in dev unsigned profile. |
+| --format | option | no | markdown, json | markdown |  |
+| --json | option | no |  | False | Print rehearsal JSON. |
 
 ### `init`
 

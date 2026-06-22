@@ -61,6 +61,23 @@ run should still report top-level `status: "pass"` because the dry-run behaved
 as expected, while the embedded `privacy_guard.status` is `"fail"` and only
 redacted category/count summaries are shown.
 
+To rehearse the full reviewer evidence path without uploading or publishing
+anything, generate a sanitized local candidate bundle:
+
+```powershell
+python -m repomori release-rehearsal `
+  --out D:\Dev\RepoMori\.repomori-release-rehearsal `
+  --force `
+  --json
+```
+
+The rehearsal writes fixture package bytes plus `release-check`, release
+evidence, policy verification, checklist, artifact index, handoff, decision log,
+and completeness artifacts. It records the executable `release-check`
+privacy-demo status in the checklist and verifies reviewer-facing artifacts do
+not echo raw synthetic paths, secrets, private URLs, raw dumps, proprietary
+markers, credentials, or private repo path markers.
+
 Generated outputs should stay under hidden `.repomori-*` directories so
 `release-check` remains strict about visible repository artifacts.
 

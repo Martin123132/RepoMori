@@ -33,6 +33,7 @@ from .codec import (
     evaluate_pack,
     build_release_evidence,
     build_release_review_privacy_guard_demo,
+    run_release_rehearsal,
     format_agent_brief_markdown,
     format_brief_markdown,
     format_compare_markdown,
@@ -54,6 +55,7 @@ from .codec import (
     format_release_verify_markdown,
     format_release_evidence_markdown,
     format_release_review_privacy_guard_demo_markdown,
+    format_release_rehearsal_markdown,
     format_restore_check_markdown,
     format_snapshot_chain_markdown,
     format_snapshot_anchor_markdown,
@@ -256,6 +258,22 @@ def build_parser() -> argparse.ArgumentParser:
     privacy_guard_demo.add_argument("--format", choices=("markdown", "json"), default="markdown")
     privacy_guard_demo.add_argument("--out", type=Path, help="Write the selected dry-run report to this file.")
     privacy_guard_demo.add_argument("--json", action="store_true", help="Print dry-run JSON.")
+
+    release_rehearsal = sub.add_parser(
+        "release-rehearsal",
+        help="Build a sanitized local release-candidate evidence rehearsal bundle.",
+    )
+    release_rehearsal.add_argument(
+        "--out",
+        type=Path,
+        default=Path(".repomori-release-rehearsal"),
+        help="Directory for sanitized rehearsal artifacts.",
+    )
+    release_rehearsal.add_argument("--force", action="store_true", help="Overwrite an existing rehearsal directory.")
+    release_rehearsal.add_argument("--version", default="0.0.0-rehearsal", help="Synthetic candidate version.")
+    release_rehearsal.add_argument("--policy", type=Path, help="Optional policy JSON; defaults to a built-in dev unsigned profile.")
+    release_rehearsal.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    release_rehearsal.add_argument("--json", action="store_true", help="Print rehearsal JSON.")
 
     init = sub.add_parser("init", help="Write a RepoMori config file.")
     init.add_argument("repo", type=Path, help="Repository folder to remember.")
@@ -871,6 +889,21 @@ def main(argv: list[str] | None = None) -> int:
             args.out.write_text(output, encoding="utf-8")
         else:
             print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] == "pass" else 1
+    if args.command == "release-rehearsal":
+        report = run_release_rehearsal(
+            args.out,
+            force=args.force,
+            version=args.version,
+            policy=args.policy,
+        )
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_release_rehearsal_markdown(report)
+        )
+        print(output, end="" if output.endswith("\n") else "\n")
         return 0 if report["status"] == "pass" else 1
     if args.command == "compat":
         report = check_compatibility(

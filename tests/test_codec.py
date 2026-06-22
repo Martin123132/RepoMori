@@ -67,6 +67,7 @@ from repomori.codec import (
     format_release_candidate_reviewer_handoff_markdown,
     format_release_evidence_markdown,
     format_release_review_privacy_guard_demo_markdown,
+    format_release_rehearsal_markdown,
     format_release_review_decision_log_markdown,
     format_release_review_checklist_markdown,
     format_release_verify_markdown,
@@ -101,6 +102,7 @@ from repomori.codec import (
     run_memory_cycle,
     run_release_check,
     run_release_health,
+    run_release_rehearsal,
     append_baseline_drift_log,
     summarize_baseline_drift_log,
     summarize_handoff_health_log,
@@ -2585,6 +2587,61 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertNotIn(raw_value, serialized)
             self.assertNotIn(raw_value, failing_markdown)
 
+    def test_release_rehearsal_builds_public_safe_reviewer_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / ".repomori-release-rehearsal"
+            report = run_release_rehearsal(out)
+            markdown = format_release_rehearsal_markdown(report)
+
+            self.assertEqual(report["schema_version"], "repomori.release_rehearsal.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["policy_profile"], "dev_unsigned")
+            self.assertEqual(report["summary"]["privacy_guard_demo_status"], "pass")
+            self.assertEqual(report["summary"]["clean_guard_status"], "pass")
+            self.assertEqual(report["summary"]["failing_guard_status"], "fail")
+            self.assertEqual(report["summary"]["leaked_marker_confirmation"], "none")
+            self.assertEqual(report["checks"]["reviewer_artifact_privacy"]["status"], "pass")
+            self.assertEqual(report["checks"]["reviewer_artifact_privacy"]["summary"]["issue_count"], 0)
+            self.assertIn("Release Candidate Evidence Rehearsal", markdown)
+            self.assertIn("Privacy guard demo status: `pass`", markdown)
+
+            expected = {
+                "release-check.json",
+                "release-check.md",
+                "release-evidence.json",
+                "release-evidence.md",
+                "release-review-checklist.md",
+                "release-artifact-index.md",
+                "release-review-handoff.json",
+                "release-review-handoff.md",
+                "release-review-decision-log.json",
+                "release-review-decision-log.md",
+                "release-bundle-completeness.json",
+                "release-rehearsal.json",
+                "release-rehearsal.md",
+            }
+            for name in expected:
+                self.assertTrue((out / name).is_file(), name)
+
+            reviewer_artifacts = report["reviewer_artifacts"]
+            self.assertTrue(any(item["path"] == "release-review-checklist.md" for item in reviewer_artifacts))
+            checklist = (out / "release-review-checklist.md").read_text(encoding="utf-8")
+            self.assertIn("### Release-Check Privacy Demo Result", checklist)
+            self.assertIn("| `secret_like_value` | 1 |", checklist)
+            self.assertIn("Leaked marker confirmation: `none`", checklist)
+
+            raw_values = [
+                "C:" + "\\" + "Users" + "\\" + "reviewer" + "\\" + "Temp" + "\\" + "SYNTHETIC_PATH.txt",
+                "api" + "_key=" + "s" + "k-" + "syntheticplaceholdernotreal",
+                "https://" + "internal" + ".example" + ".local/synthetic",
+                "proprietary" + " source",
+                "SYNTHETIC_RAW_DUMP_PLACEHOLDER",
+            ]
+            for item in reviewer_artifacts:
+                text = (out / item["path"]).read_text(encoding="utf-8")
+                for raw_value in raw_values:
+                    self.assertNotIn(raw_value, text)
+
     def test_cli_privacy_guard_demo_json_and_markdown_are_safe(self) -> None:
         repo = Path(__file__).resolve().parents[1]
         output = subprocess.check_output(
@@ -2636,6 +2693,33 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertNotIn(private_url, markdown)
         self.assertNotIn(local_path, output)
         self.assertNotIn(local_path, markdown)
+
+    def test_cli_release_rehearsal_json_is_parseable_and_public_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / ".repomori-release-rehearsal"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "release-rehearsal",
+                    "--out",
+                    str(out),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.release_rehearsal.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["checks"]["reviewer_artifact_privacy"]["status"], "pass")
+            self.assertTrue((out / "release-rehearsal.json").is_file())
+            self.assertTrue((out / "release-rehearsal.md").is_file())
 
     def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -4735,6 +4819,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_review_decision_log.v1", schema_versions)
         self.assertIn("repomori.release_review_privacy_guard.v1", schema_versions)
         self.assertIn("repomori.release_review_privacy_guard_demo.v1", schema_versions)
+        self.assertIn("repomori.release_rehearsal.v1", schema_versions)
         self.assertIn("repomori.health.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
@@ -4859,6 +4944,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             release_review_privacy_guard_demo_schema["schema"]["producer"],
             "build_release_review_privacy_guard_demo",
         )
+        release_rehearsal_schema = schema_catalog("repomori.release_rehearsal.v1")
+        self.assertEqual(release_rehearsal_schema["selected"], "repomori.release_rehearsal.v1")
+        self.assertEqual(release_rehearsal_schema["schema"]["producer"], "run_release_rehearsal")
 
         verify_schema = schema_catalog("repomori.verify.v1")
         self.assertEqual(verify_schema["selected"], "repomori.verify.v1")
@@ -7088,6 +7176,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-health", command_names)
         self.assertIn("verify-release", command_names)
         self.assertIn("privacy-guard-demo", command_names)
+        self.assertIn("release-rehearsal", command_names)
         self.assertIn("contract-check", command_names)
         self.assertEqual(parser.prog, inventory["prog"])
 
@@ -7108,6 +7197,16 @@ class RepoMoriCodecTests(unittest.TestCase):
         }
         self.assertIn("--mode", privacy_demo_options)
         self.assertIn("--format", privacy_demo_options)
+
+        release_rehearsal = next(command for command in inventory["commands"] if command["name"] == "release-rehearsal")
+        release_rehearsal_options = {
+            option
+            for argument in release_rehearsal["arguments"]
+            for option in argument.get("option_strings", [])
+        }
+        self.assertIn("--out", release_rehearsal_options)
+        self.assertIn("--force", release_rehearsal_options)
+        self.assertIn("--json", release_rehearsal_options)
 
     def test_cli_commands_json_is_parseable(self) -> None:
         output = subprocess.check_output(

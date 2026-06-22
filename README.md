@@ -177,6 +177,7 @@ repomori release-check [repo] [--baseline file] [--fail-on low] [--drift-policy 
 repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--compat-handoff dir] [--compat-verify-pack] [--contract-fixture file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
 repomori verify-release <release-package-dir> [--policy file] [--format markdown|json] [--out file] [--json]
 repomori release-evidence <release-package-dir> [--repo repo] [--release-check file] [--release-health file] [--out-dir dir] [--format markdown|json] [--out file] [--json]
+repomori release-rehearsal [--out dir] [--force] [--version version] [--policy file] [--format markdown|json] [--json]
 repomori drift-summary <log> [--limit n] [--json]
 repomori handoff-health-summary <log> [--limit n] [--format markdown|json] [--out file] [--json]
 repomori init <repo> --out-dir <dir> [--config file] [--profile name] [--force] [--no-incremental] [--json]
@@ -332,6 +333,13 @@ clean/fail demo expectations so reviewers confirm that preflight before
 candidate upload, plus the executable `release-check` privacy demo status,
 clean/fail guard statuses, redacted issue category counts, and leaked-marker
 confirmation.
+Use `python -m repomori release-rehearsal --out D:\Dev\RepoMori\.repomori-release-rehearsal --force --json`
+to build a sanitized local release-candidate evidence rehearsal bundle. It uses
+fixture package bytes and the same checklist/evidence/handoff/decision-log
+helpers, records the executable release-check privacy-demo summary, and checks
+reviewer-facing artifacts for raw local paths, secrets, private URLs, raw dumps,
+proprietary markers, credentials, and private repo path markers before any real
+candidate upload.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
 The policy report includes the checked profile name and a reviewer decision:
