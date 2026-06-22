@@ -64,6 +64,8 @@ The draft release receives:
 - `release-bundle-completeness.json`
 - `release-review-handoff.json`
 - `release-review-handoff.md`
+- `release-review-decision-log.json`
+- `release-review-decision-log.md`
 - `release-evidence.json`
 - `release-evidence.md`
 - `release-candidate.json`
@@ -99,4 +101,5 @@ python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate `
 ```
 
 Also confirm the tag target, release notes, license posture, checksums,
-provenance, SBOM, release evidence, and commercial-use language.
+provenance, SBOM, release evidence, `release-review-decision-log.md`, and
+commercial-use language.

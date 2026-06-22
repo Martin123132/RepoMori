@@ -81,6 +81,8 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - `release-bundle-completeness.json`
 - `release-review-handoff.json`
 - `release-review-handoff.md`
+- `release-review-decision-log.json`
+- `release-review-decision-log.md`
 - `release-evidence.json`
 - `release-evidence.md`
 - `release-candidate.json`
@@ -117,6 +119,12 @@ summarises the selected profile, policy outcome, completeness status, artifact
 index, checklist, diagnostics references, and any remediation list. The final
 bundle completeness check also expects these handoff artifacts and fails fast if
 they are missing or no longer match the selected policy profile/outcome.
+The workflow then writes `release-review-decision-log.json` and
+`release-review-decision-log.md` using
+`repomori.release_review_decision_log.v1`. This is the checked reviewer evidence
+trail: it records which generated artifacts were reviewed, final completeness
+and handoff status, selected gate results, public-safety/privacy confirmations,
+and pending reviewer outcome fields without publishing a release.
 
 ## Bundle Completeness Remediation
 
@@ -132,6 +140,7 @@ workflow. Common failure groups are:
 | reviewer checklist | `release-review-checklist.md` is missing selected profile, policy outcome, hash/provenance checks, or final decision placeholders. | Regenerate the checklist from the policy report and release evidence before review. |
 | artifact index and diagnostics references | `release-artifact-index.md` is missing the policy report, checklist, matrix, diagnostics guide, or evidence references. | Regenerate the artifact index and confirm links to the selection guide, matrix, diagnostics guide, integrity guide, and evidence runbook. |
 | reviewer handoff | `release-review-handoff.json` or `.md` is missing, stale, or no longer matches the selected profile/policy outcome. | Regenerate the handoff after the policy report, evidence, artifact index, checklist, and provisional completeness report are current. |
+| reviewer decision log | `release-review-decision-log.json` or `.md` is missing from the uploaded artifacts. | Regenerate the decision log after final completeness and handoff artifacts are current; keep the final reviewer outcome pending until a maintainer fills it in. |
 | selected profile | The policy report is present but `policy.profile` is empty. | Use one of the checked policy profiles or fix the policy JSON before approving the candidate. |
 
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and

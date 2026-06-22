@@ -410,6 +410,21 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "profile", "policy", "completeness", "artifacts"],
     },
     {
+        "schema_version": "repomori.release_review_decision_log.v1",
+        "kind": "report",
+        "title": "Release candidate reviewer decision log",
+        "producer": "build_release_review_decision_log",
+        "required_fields": [
+            "schema_version",
+            "status",
+            "summary",
+            "reviewed_artifacts",
+            "gate_results",
+            "public_safety",
+            "reviewer_outcome",
+        ],
+    },
+    {
         "schema_version": "repomori.release_evidence.v1",
         "kind": "report",
         "title": "Release evidence bundle",
@@ -10755,6 +10770,8 @@ def format_release_candidate_artifact_index_markdown(
         ("release-review-handoff.json", "Raw first-read reviewer handoff summary.", "required by final completeness"),
         ("release-review-handoff.md", "Readable first-read reviewer handoff summary.", "required by final completeness"),
         ("release-bundle-completeness.json", "Final fail-fast completeness report before upload.", "final"),
+        ("release-review-decision-log.json", "Raw reviewer evidence trail and pending outcome fields.", "generated after final completeness"),
+        ("release-review-decision-log.md", "Readable reviewer evidence trail and pending outcome fields.", "generated after final completeness"),
         ("release-evidence.json", "Raw release evidence bundle.", str(evidence.get("status") or "missing")),
         ("release-evidence.md", "Readable release evidence bundle.", str(evidence.get("status") or "missing")),
         ("*.asc", "Optional detached signatures for integrity artifacts.", str(policy_summary.get("signature_status") or evidence_summary.get("signature_status") or "optional")),
@@ -10787,6 +10804,7 @@ def format_release_candidate_artifact_index_markdown(
         "3. Provisional completeness runs with `require_handoff=False` only to feed the handoff summary.",
         "4. `release-review-handoff.json` and `.md` are generated for reviewers.",
         "5. Final fail-fast completeness writes `release-bundle-completeness.json` and requires the handoff artifacts before upload.",
+        "6. `release-review-decision-log.json` and `.md` record reviewed artifacts, gate statuses, public-safety confirmations, and pending reviewer outcome fields.",
         "",
         "## Expected Reviewer Artifacts",
         "",
@@ -11352,6 +11370,402 @@ def format_release_candidate_reviewer_handoff_markdown(handoff: dict[str, Any]) 
     for step in handoff.get("next_steps", []):
         lines.append(f"- {step}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def build_release_review_decision_log(
+    verify_report: dict[str, Any],
+    evidence_report: dict[str, Any] | None,
+    completeness_report: dict[str, Any],
+    handoff_report: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a compact release reviewer decision/evidence trail."""
+
+    evidence = evidence_report if isinstance(evidence_report, dict) else {}
+    completeness = completeness_report if isinstance(completeness_report, dict) else {}
+    handoff = handoff_report if isinstance(handoff_report, dict) else {}
+    verify_summary = verify_report.get("summary", {}) if isinstance(verify_report.get("summary"), dict) else {}
+    evidence_summary = evidence.get("summary", {}) if isinstance(evidence.get("summary"), dict) else {}
+    policy = verify_report.get("policy") if isinstance(verify_report.get("policy"), dict) else {}
+    policy_summary = policy.get("summary", {}) if isinstance(policy.get("summary"), dict) else {}
+    diagnostics = policy.get("diagnostics", {}) if isinstance(policy.get("diagnostics"), dict) else {}
+    review = policy.get("review", {}) if isinstance(policy.get("review"), dict) else {}
+    completeness_summary = (
+        completeness.get("summary")
+        if isinstance(completeness.get("summary"), dict)
+        else {}
+    )
+    handoff_policy = handoff.get("policy") if isinstance(handoff.get("policy"), dict) else {}
+    handoff_completeness = handoff.get("completeness") if isinstance(handoff.get("completeness"), dict) else {}
+
+    profile = policy.get("profile") or handoff.get("profile") or completeness_summary.get("selected_profile")
+    policy_status = policy.get("status") or verify_summary.get("policy_status")
+    policy_outcome = diagnostics.get("outcome") or handoff_policy.get("outcome")
+    policy_review_decision = review.get("decision") or handoff_policy.get("review_decision")
+    release_check_status = (
+        policy_summary.get("release_check_status")
+        or evidence_summary.get("release_check_status")
+        or _release_review_evidence_check_status(evidence, "release_check")
+    )
+    evidence_status = evidence.get("status") if evidence else None
+    completeness_status = completeness.get("status") or handoff_completeness.get("status")
+    handoff_status = handoff.get("status")
+
+    public_safety = _release_review_public_safety_summary(
+        verify_report,
+        evidence,
+        profile=profile,
+        release_check_status=release_check_status,
+    )
+    reviewed_artifacts = _release_review_decision_artifacts(
+        verify_report,
+        evidence,
+        policy_status=policy_status,
+        evidence_status=evidence_status,
+        completeness_status=completeness_status,
+        handoff_status=handoff_status,
+    )
+    gate_results = _release_review_decision_gates(
+        verify_report,
+        evidence,
+        completeness,
+        handoff,
+        public_safety,
+        policy_status=policy_status,
+        policy_outcome=policy_outcome,
+        policy_review_decision=policy_review_decision,
+        release_check_status=release_check_status,
+    )
+
+    failed_gates = [gate for gate in gate_results if gate.get("status") == "fail"]
+    warning_gates = [gate for gate in gate_results if gate.get("status") == "warn"]
+    status = "fail" if failed_gates else "warn" if warning_gates else "pass"
+    return {
+        "schema_version": "repomori.release_review_decision_log.v1",
+        "status": status,
+        "summary": {
+            "selected_profile": profile,
+            "policy_status": policy_status,
+            "policy_outcome": policy_outcome,
+            "policy_review_decision": policy_review_decision,
+            "release_verify_status": verify_report.get("status"),
+            "release_evidence_status": evidence_status,
+            "release_check_status": release_check_status,
+            "completeness_status": completeness_status,
+            "handoff_status": handoff_status,
+            "public_safety_status": public_safety.get("status"),
+            "reviewed_artifact_count": len(reviewed_artifacts),
+            "gate_count": len(gate_results),
+            "failed_gate_count": len(failed_gates),
+            "warning_gate_count": len(warning_gates),
+            "reviewer_decision": "pending",
+        },
+        "reviewed_artifacts": reviewed_artifacts,
+        "gate_results": gate_results,
+        "public_safety": public_safety,
+        "reviewer_outcome": {
+            "decision": "pending",
+            "reviewer": "",
+            "reviewed_at": "",
+            "notes": "",
+            "approval_warning": (
+                "Do not approve until policy, completeness, handoff, public-safety, "
+                "privacy, checksums, provenance, SBOM, and release evidence are reviewed."
+            ),
+        },
+    }
+
+
+def format_release_review_decision_log_markdown(decision_log: dict[str, Any]) -> str:
+    """Render a release reviewer decision/evidence trail."""
+
+    summary = decision_log.get("summary") if isinstance(decision_log.get("summary"), dict) else {}
+    public_safety = (
+        decision_log.get("public_safety")
+        if isinstance(decision_log.get("public_safety"), dict)
+        else {}
+    )
+    reviewer_outcome = (
+        decision_log.get("reviewer_outcome")
+        if isinstance(decision_log.get("reviewer_outcome"), dict)
+        else {}
+    )
+    lines = [
+        "# RepoMori Release Review Decision Log",
+        "",
+        "This artifact records the generated evidence and reviewer decision fields for a release candidate.",
+        "",
+        "## Review Snapshot",
+        "",
+        f"- Status: `{decision_log.get('status')}`",
+        f"- Selected policy profile: `{summary.get('selected_profile')}`",
+        f"- Policy status: `{summary.get('policy_status')}`",
+        f"- Policy outcome: `{summary.get('policy_outcome')}`",
+        f"- Policy review decision: `{summary.get('policy_review_decision')}`",
+        f"- Final completeness status: `{summary.get('completeness_status')}`",
+        f"- Reviewer handoff status: `{summary.get('handoff_status')}`",
+        f"- Public-safety/privacy status: `{summary.get('public_safety_status')}`",
+        f"- Reviewer outcome: `{summary.get('reviewer_decision')}`",
+        "",
+        "## Generated Artifacts Reviewed",
+        "",
+        "| Artifact | Evidence Point | Gate Status | Reviewer Status |",
+        "| --- | --- | --- | --- |",
+    ]
+    for artifact in decision_log.get("reviewed_artifacts", []):
+        if not isinstance(artifact, dict):
+            continue
+        lines.append(
+            f"| `{artifact.get('path')}` | {artifact.get('evidence_point')} | "
+            f"`{artifact.get('gate_status')}` | `{artifact.get('reviewer_status')}` |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Selected Gate Results",
+            "",
+            "| Gate | Status | Detail |",
+            "| --- | --- | --- |",
+        ]
+    )
+    for gate in decision_log.get("gate_results", []):
+        if not isinstance(gate, dict):
+            continue
+        lines.append(f"| `{gate.get('id')}` | `{gate.get('status')}` | {gate.get('detail')} |")
+
+    lines.extend(
+        [
+            "",
+            "## Public-Safety And Privacy Confirmations",
+            "",
+            f"- Status: `{public_safety.get('status')}`",
+            "",
+            "| Confirmation | Status | Detail |",
+            "| --- | --- | --- |",
+        ]
+    )
+    for confirmation in public_safety.get("confirmations", []):
+        if not isinstance(confirmation, dict):
+            continue
+        lines.append(
+            f"| {confirmation.get('label')} | `{confirmation.get('status')}` | "
+            f"{confirmation.get('detail')} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Reviewer Outcome",
+            "",
+            f"- Final reviewer decision: `{reviewer_outcome.get('decision')}`",
+            f"- Reviewer: {reviewer_outcome.get('reviewer')}",
+            f"- Reviewed at: {reviewer_outcome.get('reviewed_at')}",
+            f"- Notes: {reviewer_outcome.get('notes')}",
+            f"- Approval warning: {reviewer_outcome.get('approval_warning')}",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _release_review_decision_artifacts(
+    verify_report: dict[str, Any],
+    evidence_report: dict[str, Any],
+    *,
+    policy_status: Any,
+    evidence_status: Any,
+    completeness_status: Any,
+    handoff_status: Any,
+) -> list[dict[str, Any]]:
+    artifact_statuses = {
+        "release-candidate.json": _release_review_check_status(verify_report, "manifest_schema"),
+        "release-candidate.md": "generated",
+        "checksums.txt": _release_review_check_status(verify_report, "checksum_files"),
+        "release-provenance.json": _release_review_check_status(verify_report, "provenance_artifacts"),
+        "sbom.spdx.json": _release_review_check_status(verify_report, "sbom_artifacts"),
+        "release-verify.json": verify_report.get("status") or "unknown",
+        "release-verify.md": verify_report.get("status") or "unknown",
+        "release-verify-policy.json": policy_status or "not_applied",
+        "release-verify-policy.md": policy_status or "not_applied",
+        "release-artifact-index.md": "generated",
+        "release-review-checklist.md": "pending_review",
+        "release-review-handoff.json": handoff_status or "missing",
+        "release-review-handoff.md": handoff_status or "missing",
+        "release-bundle-completeness.json": completeness_status or "unknown",
+        "release-evidence.json": evidence_status or "missing",
+        "release-evidence.md": evidence_status or "missing",
+    }
+    evidence_points = {
+        "release-candidate.json": "Candidate manifest schema and release coordinates.",
+        "release-candidate.md": "Readable candidate package manifest.",
+        "checksums.txt": "SHA-256 digest material.",
+        "release-provenance.json": "Commit, ref, repository, and workflow provenance.",
+        "sbom.spdx.json": "SPDX SBOM and license reference.",
+        "release-verify.json": "Raw release package verification.",
+        "release-verify.md": "Readable release package verification.",
+        "release-verify-policy.json": "Raw selected policy report.",
+        "release-verify-policy.md": "Readable selected policy report.",
+        "release-artifact-index.md": "Reviewer map for package artifacts and docs.",
+        "release-review-checklist.md": "Fill-in reviewer approval checklist.",
+        "release-review-handoff.json": "Raw reviewer handoff summary.",
+        "release-review-handoff.md": "Readable reviewer handoff summary.",
+        "release-bundle-completeness.json": "Final fail-fast completeness report.",
+        "release-evidence.json": "Raw release evidence bundle.",
+        "release-evidence.md": "Readable release evidence bundle.",
+    }
+    evidence_artifact_paths = {
+        artifact.get("path")
+        for artifact in evidence_report.get("artifacts", [])
+        if isinstance(artifact, dict)
+    }
+    artifacts: list[dict[str, Any]] = []
+    for path, gate_status in artifact_statuses.items():
+        artifacts.append(
+            {
+                "path": path,
+                "evidence_point": evidence_points[path],
+                "gate_status": str(gate_status),
+                "reviewer_status": "pending",
+                "present_in_evidence": path in evidence_artifact_paths,
+            }
+        )
+    return artifacts
+
+
+def _release_review_decision_gates(
+    verify_report: dict[str, Any],
+    evidence_report: dict[str, Any],
+    completeness_report: dict[str, Any],
+    handoff_report: dict[str, Any],
+    public_safety: dict[str, Any],
+    *,
+    policy_status: Any,
+    policy_outcome: Any,
+    policy_review_decision: Any,
+    release_check_status: Any,
+) -> list[dict[str, Any]]:
+    review_status = "pass" if policy_review_decision == "reviewable" else "fail" if policy_review_decision == "blocked" else "warn"
+    return [
+        {
+            "id": "release_verify",
+            "status": _release_review_gate_status(verify_report.get("status")),
+            "detail": f"Release package integrity verification status `{verify_report.get('status')}`.",
+        },
+        {
+            "id": "release_policy",
+            "status": _release_review_gate_status(policy_status),
+            "detail": f"Policy outcome `{policy_outcome}`.",
+        },
+        {
+            "id": "policy_review_decision",
+            "status": review_status,
+            "detail": f"Policy review decision `{policy_review_decision}`.",
+        },
+        {
+            "id": "release_evidence",
+            "status": _release_review_gate_status(evidence_report.get("status")),
+            "detail": f"Release evidence bundle status `{evidence_report.get('status')}`.",
+        },
+        {
+            "id": "release_check",
+            "status": _release_review_gate_status(release_check_status),
+            "detail": f"Public-safety release-check status `{release_check_status}`.",
+        },
+        {
+            "id": "bundle_completeness",
+            "status": _release_review_gate_status(completeness_report.get("status")),
+            "detail": f"Final reviewer bundle completeness status `{completeness_report.get('status')}`.",
+        },
+        {
+            "id": "reviewer_handoff",
+            "status": _release_review_gate_status(handoff_report.get("status")),
+            "detail": f"Generated reviewer handoff status `{handoff_report.get('status')}`.",
+        },
+        {
+            "id": "public_safety_privacy",
+            "status": _release_review_gate_status(public_safety.get("status")),
+            "detail": f"Public-safety and privacy status `{public_safety.get('status')}`.",
+        },
+    ]
+
+
+def _release_review_gate_status(value: Any) -> str:
+    if value == "pass":
+        return "pass"
+    if value == "fail":
+        return "fail"
+    return "warn"
+
+
+def _release_review_public_safety_summary(
+    verify_report: dict[str, Any],
+    evidence_report: dict[str, Any],
+    *,
+    profile: Any,
+    release_check_status: Any,
+) -> dict[str, Any]:
+    release_check = _release_review_evidence_check(evidence_report, "release_check")
+    release_check_summary = release_check.get("summary", {}) if isinstance(release_check.get("summary"), dict) else {}
+    scan_findings = release_check_summary.get("scan_findings")
+    failed_checks = release_check_summary.get("failed_checks")
+    generated_artifacts = release_check_summary.get("generated_artifacts")
+
+    confirmations = [
+        {
+            "id": "release_check_status",
+            "label": "Release-check completed",
+            "status": "pass" if release_check_status == "pass" else "fail" if release_check_status == "fail" else "warn",
+            "detail": f"release_check status is `{release_check_status}`.",
+        },
+        {
+            "id": "active_scan_findings",
+            "label": "Active public-safety findings",
+            "status": "pass" if scan_findings == 0 else "fail" if isinstance(scan_findings, int) else "warn",
+            "detail": f"scan_findings={scan_findings if scan_findings is not None else 'not_recorded'}.",
+        },
+        {
+            "id": "failed_release_checks",
+            "label": "Failed release-check gates",
+            "status": "pass" if failed_checks in ([], (), None) else "fail",
+            "detail": f"failed_checks={len(failed_checks) if isinstance(failed_checks, list) else 0 if failed_checks in ((), None) else failed_checks}.",
+        },
+        {
+            "id": "visible_generated_artifacts",
+            "label": "Visible generated artifacts",
+            "status": "pass" if generated_artifacts in (0, None) else "fail",
+            "detail": f"generated_artifacts={generated_artifacts if generated_artifacts is not None else 'not_recorded'}.",
+        },
+        {
+            "id": "selected_policy_profile",
+            "label": "Selected policy profile",
+            "status": "pass" if profile else "fail",
+            "detail": f"profile=`{profile}`.",
+        },
+        {
+            "id": "decision_log_generation",
+            "label": "Decision log generation",
+            "status": "pass",
+            "detail": "This generated artifact records review state only; it does not publish, tag, or upload a release by itself.",
+        },
+    ]
+    status_order = {"pass": 0, "warn": 1, "fail": 2}
+    status = max((item["status"] for item in confirmations), key=lambda item: status_order.get(item, 1))
+    return {
+        "status": status,
+        "release_check_schema_version": release_check.get("schema_version"),
+        "release_verify_status": verify_report.get("status"),
+        "confirmations": confirmations,
+    }
+
+
+def _release_review_evidence_check(evidence_report: dict[str, Any], name: str) -> dict[str, Any]:
+    checks = evidence_report.get("checks") if isinstance(evidence_report.get("checks"), dict) else {}
+    check = checks.get(name) if isinstance(checks.get(name), dict) else {}
+    return check
+
+
+def _release_review_evidence_check_status(evidence_report: dict[str, Any], name: str) -> str | None:
+    check = _release_review_evidence_check(evidence_report, name)
+    return check.get("status") if isinstance(check, dict) else None
 
 
 def _release_review_bundle_load_json(

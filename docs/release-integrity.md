@@ -43,6 +43,11 @@ The release package workflow writes:
   selected profile, policy outcome, completeness status, artifact index,
   checklist, diagnostics references, and any remediation list. The final bundle
   completeness report checks these handoff artifacts before upload.
+- `release-review-decision-log.json` / `release-review-decision-log.md`:
+  `repomori.release_review_decision_log.v1` evidence trail recording generated
+  artifacts reviewed, final completeness and handoff status, selected gate
+  results, public-safety/privacy confirmations, and pending reviewer outcome
+  fields.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when
