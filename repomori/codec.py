@@ -9747,12 +9747,18 @@ def evaluate_release_policy(
     )
 
     status = "fail" if violations or any(check.get("status") == "fail" for check in checks) else "pass"
+    review = _release_policy_review(status, settings, signature_report)
     evidence_summary = release_evidence.get("summary", {}) if isinstance(release_evidence, dict) else {}
     return {
         "schema_version": "repomori.release_policy.v1",
         "status": status,
+        "profile": settings.get("profile"),
+        "description": settings.get("description"),
         "path": policy_path,
+        "review": review,
         "summary": {
+            "profile": settings.get("profile"),
+            "review_decision": review.get("decision"),
             "requirement_count": sum(1 for value in settings.get("require", {}).values() if value),
             "check_count": len(checks),
             "violation_count": len(violations),
@@ -9824,9 +9830,28 @@ def format_release_verify_markdown(report: dict[str, Any]) -> str:
     if isinstance(policy, dict):
         lines.extend(["", "## Policy", ""])
         lines.append(f"- Status: `{policy.get('status')}`")
+        lines.append(f"- Profile: `{policy.get('profile') or 'custom'}`")
         lines.append(f"- Path: `{policy.get('path')}`")
         summary = policy.get("summary", {})
+        review = policy.get("review", {}) if isinstance(policy.get("review"), dict) else {}
+        lines.append(f"- Review decision: `{review.get('decision', 'unknown')}`")
+        guidance = review.get("guidance")
+        if guidance:
+            lines.append(f"- Guidance: {guidance}")
+        lines.append(
+            f"- Signatures: `{summary.get('signature_status')}` "
+            f"public_key=`{summary.get('public_key_status')}`"
+        )
+        lines.append(
+            f"- Observed warnings/errors: "
+            f"`{summary.get('observed_warning_count', 0)}` / `{summary.get('observed_error_count', 0)}`"
+        )
         lines.append(f"- Violations: `{summary.get('violation_count', 0)}`")
+        next_steps = review.get("next_steps") if isinstance(review.get("next_steps"), list) else []
+        if next_steps:
+            lines.extend(["", "### Reviewer Next Steps", ""])
+            for step in next_steps:
+                lines.append(f"- {step}")
         if policy.get("violations"):
             lines.extend(["", "### Policy Violations", ""])
             for violation in policy.get("violations", []):
@@ -9912,6 +9937,8 @@ def _release_policy_settings(policy: dict[str, Any], path: str | None) -> dict[s
     return {
         "path": path,
         "schema_version": policy.get("schema_version"),
+        "profile": _release_policy_profile(policy, path),
+        "description": str(policy.get("description")) if isinstance(policy.get("description"), str) else None,
         "require": {str(key): bool(value) for key, value in require.items()} if isinstance(require, dict) else {},
         "allowed_statuses": {
             str(key): _release_policy_allowed_statuses(value)
@@ -9924,6 +9951,56 @@ def _release_policy_settings(policy: dict[str, Any], path: str | None) -> dict[s
         } if isinstance(required_schemas, dict) else {},
         "max_warnings": _release_policy_nonnegative_int(policy.get("max_warnings")),
         "max_errors": _release_policy_nonnegative_int(policy.get("max_errors")),
+    }
+
+
+def _release_policy_profile(policy: dict[str, Any], path: str | None) -> str | None:
+    profile = policy.get("profile")
+    if isinstance(profile, str) and profile.strip():
+        return profile.strip()
+    if not path:
+        return None
+    filename = Path(path).name
+    known = {
+        "release-policy-basic.json": "basic",
+        "release-policy-dev-unsigned.json": "dev_unsigned",
+        "release-policy-enterprise-signed.json": "enterprise_signed",
+        "release-policy-strict-no-warnings.json": "strict_no_warnings",
+    }
+    if filename in known:
+        return known[filename]
+    if filename.startswith("release-policy-") and filename.endswith(".json"):
+        return filename.removeprefix("release-policy-").removesuffix(".json").replace("-", "_")
+    return None
+
+
+def _release_policy_review(
+    status: str,
+    settings: dict[str, Any],
+    signature_report: dict[str, Any],
+) -> dict[str, Any]:
+    profile = settings.get("profile") or "custom"
+    signature_status = signature_report.get("status")
+    require = settings.get("require", {})
+    next_steps = ["Confirm the selected policy profile matches the intended release lane."]
+    if require.get("signatures") or signature_status == "signed":
+        next_steps.append("Verify the release public-key fingerprint through an independent channel.")
+    elif signature_status == "unsigned":
+        next_steps.append("Unsigned packages are allowed by this profile; use a signed enterprise policy when signatures are required.")
+
+    if status == "pass":
+        decision = "reviewable"
+        guidance = f"Policy gate passed; this candidate is reviewable under the `{profile}` profile."
+    else:
+        decision = "blocked"
+        guidance = f"Policy gate failed; do not approve this candidate under the `{profile}` profile until violations are resolved."
+        next_steps.append("Resolve the listed policy violations, regenerate the package or evidence, and rerun verify-release --policy.")
+
+    return {
+        "decision": decision,
+        "profile": profile,
+        "guidance": guidance,
+        "next_steps": next_steps,
     }
 
 

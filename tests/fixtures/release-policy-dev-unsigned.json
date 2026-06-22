@@ -1,5 +1,7 @@
 {
   "schema_version": "repomori.release_policy.v1",
+  "profile": "dev_unsigned",
+  "description": "Unsigned OSS or development candidate profile; release evidence and release-check still must pass.",
   "require": {
     "checksums": true,
     "provenance": true,

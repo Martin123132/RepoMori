@@ -1,5 +1,7 @@
 {
   "schema_version": "repomori.release_policy.v1",
+  "profile": "strict_no_warnings",
+  "description": "Strict final verification profile that rejects release verification or evidence warnings.",
   "require": {
     "checksums": true,
     "provenance": true,

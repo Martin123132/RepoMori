@@ -1,5 +1,7 @@
 {
   "schema_version": "repomori.release_policy.v1",
+  "profile": "enterprise_signed",
+  "description": "Enterprise review profile requiring complete detached signatures and a public key artifact.",
   "require": {
     "checksums": true,
     "provenance": true,

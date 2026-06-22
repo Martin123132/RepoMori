@@ -303,6 +303,9 @@ The release-candidate workflow writes `release-verify.json`,
 release policy is present.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
+The policy report includes the checked profile name and a reviewer decision:
+`reviewable` when the package satisfies that profile, or `blocked` when it
+does not.
 Checked reviewer profiles live in `tests/fixtures`:
 `release-policy-basic.json`, `release-policy-dev-unsigned.json`,
 `release-policy-enterprise-signed.json`, and

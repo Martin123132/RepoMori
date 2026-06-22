@@ -1892,6 +1892,8 @@ class RepoMoriCodecTests(unittest.TestCase):
             with self.subTest(name=name):
                 policy = json.loads((repo_root / "tests" / "fixtures" / name).read_text(encoding="utf-8"))
                 self.assertEqual(policy["schema_version"], "repomori.release_policy.v1")
+                self.assertIsInstance(policy.get("profile"), str)
+                self.assertIsInstance(policy.get("description"), str)
                 self.assertIn(name, release_policy_doc)
                 self.assertIn(name, readme)
 
@@ -1905,7 +1907,15 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["policy"]["status"], "pass")
+            self.assertEqual(report["policy"]["profile"], "dev_unsigned")
+            self.assertEqual(report["policy"]["review"]["decision"], "reviewable")
+            self.assertIn("Unsigned packages are allowed", report["policy"]["review"]["next_steps"][1])
             self.assertEqual(report["policy"]["summary"]["signature_status"], "unsigned")
+
+            markdown = format_release_verify_markdown(report)
+            self.assertIn("Profile: `dev_unsigned`", markdown)
+            self.assertIn("Review decision: `reviewable`", markdown)
+            self.assertIn("Policy gate passed", markdown)
 
     def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -1916,16 +1926,24 @@ class RepoMoriCodecTests(unittest.TestCase):
             unsigned_report = verify_release_package(unsigned_root, policy=policy)
 
             self.assertEqual(unsigned_report["status"], "fail")
+            self.assertEqual(unsigned_report["policy"]["profile"], "enterprise_signed")
+            self.assertEqual(unsigned_report["policy"]["review"]["decision"], "blocked")
             unsigned_codes = {violation["code"] for violation in unsigned_report["policy"]["violations"]}
             self.assertIn("release_policy_required_file_missing", unsigned_codes)
             self.assertIn("release_policy_signatures_missing", unsigned_codes)
             self.assertIn("release_policy_status_not_allowed", unsigned_codes)
+
+            unsigned_markdown = format_release_verify_markdown(unsigned_report)
+            self.assertIn("Profile: `enterprise_signed`", unsigned_markdown)
+            self.assertIn("Review decision: `blocked`", unsigned_markdown)
+            self.assertIn("do not approve", unsigned_markdown)
 
             signed_root = self._release_policy_package(Path(tmp) / "signed", signed=True)
             signed_report = verify_release_package(signed_root, policy=policy)
 
             self.assertEqual(signed_report["status"], "pass")
             self.assertEqual(signed_report["policy"]["status"], "pass")
+            self.assertEqual(signed_report["policy"]["review"]["decision"], "reviewable")
             self.assertEqual(signed_report["policy"]["summary"]["signature_status"], "signed")
             self.assertEqual(signed_report["policy"]["summary"]["public_key_status"], "present")
 
@@ -1939,6 +1957,8 @@ class RepoMoriCodecTests(unittest.TestCase):
 
             self.assertEqual(report["status"], "fail")
             self.assertEqual(report["policy"]["status"], "fail")
+            self.assertEqual(report["policy"]["profile"], "strict_no_warnings")
+            self.assertEqual(report["policy"]["review"]["decision"], "blocked")
             violations = report["policy"]["violations"]
             self.assertTrue(
                 any(

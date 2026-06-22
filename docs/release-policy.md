@@ -15,11 +15,18 @@ the report includes a `policy` block using schema `repomori.release_policy.v1`
 and a `release_policy` check. Policy failure makes `verify-release` exit
 nonzero.
 
+Policy reports also include a `profile` name and a small `review` block with a
+review decision (`reviewable` or `blocked`), guidance, and next steps. The
+Markdown formatter renders the same information under `## Policy` so reviewers
+can tell which profile was used without reading the raw JSON.
+
 ## Policy Shape
 
 ```json
 {
   "schema_version": "repomori.release_policy.v1",
+  "profile": "dev_unsigned",
+  "description": "Unsigned OSS or development candidate profile.",
   "require": {
     "checksums": true,
     "provenance": true,
@@ -131,6 +138,20 @@ python -m repomori verify-release D:\Dev\RepoMori\.repomori-release-candidate `
   --policy D:\Dev\RepoMori\tests\fixtures\release-policy-enterprise-signed.json `
   --json
 ```
+
+Reviewer output includes the selected profile and decision:
+
+```text
+## Policy
+- Status: `pass`
+- Profile: `enterprise_signed`
+- Review decision: `reviewable`
+- Guidance: Policy gate passed; this candidate is reviewable under the `enterprise_signed` profile.
+```
+
+If the decision is `blocked`, do not approve the candidate under that profile
+until the listed policy violations are fixed and `verify-release --policy`
+passes.
 
 Or pass a profile to the release workflows:
 

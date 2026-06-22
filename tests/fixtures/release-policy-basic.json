@@ -1,5 +1,7 @@
 {
   "schema_version": "repomori.release_policy.v1",
+  "profile": "basic",
+  "description": "Workflow default profile for release-candidate review with unsigned or signed packages accepted.",
   "require": {
     "checksums": true,
     "provenance": true,
