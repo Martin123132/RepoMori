@@ -77,6 +77,10 @@ and completeness artifacts. It records the executable `release-check`
 privacy-demo status in the checklist and verifies reviewer-facing artifacts do
 not echo raw synthetic paths, secrets, private URLs, raw dumps, proprietary
 markers, credentials, or private repo path markers.
+The GitHub `tests` workflow runs the same no-upload command in `package-smoke`
+after installing the package, then asserts the rehearsal schema/status,
+privacy-demo summary, checklist wording, and reviewer-facing artifact privacy
+scan all pass.
 
 Generated outputs should stay under hidden `.repomori-*` directories so
 `release-check` remains strict about visible repository artifacts.

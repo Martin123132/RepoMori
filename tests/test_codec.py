@@ -2999,6 +2999,13 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori commands --json", workflow)
         self.assertIn("repomori demo --out", workflow)
         self.assertIn("repomori contract-check --fixture", workflow)
+        self.assertIn("repomori release-rehearsal --out", workflow)
+        self.assertIn("repomori.release_rehearsal.v1", workflow)
+        self.assertIn("release-review-checklist.md", workflow)
+        self.assertIn("Release-Check Privacy Demo Result", workflow)
+        self.assertIn("reviewer_artifact_privacy", workflow)
+        self.assertIn("raw marker", workflow)
+        self.assertIn("console script release-rehearsal smoke passed", workflow)
         self.assertIn('generated_dirs = {', workflow)
         self.assertIn("release-check preflight blocked by visible top-level artifacts:", workflow)
         self.assertIn("release-health compat JSON artifact was not created", workflow)
@@ -3018,6 +3025,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             ".repomori-release-check/",
             ".repomori-release-health/",
             ".repomori-release-candidate/",
+            ".repomori-release-rehearsal/",
             ".repomori-health/",
             ".repomori-smoke/",
             ".repomori-handoff-health/",

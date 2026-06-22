@@ -49,6 +49,38 @@ jobs:
           test -s "$WORK_DIR/cli-reference.md"
           repomori demo --out "$WORK_DIR/demo" --force --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.demo.v1'; assert payload['status'] == 'pass'; print('console script demo smoke passed')"
           repomori contract-check --fixture "$REPO_ROOT/tests/fixtures/compat-contracts.json" --json | python -c "import json, sys; payload=json.load(sys.stdin); assert payload['schema_version'] == 'repomori.contract_check.v1'; assert payload['status'] == 'pass'; print('console script contract-check smoke passed')"
+          repomori release-rehearsal --out "$WORK_DIR/release-rehearsal" --force --json > "$WORK_DIR/release-rehearsal-output.json"
+          REHEARSAL_DIR="$WORK_DIR/release-rehearsal" REHEARSAL_JSON="$WORK_DIR/release-rehearsal-output.json" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(Path(os.environ["REHEARSAL_JSON"]).read_text(encoding="utf-8"))
+          root = Path(os.environ["REHEARSAL_DIR"])
+          assert report["schema_version"] == "repomori.release_rehearsal.v1"
+          assert report["status"] == "pass"
+          assert report["summary"]["privacy_guard_demo_status"] == "pass"
+          assert report["summary"]["clean_guard_status"] == "pass"
+          assert report["summary"]["failing_guard_status"] == "fail"
+          assert report["summary"]["leaked_marker_confirmation"] == "none"
+          assert report["checks"]["reviewer_artifact_privacy"]["status"] == "pass"
+          checklist = (root / "release-review-checklist.md").read_text(encoding="utf-8")
+          assert "Release-Check Privacy Demo Result" in checklist
+          raw_markers = (
+              "api_key=",
+              "https://internal",
+              "C:\\Users\\reviewer",
+              "proprietary source",
+              "SYNTHETIC_RAW_DUMP_PLACEHOLDER",
+              "/home/",
+              "/tmp/",
+          )
+          for artifact in report["reviewer_artifacts"]:
+              text = (root / artifact["path"]).read_text(encoding="utf-8")
+              for marker in raw_markers:
+                  assert marker not in text, f"raw marker {marker!r} leaked into {artifact['path']}"
+          print("console script release-rehearsal smoke passed")
+          PY
           popd
 
   workflow-self-check:

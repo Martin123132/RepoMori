@@ -339,7 +339,9 @@ fixture package bytes and the same checklist/evidence/handoff/decision-log
 helpers, records the executable release-check privacy-demo summary, and checks
 reviewer-facing artifacts for raw local paths, secrets, private URLs, raw dumps,
 proprietary markers, credentials, and private repo path markers before any real
-candidate upload.
+candidate upload. The GitHub `tests` workflow also runs this command in
+`package-smoke` from an installed checkout and validates the same public-safe
+reviewer artifact contract without uploading release assets.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
 The policy report includes the checked profile name and a reviewer decision:
