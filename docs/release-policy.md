@@ -153,6 +153,16 @@ If the decision is `blocked`, do not approve the candidate under that profile
 until the listed policy violations are fixed and `verify-release --policy`
 passes.
 
+Blocked reports include a compact diagnostics table that groups common failure
+reasons and gives the reviewer a next step:
+
+| Outcome | Common Cause | Reviewer Action |
+| --- | --- | --- |
+| `signature_requirements_not_met` | Signed enterprise policy was used on an unsigned or partially signed package. | Configure release signing and public-key artifacts, or intentionally choose an unsigned/dev profile. |
+| `required_evidence_missing` | `release-evidence.json` is missing release-check or release-health input required by policy. | Rebuild release evidence with the required report path. |
+| `required_artifact_missing` | A required checksum, provenance, SBOM, evidence, or public-key artifact is absent. | Regenerate the release package or evidence bundle. |
+| `warning_or_error_threshold_exceeded` | Strict policy saw release verification or evidence warnings/errors. | Resolve the warning/error source, then rerun `verify-release --policy`. |
+
 Or pass a profile to the release workflows:
 
 ```powershell

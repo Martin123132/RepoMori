@@ -9748,6 +9748,7 @@ def evaluate_release_policy(
 
     status = "fail" if violations or any(check.get("status") == "fail" for check in checks) else "pass"
     review = _release_policy_review(status, settings, signature_report)
+    diagnostics = _release_policy_diagnostics(violations, settings)
     evidence_summary = release_evidence.get("summary", {}) if isinstance(release_evidence, dict) else {}
     return {
         "schema_version": "repomori.release_policy.v1",
@@ -9756,9 +9757,11 @@ def evaluate_release_policy(
         "description": settings.get("description"),
         "path": policy_path,
         "review": review,
+        "diagnostics": diagnostics,
         "summary": {
             "profile": settings.get("profile"),
             "review_decision": review.get("decision"),
+            "diagnostic_outcome": diagnostics.get("outcome"),
             "requirement_count": sum(1 for value in settings.get("require", {}).values() if value),
             "check_count": len(checks),
             "violation_count": len(violations),
@@ -9852,6 +9855,22 @@ def format_release_verify_markdown(report: dict[str, Any]) -> str:
             lines.extend(["", "### Reviewer Next Steps", ""])
             for step in next_steps:
                 lines.append(f"- {step}")
+        diagnostics = policy.get("diagnostics") if isinstance(policy.get("diagnostics"), dict) else {}
+        reasons = diagnostics.get("reasons") if isinstance(diagnostics.get("reasons"), list) else []
+        if reasons:
+            lines.extend(["", "### Policy Diagnostics", ""])
+            lines.append(f"- Outcome: `{diagnostics.get('outcome')}`")
+            lines.append("")
+            lines.append("| Reason | Count | Meaning | Next Step |")
+            lines.append("| --- | ---: | --- | --- |")
+            for reason in reasons:
+                lines.append(
+                    "| "
+                    f"`{_release_policy_markdown_cell(reason.get('code'))}` | "
+                    f"{reason.get('count', 0)} | "
+                    f"{_release_policy_markdown_cell(reason.get('summary'))} | "
+                    f"{_release_policy_markdown_cell(reason.get('next_step'))} |"
+                )
         if policy.get("violations"):
             lines.extend(["", "### Policy Violations", ""])
             for violation in policy.get("violations", []):
@@ -9972,6 +9991,125 @@ def _release_policy_profile(policy: dict[str, Any], path: str | None) -> str | N
     if filename.startswith("release-policy-") and filename.endswith(".json"):
         return filename.removeprefix("release-policy-").removesuffix(".json").replace("-", "_")
     return None
+
+
+def _release_policy_diagnostics(violations: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for violation in violations:
+        code = str(violation.get("code") or "release_policy_violation")
+        grouped.setdefault(code, []).append(violation)
+
+    reasons = []
+    for code in sorted(grouped):
+        summary, next_step = _release_policy_diagnostic_text(code)
+        reasons.append(
+            {
+                "code": code,
+                "count": len(grouped[code]),
+                "summary": summary,
+                "next_step": next_step,
+                "examples": _release_policy_diagnostic_examples(grouped[code]),
+            }
+        )
+    codes = set(grouped)
+    return {
+        "status": "pass" if not violations else "blocked",
+        "profile": settings.get("profile") or "custom",
+        "outcome": _release_policy_diagnostic_outcome(codes, settings),
+        "reason_count": len(reasons),
+        "reasons": reasons,
+    }
+
+
+def _release_policy_diagnostic_text(code: str) -> tuple[str, str]:
+    catalog = {
+        "release_policy_not_found": (
+            "Configured release policy file was not found.",
+            "Check the policy path and rerun verify-release --policy.",
+        ),
+        "release_policy_json_invalid": (
+            "Configured release policy JSON could not be parsed.",
+            "Fix the policy JSON syntax and rerun verification.",
+        ),
+        "release_policy_not_object": (
+            "Configured release policy is not a JSON object.",
+            "Replace the policy with a repomori.release_policy.v1 JSON object.",
+        ),
+        "release_policy_schema_mismatch": (
+            "Configured release policy schema is not supported.",
+            "Use schema_version repomori.release_policy.v1 or update RepoMori deliberately.",
+        ),
+        "release_policy_required_file_missing": (
+            "A required release artifact is missing.",
+            "Regenerate the release package or evidence bundle and confirm the required file exists.",
+        ),
+        "release_policy_required_file_invalid": (
+            "A required release artifact is present but invalid.",
+            "Regenerate the affected artifact and rerun verify-release --policy.",
+        ),
+        "release_policy_required_report_missing": (
+            "Release evidence is missing a required report.",
+            "Run release-evidence with the required release-check or release-health report.",
+        ),
+        "release_policy_signatures_missing": (
+            "Required detached signatures are missing or incomplete.",
+            "Configure release signing and public-key artifacts, or choose an unsigned/dev policy profile when signatures are not required.",
+        ),
+        "release_policy_status_not_allowed": (
+            "An observed status is not allowed by this policy profile.",
+            "Fix the failing status or choose the policy profile that matches the intended release lane.",
+        ),
+        "release_policy_schema_required": (
+            "A required report or artifact schema does not match policy.",
+            "Regenerate artifacts with the current RepoMori release tooling and rerun verification.",
+        ),
+        "release_policy_threshold_exceeded": (
+            "Observed warnings or errors exceed this policy threshold.",
+            "Resolve the warnings or errors, or use a less strict profile only when that is intentional.",
+        ),
+    }
+    return catalog.get(
+        code,
+        (
+            "Release policy violation blocked this candidate.",
+            "Inspect the raw policy violation and rerun verify-release --policy after correcting it.",
+        ),
+    )
+
+
+def _release_policy_diagnostic_outcome(codes: set[str], settings: dict[str, Any]) -> str:
+    if not codes:
+        return "policy_passed"
+    if "release_policy_signatures_missing" in codes or (
+        settings.get("require", {}).get("signatures") and "release_policy_status_not_allowed" in codes
+    ):
+        return "signature_requirements_not_met"
+    if "release_policy_threshold_exceeded" in codes:
+        return "warning_or_error_threshold_exceeded"
+    if "release_policy_required_report_missing" in codes:
+        return "required_evidence_missing"
+    if "release_policy_required_file_missing" in codes or "release_policy_required_file_invalid" in codes:
+        return "required_artifact_missing"
+    if "release_policy_schema_required" in codes or "release_policy_schema_mismatch" in codes:
+        return "schema_mismatch"
+    return "policy_violations"
+
+
+def _release_policy_diagnostic_examples(violations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    examples = []
+    for violation in violations[:3]:
+        example = {
+            key: violation.get(key)
+            for key in ("path", "expected", "actual")
+            if violation.get(key) is not None
+        }
+        if example:
+            examples.append(example)
+    return examples
+
+
+def _release_policy_markdown_cell(value: Any) -> str:
+    return str(value or "").replace("|", "\\|").replace("\n", " ")
 
 
 def _release_policy_review(

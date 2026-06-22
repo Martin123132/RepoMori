@@ -306,7 +306,9 @@ guidance before uploading the candidate artifact bundle.
 release evidence, schema versions, signatures, and warning/error thresholds.
 The policy report includes the checked profile name and a reviewer decision:
 `reviewable` when the package satisfies that profile, or `blocked` when it
-does not.
+does not. Blocked policy reports also group common diagnostics such as missing
+signatures, missing evidence, missing artifacts, and warning/error threshold
+failures.
 Checked reviewer profiles live in `tests/fixtures`:
 `release-policy-basic.json`, `release-policy-dev-unsigned.json`,
 `release-policy-enterprise-signed.json`, and
