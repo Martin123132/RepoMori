@@ -26,6 +26,9 @@ The release package workflow writes:
   configured. Candidate workflows validate that the JSON and Markdown reports
   include the selected policy profile, reviewer decision, and reviewer next
   steps before upload.
+- `release-review-checklist.md`: fill-in reviewer decision log for selected
+  profile, policy outcome, diagnostics, hash/provenance checks, and final
+  reviewer decision.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when

@@ -76,6 +76,7 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - `release-verify.md`
 - `release-verify-policy.json`
 - `release-verify-policy.md`
+- `release-review-checklist.md`
 - `release-evidence.json`
 - `release-evidence.md`
 - `release-candidate.json`
@@ -93,6 +94,9 @@ Markdown policy artifact also includes a profile preflight section linking to
 [release-policy-matrix.md](release-policy-matrix.md), and
 [release-policy.md#policy-diagnostics](release-policy.md#policy-diagnostics)
 so reviewers can confirm the selected profile before approving the candidate.
+It also writes `release-review-checklist.md`, a fill-in reviewer decision log
+covering the selected profile, policy outcome, diagnostics reviewed,
+artifact hash/provenance checks, and final reviewer decision.
 
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
 SBOM verification guidance. See [release-signing.md](release-signing.md) for

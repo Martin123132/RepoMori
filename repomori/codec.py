@@ -10605,6 +10605,111 @@ def format_release_evidence_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def format_release_review_checklist_markdown(
+    verify_report: dict[str, Any],
+    evidence_report: dict[str, Any] | None = None,
+) -> str:
+    """Render a reviewer-fillable release candidate decision checklist."""
+
+    evidence = evidence_report if isinstance(evidence_report, dict) else {}
+    verify_summary = verify_report.get("summary", {}) if isinstance(verify_report.get("summary"), dict) else {}
+    evidence_summary = evidence.get("summary", {}) if isinstance(evidence.get("summary"), dict) else {}
+    release = evidence.get("release", {}) if isinstance(evidence.get("release"), dict) else {}
+    policy = verify_report.get("policy") if isinstance(verify_report.get("policy"), dict) else {}
+    policy_summary = policy.get("summary", {}) if isinstance(policy.get("summary"), dict) else {}
+    review = policy.get("review", {}) if isinstance(policy.get("review"), dict) else {}
+    diagnostics = policy.get("diagnostics", {}) if isinstance(policy.get("diagnostics"), dict) else {}
+    reasons = diagnostics.get("reasons") if isinstance(diagnostics.get("reasons"), list) else []
+
+    def field(value: Any, default: str = "unknown") -> Any:
+        return default if value in (None, "") else value
+
+    lines = [
+        "# RepoMori Release Candidate Review Checklist",
+        "",
+        "This checklist is a reviewer decision log. Fill it in after the release",
+        "package, policy gate, evidence bundle, hashes, and provenance have been",
+        "reviewed.",
+        "",
+        "## Candidate Summary",
+        "",
+        f"- Version: `{field(verify_summary.get('manifest_version') or evidence_summary.get('version'))}`",
+        f"- Commit: `{field(verify_summary.get('commit') or evidence_summary.get('commit'))}`",
+        f"- Ref: `{field(verify_summary.get('ref') or evidence_summary.get('ref'))}`",
+        f"- Run ID: `{field(verify_summary.get('run_id') or evidence_summary.get('run_id'))}`",
+        f"- Repository: `{field(release.get('repository'))}`",
+        f"- Workflow: `{field(release.get('workflow'))}`",
+        "",
+        "## Policy Decision Inputs",
+        "",
+        f"- Selected profile: `{field(policy.get('profile'), 'not_applied')}`",
+        f"- Policy status: `{field(policy.get('status') or verify_summary.get('policy_status'), 'not_applied')}`",
+        f"- Policy outcome: `{field(diagnostics.get('outcome'), 'not_applicable')}`",
+        f"- Review decision: `{field(review.get('decision'), 'pending')}`",
+        f"- Signature status: `{field(policy_summary.get('signature_status') or evidence_summary.get('signature_status'))}`",
+        f"- Public key status: `{field(policy_summary.get('public_key_status'))}`",
+        f"- Observed warnings/errors: "
+        f"`{field(policy_summary.get('observed_warning_count'), 0)}` / "
+        f"`{field(policy_summary.get('observed_error_count'), 0)}`",
+        "",
+        "## Artifact Hash And Provenance Checks",
+        "",
+        f"- Release verification: `{field(verify_report.get('status'))}`",
+        f"- Release evidence: `{field(evidence.get('status'), 'missing')}`",
+        f"- Release check: `{field(policy_summary.get('release_check_status') or evidence_summary.get('release_check_status'))}`",
+        f"- Required files: `{_release_review_check_status(verify_report, 'required_files')}`",
+        f"- Checksum parsing: `{_release_review_check_status(verify_report, 'checksums_parse')}`",
+        f"- Checksum file hashes: `{_release_review_check_status(verify_report, 'checksum_files')}`",
+        f"- Checksum coverage: `{_release_review_check_status(verify_report, 'checksum_coverage')}`",
+        f"- Provenance artifacts: `{_release_review_check_status(verify_report, 'provenance_artifacts')}`",
+        f"- SBOM artifacts: `{_release_review_check_status(verify_report, 'sbom_artifacts')}`",
+        "",
+        "## Policy Diagnostics Reviewed",
+        "",
+    ]
+    if reasons:
+        lines.append("| Reason | Count | Next Step |")
+        lines.append("| --- | ---: | --- |")
+        for reason in reasons:
+            lines.append(
+                f"| `{_release_policy_markdown_cell(reason.get('code'))}` | "
+                f"{reason.get('count', 0)} | "
+                f"{_release_policy_markdown_cell(reason.get('next_step'))} |"
+            )
+    else:
+        lines.append("- No policy diagnostic reasons were reported.")
+
+    lines.extend(
+        [
+            "",
+            "## Reviewer Checklist",
+            "",
+            "- [ ] Selected policy profile matches the release situation and `docs/release-policy-selection.md`.",
+            "- [ ] Policy outcome and diagnostics were reviewed.",
+            "- [ ] `checksums.txt` SHA-256 values were verified against package artifacts.",
+            "- [ ] `release-provenance.json` commit, ref, run, and repository match the intended candidate.",
+            "- [ ] `sbom.spdx.json` and `release-evidence.json` were reviewed.",
+            "- [ ] Signature and public-key status match the selected profile.",
+            "- [ ] Final reviewer decision is recorded below.",
+            "",
+            "## Final Reviewer Decision",
+            "",
+            "- Final reviewer decision: `pending`",
+            "- Reviewer:",
+            "- Reviewed at:",
+            "- Notes:",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _release_review_check_status(report: dict[str, Any], check_id: str) -> str:
+    for check in report.get("checks", []):
+        if isinstance(check, dict) and check.get("id") == check_id:
+            return str(check.get("status") or "unknown")
+    return "unknown"
+
+
 def _release_evidence_default_release_check(package_root: Path) -> Path | None:
     candidates = (
         package_root.parent / ".repomori-release-check" / _RELEASE_CHECK_ARTIFACT_REPORT,

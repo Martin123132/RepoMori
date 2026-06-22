@@ -274,9 +274,13 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
+          from repomori.codec import format_release_review_checklist_markdown
 
           report = json.loads(Path(".repomori-release-candidate/release-verify-policy.json").read_text(encoding="utf-8"))
+          evidence = json.loads(Path(".repomori-release-candidate/release-evidence.json").read_text(encoding="utf-8"))
           markdown = Path(".repomori-release-candidate/release-verify-policy.md").read_text(encoding="utf-8")
+          checklist = format_release_review_checklist_markdown(report, evidence)
+          Path(".repomori-release-candidate/release-review-checklist.md").write_text(checklist, encoding="utf-8")
           assert report["schema_version"] == "repomori.release_verify.v1"
           assert report["status"] == "pass"
           assert report["policy"]["schema_version"] == "repomori.release_policy.v1"
@@ -290,6 +294,11 @@ jobs:
           assert "docs/release-policy-matrix.md" in markdown
           assert "docs/release-policy.md#policy-diagnostics" in markdown
           assert "### Reviewer Next Steps" in markdown
+          assert "## Final Reviewer Decision" in checklist
+          assert "Selected profile:" in checklist
+          assert "Policy outcome:" in checklist
+          assert "Artifact Hash And Provenance Checks" in checklist
+          assert "Final reviewer decision: `pending`" in checklist
           print("release policy gate passed")
           PY
       - name: Publish draft GitHub release
@@ -312,6 +321,7 @@ jobs:
             .repomori-release-candidate/release-verify.json
             .repomori-release-candidate/release-verify.md
             .repomori-release-candidate/release-verify-policy.*
+            .repomori-release-candidate/release-review-checklist.*
             .repomori-release-candidate/release-evidence.json
             .repomori-release-candidate/release-evidence.md
             .repomori-release-candidate/release-candidate.json

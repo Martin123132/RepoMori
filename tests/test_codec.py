@@ -59,6 +59,7 @@ from repomori.codec import (
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_release_evidence_markdown,
+    format_release_review_checklist_markdown,
     format_release_verify_markdown,
     format_restore_check_markdown,
     format_context_markdown,
@@ -1613,7 +1614,9 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("python -m repomori verify-release .repomori-release-candidate \\\n            --policy \"$RELEASE_POLICY\"", workflow)
         self.assertIn("release-verify-policy.json", workflow)
         self.assertIn("release-verify-policy.md", workflow)
+        self.assertIn("release-review-checklist.md", workflow)
         self.assertIn("repomori.release_policy.v1", workflow)
+        self.assertIn("format_release_review_checklist_markdown", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
         self.assertIn("Review decision: `reviewable`", workflow)
@@ -1622,6 +1625,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("docs/release-policy-matrix.md", workflow)
         self.assertIn("docs/release-policy.md#policy-diagnostics", workflow)
         self.assertIn("### Reviewer Next Steps", workflow)
+        self.assertIn("## Final Reviewer Decision", workflow)
+        self.assertIn("Final reviewer decision: `pending`", workflow)
+        self.assertIn("release-review-checklist.md", release_doc)
+        self.assertIn("fill-in reviewer decision log", release_doc)
         self.assertIn("Sign release integrity artifacts", workflow)
         self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", workflow)
         self.assertIn("REPOMORI_RELEASE_GPG_PASSPHRASE", workflow)
@@ -1678,7 +1685,9 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-verify-policy.json", workflow)
         self.assertIn("release-verify-policy.md", workflow)
         self.assertIn("release-verify-policy.*", workflow)
+        self.assertIn("release-review-checklist.md", workflow)
         self.assertIn("repomori.release_policy.v1", workflow)
+        self.assertIn("format_release_review_checklist_markdown", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
         self.assertIn("Review decision: `reviewable`", workflow)
@@ -1687,6 +1696,8 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("docs/release-policy-matrix.md", workflow)
         self.assertIn("docs/release-policy.md#policy-diagnostics", workflow)
         self.assertIn("### Reviewer Next Steps", workflow)
+        self.assertIn("## Final Reviewer Decision", workflow)
+        self.assertIn("Final reviewer decision: `pending`", workflow)
         self.assertIn("release-candidate.json", workflow)
         self.assertIn("release-candidate.md", workflow)
         self.assertIn("include-hidden-files: true", workflow)
@@ -1963,6 +1974,27 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("start with `basic` or `dev_unsigned`", markdown)
             self.assertIn("use `enterprise_signed` only when detached signatures", markdown)
             self.assertIn("Policy gate passed", markdown)
+
+    def test_release_review_checklist_markdown_records_decision_inputs(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        policy = repo_root / "tests/fixtures/release-policy-dev-unsigned.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._release_policy_package(Path(tmp), signed=False)
+            report = verify_release_package(root, policy=policy)
+            evidence = json.loads((root / "release-evidence.json").read_text(encoding="utf-8"))
+
+            markdown = format_release_review_checklist_markdown(report, evidence)
+
+            self.assertIn("# RepoMori Release Candidate Review Checklist", markdown)
+            self.assertIn("Selected profile: `dev_unsigned`", markdown)
+            self.assertIn("Policy outcome: `policy_passed`", markdown)
+            self.assertIn("Review decision: `reviewable`", markdown)
+            self.assertIn("## Artifact Hash And Provenance Checks", markdown)
+            self.assertIn("Checksum file hashes: `pass`", markdown)
+            self.assertIn("Provenance artifacts: `pass`", markdown)
+            self.assertIn("No policy diagnostic reasons were reported.", markdown)
+            self.assertIn("- [ ] Selected policy profile matches the release situation", markdown)
+            self.assertIn("Final reviewer decision: `pending`", markdown)
 
     def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
