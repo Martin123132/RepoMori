@@ -110,7 +110,7 @@ python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.rep
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.jsonl --json
 python -m repomori drift-summary D:\Temp\repomori-drift.jsonl --limit 20 --json
 python -m repomori handoff-health-summary D:\handoffs\handoff-health.jsonl --limit 20 --json
-python -m repomori build C:\path\to\repo C:\path\to\repo.repomori --force
+python -m repomori build D:\Dev\YourRepo D:\Dev\YourRepo\.repomori-packs\repo.repomori --force
 python -m repomori init D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs
 python -m repomori memory --config D:\Dev\RepoMori\repomori.toml --json
 python -m repomori memory D:\Dev\RepoMori --out-dir D:\Dev\RepoMori\.repomori-packs --prune-apply --json
@@ -132,23 +132,23 @@ python -m repomori doctor D:\Dev\RepoMori\.repomori-packs --json
 python -m repomori restore-check D:\Dev\RepoMori\.repomori-packs --verify-packs --anchor D:\Dev\RepoMori\.repomori-packs\timeline-anchor.json --json
 python -m repomori prune D:\Dev\RepoMori\.repomori-packs --keep 20 --json
 python -m repomori prune D:\Dev\RepoMori\.repomori-packs --keep 20 --apply --json
-python -m repomori info C:\path\to\repo.repomori
-python -m repomori query C:\path\to\repo.repomori storage
-python -m repomori diagnose C:\path\to\repo.repomori "where is storage handled?" --json
-python -m repomori brief C:\path\to\repo.repomori --out repo-brief.md
+python -m repomori info D:\Dev\YourRepo\.repomori-packs\repo.repomori
+python -m repomori query D:\Dev\YourRepo\.repomori-packs\repo.repomori storage
+python -m repomori diagnose D:\Dev\YourRepo\.repomori-packs\repo.repomori "where is storage handled?" --json
+python -m repomori brief D:\Dev\YourRepo\.repomori-packs\repo.repomori --out D:\Dev\YourRepo\repo-brief.md
 python -m repomori brief D:\Dev\RepoMori\.repomori-packs --format json
-python -m repomori compare C:\path\to\old.repomori C:\path\to\new.repomori --out compare.md
-python -m repomori context C:\path\to\repo.repomori "where is storage handled?" --out context.md
-python -m repomori verify C:\path\to\repo.repomori
-python -m repomori eval C:\path\to\repo.repomori --out eval.md
-python -m repomori capsule C:\path\to\repo.repomori --out repo.capsule.json
-python -m repomori handoff C:\path\to\repo.repomori "where is storage handled?" --out D:\handoffs\repo
-python -m repomori handoff C:\path\to\new.repomori "continue this work" --base-pack C:\path\to\old.repomori --out D:\handoffs\next
+python -m repomori compare D:\Dev\YourRepo\.repomori-packs\old.repomori D:\Dev\YourRepo\.repomori-packs\new.repomori --out D:\Dev\YourRepo\compare.md
+python -m repomori context D:\Dev\YourRepo\.repomori-packs\repo.repomori "where is storage handled?" --out D:\Dev\YourRepo\context.md
+python -m repomori verify D:\Dev\YourRepo\.repomori-packs\repo.repomori
+python -m repomori eval D:\Dev\YourRepo\.repomori-packs\repo.repomori --out D:\Dev\YourRepo\eval.md
+python -m repomori capsule D:\Dev\YourRepo\.repomori-packs\repo.repomori --out D:\Dev\YourRepo\repo.capsule.json
+python -m repomori handoff D:\Dev\YourRepo\.repomori-packs\repo.repomori "where is storage handled?" --out D:\handoffs\repo
+python -m repomori handoff D:\Dev\YourRepo\.repomori-packs\new.repomori "continue this work" --base-pack D:\Dev\YourRepo\.repomori-packs\old.repomori --out D:\handoffs\next
 python -m repomori check-handoff D:\handoffs\repo --json
 python -m repomori score-handoff D:\handoffs\repo --json
 python -m repomori handoff-triage D:\handoffs\repo --out D:\handoffs\repo\triage.md
 python -m repomori bench D:\Dev\RepoMori --out D:\benchmarks\repomori
-python -m repomori get C:\path\to\repo.repomori path\inside\repo.py --out restored.py
+python -m repomori get D:\Dev\YourRepo\.repomori-packs\repo.repomori path\inside\repo.py --out D:\Dev\YourRepo\restored.py
 ```
 
 `anchor` and `verify-anchor` expect an existing snapshot directory; run
