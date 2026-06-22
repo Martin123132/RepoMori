@@ -47,6 +47,20 @@ repomori demo --out D:\Dev\RepoMori\.repomori-release-candidate\demo --force --j
 repomori contract-check --fixture D:\Dev\RepoMori\tests\fixtures\compat-contracts.json --json
 ```
 
+Before uploading or approving candidate artifacts, exercise the decision-log
+privacy guard with synthetic clean and failing inputs:
+
+```powershell
+python -m repomori privacy-guard-demo --mode clean --json
+python -m repomori privacy-guard-demo --mode fail --json
+```
+
+The clean run should report top-level `status: "pass"`, embedded
+`privacy_guard.status: "pass"`, and empty `issue_counts_by_code`. The failing
+run should still report top-level `status: "pass"` because the dry-run behaved
+as expected, while the embedded `privacy_guard.status` is `"fail"` and only
+redacted category/count summaries are shown.
+
 Generated outputs should stay under hidden `.repomori-*` directories so
 `release-check` remains strict about visible repository artifacts.
 

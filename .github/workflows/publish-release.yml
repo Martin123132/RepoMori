@@ -321,6 +321,10 @@ jobs:
           assert "Selected profile:" in checklist
           assert "Policy outcome:" in checklist
           assert "Artifact Hash And Provenance Checks" in checklist
+          assert "Privacy Guard Demo Preflight" in checklist
+          assert "privacy-guard-demo --mode clean" in checklist
+          assert "privacy-guard-demo --mode fail" in checklist
+          assert "Privacy-guard demo clean/fail expectations were run" in checklist
           assert "Final reviewer decision: `pending`" in checklist
           assert "RepoMori Release Candidate Artifact Index" in index
           assert "Selected policy profile:" in index
