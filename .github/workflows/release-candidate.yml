@@ -318,6 +318,10 @@ jobs:
           assert "Selected policy profile:" in index
           assert "release-verify-policy.md" in index
           assert "release-review-checklist.md" in index
+          assert "release-review-handoff.md" in index
+          assert "release-bundle-completeness.json" in index
+          assert "Provisional completeness" in index
+          assert "Final fail-fast completeness" in index
           assert "Diagnostics References" in index
           assert bundle["schema_version"] == "repomori.release_review_bundle.v1"
           assert bundle["status"] == "pass", bundle

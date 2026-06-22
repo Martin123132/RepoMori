@@ -30,7 +30,9 @@ The release package workflow writes:
   profile, policy outcome, diagnostics, hash/provenance checks, and final
   reviewer decision.
 - `release-artifact-index.md`: compact reviewer index for expected candidate
-  artifacts, selected profile, policy outcome, and diagnostics references.
+  artifacts, selected profile, policy outcome, diagnostics references, and the
+  provisional-to-final completeness ordering that makes handoff required before
+  upload.
 - `release-bundle-completeness.json`: `repomori.release_review_bundle.v1`
   report proving expected reviewer artifacts and guidance are present before
   upload. Failed reports include reviewer-facing remediation grouped by missing

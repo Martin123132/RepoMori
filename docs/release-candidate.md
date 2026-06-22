@@ -103,7 +103,9 @@ covering the selected profile, policy outcome, diagnostics reviewed,
 artifact hash/provenance checks, and final reviewer decision.
 The companion `release-artifact-index.md` is a first-stop reviewer map of the
 expected candidate artifacts, selected policy profile, policy outcome, and
-diagnostics references.
+diagnostics references. It also shows the generation order: provisional
+completeness feeds the handoff, then final fail-fast completeness requires
+`release-review-handoff.json` and `release-review-handoff.md` before upload.
 Before upload, the workflow writes `release-bundle-completeness.json` and fails
 if reviewer artifacts, selected profile, checksum/provenance material, or
 diagnostics references are missing. Failed completeness reports include a

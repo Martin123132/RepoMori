@@ -304,7 +304,8 @@ release policy is present. It also writes `release-review-checklist.md` as a
 fill-in decision log for the selected profile, policy outcome, diagnostics,
 hash/provenance checks, and final reviewer decision, plus
 `release-artifact-index.md` as the at-a-glance map of expected reviewer
-artifacts and diagnostics references. Before upload, the workflow writes
+artifacts, diagnostics references, and provisional-to-final completeness
+ordering. Before upload, the workflow writes
 `release-bundle-completeness.json` to prove those reviewer artifacts and
 guidance are present; failed completeness reports include remediation guidance
 for the missing policy report, evidence, integrity files, checklist, artifact
