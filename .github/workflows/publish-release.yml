@@ -275,8 +275,10 @@ jobs:
           import json
           from pathlib import Path
           from repomori.codec import (
+              build_release_candidate_reviewer_handoff,
               check_release_candidate_review_bundle,
               format_release_candidate_artifact_index_markdown,
+              format_release_candidate_reviewer_handoff_markdown,
               format_release_review_checklist_markdown,
           )
 
@@ -289,6 +291,10 @@ jobs:
           Path(".repomori-release-candidate/release-artifact-index.md").write_text(index, encoding="utf-8")
           bundle = check_release_candidate_review_bundle(".repomori-release-candidate")
           Path(".repomori-release-candidate/release-bundle-completeness.json").write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+          handoff = build_release_candidate_reviewer_handoff(report, evidence, bundle)
+          handoff_markdown = format_release_candidate_reviewer_handoff_markdown(handoff)
+          Path(".repomori-release-candidate/release-review-handoff.json").write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
+          Path(".repomori-release-candidate/release-review-handoff.md").write_text(handoff_markdown, encoding="utf-8")
           assert report["schema_version"] == "repomori.release_verify.v1"
           assert report["status"] == "pass"
           assert report["policy"]["schema_version"] == "repomori.release_policy.v1"
@@ -315,6 +321,12 @@ jobs:
           assert bundle["schema_version"] == "repomori.release_review_bundle.v1"
           assert bundle["status"] == "pass", bundle
           assert bundle["summary"]["selected_profile"]
+          assert handoff["schema_version"] == "repomori.release_review_handoff.v1"
+          assert handoff["status"] == "pass", handoff
+          assert handoff["profile"]
+          assert "release-artifact-index.md" in handoff_markdown
+          assert "release-review-checklist.md" in handoff_markdown
+          assert "docs/release-policy.md#policy-diagnostics" in handoff_markdown
           print("release policy gate passed")
           PY
       - name: Publish draft GitHub release
@@ -340,6 +352,7 @@ jobs:
             .repomori-release-candidate/release-review-checklist.*
             .repomori-release-candidate/release-artifact-index.*
             .repomori-release-candidate/release-bundle-completeness.*
+            .repomori-release-candidate/release-review-handoff.*
             .repomori-release-candidate/release-evidence.json
             .repomori-release-candidate/release-evidence.md
             .repomori-release-candidate/release-candidate.json

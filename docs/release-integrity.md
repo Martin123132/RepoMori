@@ -36,6 +36,10 @@ The release package workflow writes:
   upload. Failed reports include reviewer-facing remediation grouped by missing
   policy report, evidence, checksum/provenance/SBOM material, checklist,
   artifact index, selected profile, and diagnostics-reference failures.
+- `release-review-handoff.json` / `release-review-handoff.md`: concise
+  `repomori.release_review_handoff.v1` reviewer summary pointing to the
+  selected profile, policy outcome, completeness status, artifact index,
+  checklist, diagnostics references, and any remediation list.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when

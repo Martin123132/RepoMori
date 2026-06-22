@@ -79,6 +79,8 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - `release-review-checklist.md`
 - `release-artifact-index.md`
 - `release-bundle-completeness.json`
+- `release-review-handoff.json`
+- `release-review-handoff.md`
 - `release-evidence.json`
 - `release-evidence.md`
 - `release-candidate.json`
@@ -107,6 +109,10 @@ if reviewer artifacts, selected profile, checksum/provenance material, or
 diagnostics references are missing. Failed completeness reports include a
 `remediation` list plus per-error remediation objects so maintainers can see the
 next repair step from the uploaded CI artifact.
+The final first-read artifact is `release-review-handoff.md`, backed by
+`release-review-handoff.json` using `repomori.release_review_handoff.v1`. It
+summarises the selected profile, policy outcome, completeness status, artifact
+index, checklist, diagnostics references, and any remediation list.
 
 ## Bundle Completeness Remediation
 

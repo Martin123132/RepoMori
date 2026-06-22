@@ -403,6 +403,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "root", "summary", "checks", "errors"],
     },
     {
+        "schema_version": "repomori.release_review_handoff.v1",
+        "kind": "report",
+        "title": "Release candidate reviewer handoff summary",
+        "producer": "build_release_candidate_reviewer_handoff",
+        "required_fields": ["schema_version", "status", "profile", "policy", "completeness", "artifacts"],
+    },
+    {
         "schema_version": "repomori.release_evidence.v1",
         "kind": "report",
         "title": "Release evidence bundle",
@@ -11095,6 +11102,148 @@ def _release_review_bundle_report(
         "errors": errors,
         "remediation": remediation,
     }
+
+
+def build_release_candidate_reviewer_handoff(
+    verify_report: dict[str, Any],
+    evidence_report: dict[str, Any] | None,
+    completeness_report: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a concise reviewer handoff from release candidate reports."""
+
+    policy = verify_report.get("policy") if isinstance(verify_report.get("policy"), dict) else {}
+    diagnostics = policy.get("diagnostics") if isinstance(policy.get("diagnostics"), dict) else {}
+    review = policy.get("review") if isinstance(policy.get("review"), dict) else {}
+    completeness_summary = (
+        completeness_report.get("summary")
+        if isinstance(completeness_report.get("summary"), dict)
+        else {}
+    )
+    remediation = [
+        item
+        for item in (completeness_report.get("remediation") or [])
+        if isinstance(item, dict)
+    ]
+    profile = policy.get("profile") or completeness_summary.get("selected_profile")
+    completeness_status = str(completeness_report.get("status") or "unknown")
+    policy_status = str(policy.get("status") or verify_report.get("status") or "unknown")
+    status = "pass" if policy_status == "pass" and completeness_status == "pass" else "fail"
+    artifacts = [
+        {
+            "path": "release-verify-policy.md",
+            "purpose": "Readable policy verification result and reviewer next steps.",
+        },
+        {
+            "path": "release-artifact-index.md",
+            "purpose": "At-a-glance map of release candidate reviewer artifacts.",
+        },
+        {
+            "path": "release-review-checklist.md",
+            "purpose": "Fill-in reviewer decision log.",
+        },
+        {
+            "path": "release-bundle-completeness.json",
+            "purpose": "Machine-readable completeness and remediation report.",
+        },
+        {
+            "path": "release-evidence.md",
+            "purpose": "Reviewer evidence summary from release-check, verification, and signatures.",
+        },
+        {
+            "path": "checksums.txt",
+            "purpose": "SHA-256 digest material for release artifacts.",
+        },
+        {
+            "path": "release-provenance.json",
+            "purpose": "Machine-readable release provenance.",
+        },
+        {
+            "path": "sbom.spdx.json",
+            "purpose": "Minimal SPDX SBOM for the release package.",
+        },
+    ]
+    diagnostics_refs = [
+        "docs/release-policy-selection.md",
+        "docs/release-policy-matrix.md",
+        "docs/release-policy.md#policy-diagnostics",
+        "docs/release-integrity.md",
+        "docs/release-evidence.md",
+    ]
+    next_steps = [
+        "Confirm the selected policy profile matches the release situation.",
+        "Open release-artifact-index.md first, then fill release-review-checklist.md.",
+        "Review diagnostics references before approving blocked or warning-heavy candidates.",
+    ]
+    if remediation:
+        next_steps.insert(0, "Resolve the remediation list before approving the candidate.")
+
+    return {
+        "schema_version": "repomori.release_review_handoff.v1",
+        "status": status,
+        "profile": profile,
+        "policy": {
+            "status": policy_status,
+            "outcome": diagnostics.get("outcome") if diagnostics else None,
+            "review_decision": review.get("decision") if review else None,
+        },
+        "completeness": {
+            "status": completeness_status,
+            "error_count": completeness_summary.get("error_count"),
+            "remediation_count": completeness_summary.get("remediation_count", len(remediation)),
+        },
+        "evidence": {
+            "status": evidence_report.get("status") if isinstance(evidence_report, dict) else None,
+            "schema_version": evidence_report.get("schema_version") if isinstance(evidence_report, dict) else None,
+        },
+        "artifacts": artifacts,
+        "diagnostics_references": diagnostics_refs,
+        "remediation": remediation,
+        "next_steps": next_steps,
+    }
+
+
+def format_release_candidate_reviewer_handoff_markdown(handoff: dict[str, Any]) -> str:
+    """Render a concise release candidate reviewer handoff summary."""
+
+    policy = handoff.get("policy") if isinstance(handoff.get("policy"), dict) else {}
+    completeness = handoff.get("completeness") if isinstance(handoff.get("completeness"), dict) else {}
+    lines = [
+        "# RepoMori Release Candidate Reviewer Handoff",
+        "",
+        f"- Status: `{handoff.get('status')}`",
+        f"- Selected policy profile: `{handoff.get('profile')}`",
+        f"- Policy outcome: `{policy.get('outcome')}`",
+        f"- Review decision: `{policy.get('review_decision')}`",
+        f"- Completeness status: `{completeness.get('status')}`",
+        f"- Completeness remediation count: `{completeness.get('remediation_count')}`",
+        "",
+        "## Reviewer Artifacts",
+        "",
+        "| Artifact | Purpose |",
+        "| --- | --- |",
+    ]
+    for artifact in handoff.get("artifacts", []):
+        if not isinstance(artifact, dict):
+            continue
+        lines.append(f"| `{artifact.get('path')}` | {artifact.get('purpose')} |")
+
+    lines.extend(["", "## Diagnostics References", ""])
+    for ref in handoff.get("diagnostics_references", []):
+        lines.append(f"- [{ref}]({ref})")
+
+    lines.extend(["", "## Completeness Remediation", ""])
+    remediation = [item for item in (handoff.get("remediation") or []) if isinstance(item, dict)]
+    if remediation:
+        lines.extend(["| Category | Next Step |", "| --- | --- |"])
+        for item in remediation:
+            lines.append(f"| {item.get('category')} | {item.get('next_step')} |")
+    else:
+        lines.append("No bundle completeness remediation is currently reported.")
+
+    lines.extend(["", "## Reviewer Next Steps", ""])
+    for step in handoff.get("next_steps", []):
+        lines.append(f"- {step}")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _release_review_bundle_load_json(

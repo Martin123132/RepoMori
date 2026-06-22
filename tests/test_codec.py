@@ -29,6 +29,7 @@ from repomori.codec import (
     build_handoff_health_record,
     build_handoff_package,
     build_pack,
+    build_release_candidate_reviewer_handoff,
     build_release_evidence,
     check_handoff_package,
     check_compatibility,
@@ -60,6 +61,7 @@ from repomori.codec import (
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_release_candidate_artifact_index_markdown,
+    format_release_candidate_reviewer_handoff_markdown,
     format_release_evidence_markdown,
     format_release_review_checklist_markdown,
     format_release_verify_markdown,
@@ -1619,12 +1621,18 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-review-checklist.md", workflow)
         self.assertIn("release-artifact-index.md", workflow)
         self.assertIn("release-bundle-completeness.json", workflow)
+        self.assertIn("release-review-handoff.json", workflow)
+        self.assertIn("release-review-handoff.md", workflow)
         self.assertIn("repomori.release_policy.v1", workflow)
         self.assertIn("repomori.release_review_bundle.v1", workflow)
+        self.assertIn("repomori.release_review_handoff.v1", workflow)
+        self.assertIn("build_release_candidate_reviewer_handoff", workflow)
         self.assertIn("check_release_candidate_review_bundle", workflow)
         self.assertIn("format_release_candidate_artifact_index_markdown", workflow)
+        self.assertIn("format_release_candidate_reviewer_handoff_markdown", workflow)
         self.assertIn("format_release_review_checklist_markdown", workflow)
         self.assertIn("bundle[\"status\"] == \"pass\"", workflow)
+        self.assertIn("handoff[\"status\"] == \"pass\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
         self.assertIn("Review decision: `reviewable`", workflow)
@@ -1640,6 +1648,8 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-review-checklist.md", release_doc)
         self.assertIn("release-artifact-index.md", release_doc)
         self.assertIn("release-bundle-completeness.json", release_doc)
+        self.assertIn("release-review-handoff.md", release_doc)
+        self.assertIn("repomori.release_review_handoff.v1", release_doc)
         self.assertIn("Bundle Completeness Remediation", release_doc)
         self.assertIn("failed completeness reports include remediation guidance", readme)
         self.assertIn("selected profile", release_doc)
@@ -1705,12 +1715,17 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-review-checklist.md", workflow)
         self.assertIn("release-artifact-index", workflow)
         self.assertIn("release-bundle-completeness", workflow)
+        self.assertIn("release-review-handoff", workflow)
         self.assertIn("repomori.release_policy.v1", workflow)
         self.assertIn("repomori.release_review_bundle.v1", workflow)
+        self.assertIn("repomori.release_review_handoff.v1", workflow)
+        self.assertIn("build_release_candidate_reviewer_handoff", workflow)
         self.assertIn("check_release_candidate_review_bundle", workflow)
         self.assertIn("format_release_candidate_artifact_index_markdown", workflow)
+        self.assertIn("format_release_candidate_reviewer_handoff_markdown", workflow)
         self.assertIn("format_release_review_checklist_markdown", workflow)
         self.assertIn("bundle[\"status\"] == \"pass\"", workflow)
+        self.assertIn("handoff[\"status\"] == \"pass\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
         self.assertIn("Review decision: `reviewable`", workflow)
@@ -1728,6 +1743,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("include-hidden-files: true", workflow)
         self.assertIn("Draft Release Assets", publish_doc)
         self.assertIn("release-bundle-completeness.json", publish_doc)
+        self.assertIn("release-review-handoff.md", publish_doc)
         self.assertIn("Existing published releases are never overwritten.", publish_doc)
         self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", publish_doc)
         self.assertIn("REPOMORI_RELEASE_GPG_PUBLIC_KEY", publish_doc)
@@ -2108,6 +2124,64 @@ class RepoMoriCodecTests(unittest.TestCase):
             profile_error = next(item for item in profile_failed["errors"] if item["code"] == "content:selected_profile")
             self.assertEqual(profile_error["remediation"]["category"], "selected profile")
             self.assertIn("release-policy-selection.md", profile_error["remediation"]["docs"][0])
+
+    def test_release_candidate_reviewer_handoff_summarizes_bundle_review(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        policy = repo_root / "tests/fixtures/release-policy-dev-unsigned.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._release_policy_package(Path(tmp), signed=False)
+            report = verify_release_package(root, policy=policy)
+            evidence = json.loads((root / "release-evidence.json").read_text(encoding="utf-8"))
+            (root / "release-verify-policy.json").write_text(
+                json.dumps(report, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "release-verify-policy.md").write_text(
+                format_release_verify_markdown(report),
+                encoding="utf-8",
+            )
+            (root / "release-review-checklist.md").write_text(
+                format_release_review_checklist_markdown(report, evidence),
+                encoding="utf-8",
+            )
+            (root / "release-artifact-index.md").write_text(
+                format_release_candidate_artifact_index_markdown(report, evidence),
+                encoding="utf-8",
+            )
+            bundle = check_release_candidate_review_bundle(root)
+
+            handoff = build_release_candidate_reviewer_handoff(report, evidence, bundle)
+            markdown = format_release_candidate_reviewer_handoff_markdown(handoff)
+
+            self.assertEqual(handoff["schema_version"], "repomori.release_review_handoff.v1")
+            self.assertEqual(handoff["status"], "pass")
+            self.assertEqual(handoff["profile"], "dev_unsigned")
+            self.assertEqual(handoff["policy"]["outcome"], "policy_passed")
+            self.assertEqual(handoff["completeness"]["status"], "pass")
+            self.assertEqual(handoff["remediation"], [])
+            artifact_paths = {artifact["path"] for artifact in handoff["artifacts"]}
+            self.assertIn("release-artifact-index.md", artifact_paths)
+            self.assertIn("release-review-checklist.md", artifact_paths)
+            self.assertIn("release-bundle-completeness.json", artifact_paths)
+            self.assertIn("docs/release-policy.md#policy-diagnostics", handoff["diagnostics_references"])
+            self.assertIn("# RepoMori Release Candidate Reviewer Handoff", markdown)
+            self.assertIn("Selected policy profile: `dev_unsigned`", markdown)
+            self.assertIn("Policy outcome: `policy_passed`", markdown)
+            self.assertIn("Completeness status: `pass`", markdown)
+            self.assertIn("release-artifact-index.md", markdown)
+            self.assertIn("release-review-checklist.md", markdown)
+            self.assertIn("No bundle completeness remediation is currently reported.", markdown)
+
+            (root / "release-artifact-index.md").unlink()
+            failed_bundle = check_release_candidate_review_bundle(root)
+            failed_handoff = build_release_candidate_reviewer_handoff(report, evidence, failed_bundle)
+            failed_markdown = format_release_candidate_reviewer_handoff_markdown(failed_handoff)
+
+            self.assertEqual(failed_handoff["status"], "fail")
+            self.assertGreater(failed_handoff["completeness"]["remediation_count"], 0)
+            self.assertTrue(failed_handoff["remediation"])
+            self.assertIn("Resolve the remediation list", failed_handoff["next_steps"][0])
+            self.assertIn("Regenerate release-artifact-index.md", failed_markdown)
 
     def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -4203,6 +4277,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_evidence.v1", schema_versions)
         self.assertIn("repomori.release_policy.v1", schema_versions)
         self.assertIn("repomori.release_review_bundle.v1", schema_versions)
+        self.assertIn("repomori.release_review_handoff.v1", schema_versions)
         self.assertIn("repomori.health.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
@@ -4291,6 +4366,13 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(
             release_review_bundle_schema["schema"]["producer"],
             "check_release_candidate_review_bundle",
+        )
+
+        release_review_handoff_schema = schema_catalog("repomori.release_review_handoff.v1")
+        self.assertEqual(release_review_handoff_schema["selected"], "repomori.release_review_handoff.v1")
+        self.assertEqual(
+            release_review_handoff_schema["schema"]["producer"],
+            "build_release_candidate_reviewer_handoff",
         )
 
         verify_schema = schema_catalog("repomori.verify.v1")

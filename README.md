@@ -308,9 +308,12 @@ artifacts and diagnostics references. Before upload, the workflow writes
 `release-bundle-completeness.json` to prove those reviewer artifacts and
 guidance are present; failed completeness reports include remediation guidance
 for the missing policy report, evidence, integrity files, checklist, artifact
-index, selected profile, or diagnostics references. The workflow validates the
-policy JSON/Markdown reviewer guidance before uploading the candidate artifact
-bundle.
+index, selected profile, or diagnostics references. It also writes
+`release-review-handoff.md` and `.json` as the concise first-read reviewer
+summary linking the selected profile, policy outcome, completeness status,
+artifact index, checklist, diagnostics references, and remediation list. The
+workflow validates the policy JSON/Markdown reviewer guidance before uploading
+the candidate artifact bundle.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
 The policy report includes the checked profile name and a reviewer decision:
