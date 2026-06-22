@@ -421,8 +421,16 @@ SCHEMA_DEFINITIONS = (
             "reviewed_artifacts",
             "gate_results",
             "public_safety",
+            "privacy_guard",
             "reviewer_outcome",
         ],
+    },
+    {
+        "schema_version": "repomori.release_review_privacy_guard.v1",
+        "kind": "report",
+        "title": "Release review decision log privacy guard",
+        "producer": "check_release_review_decision_log_privacy",
+        "required_fields": ["schema_version", "status", "checked_surfaces", "summary", "checks", "issues"],
     },
     {
         "schema_version": "repomori.release_evidence.v1",
@@ -11439,7 +11447,7 @@ def build_release_review_decision_log(
     failed_gates = [gate for gate in gate_results if gate.get("status") == "fail"]
     warning_gates = [gate for gate in gate_results if gate.get("status") == "warn"]
     status = "fail" if failed_gates else "warn" if warning_gates else "pass"
-    return {
+    report = {
         "schema_version": "repomori.release_review_decision_log.v1",
         "status": status,
         "summary": {
@@ -11473,6 +11481,13 @@ def build_release_review_decision_log(
             ),
         },
     }
+    privacy_guard = check_release_review_decision_log_privacy(report)
+    report["privacy_guard"] = privacy_guard
+    report["summary"]["privacy_guard_status"] = privacy_guard.get("status")
+    if privacy_guard.get("status") == "fail":
+        report["status"] = "fail"
+        report["summary"]["failed_gate_count"] = report["summary"].get("failed_gate_count", 0) + 1
+    return report
 
 
 def format_release_review_decision_log_markdown(decision_log: dict[str, Any]) -> str:
@@ -11487,6 +11502,11 @@ def format_release_review_decision_log_markdown(decision_log: dict[str, Any]) ->
     reviewer_outcome = (
         decision_log.get("reviewer_outcome")
         if isinstance(decision_log.get("reviewer_outcome"), dict)
+        else {}
+    )
+    privacy_guard = (
+        decision_log.get("privacy_guard")
+        if isinstance(decision_log.get("privacy_guard"), dict)
         else {}
     )
     lines = [
@@ -11504,6 +11524,7 @@ def format_release_review_decision_log_markdown(decision_log: dict[str, Any]) ->
         f"- Final completeness status: `{summary.get('completeness_status')}`",
         f"- Reviewer handoff status: `{summary.get('handoff_status')}`",
         f"- Public-safety/privacy status: `{summary.get('public_safety_status')}`",
+        f"- Privacy guard status: `{summary.get('privacy_guard_status')}`",
         f"- Reviewer outcome: `{summary.get('reviewer_decision')}`",
         "",
         "## Generated Artifacts Reviewed",
@@ -11555,6 +11576,35 @@ def format_release_review_decision_log_markdown(decision_log: dict[str, Any]) ->
     lines.extend(
         [
             "",
+            "## Privacy Guard",
+            "",
+            f"- Status: `{privacy_guard.get('status')}`",
+            f"- Checked surfaces: `{', '.join(privacy_guard.get('checked_surfaces', []))}`",
+            "",
+            "| Check | Status | Detail |",
+            "| --- | --- | --- |",
+        ]
+    )
+    for check in privacy_guard.get("checks", []):
+        if not isinstance(check, dict):
+            continue
+        lines.append(f"| `{check.get('id')}` | `{check.get('status')}` | {check.get('message')} |")
+    issues = [item for item in (privacy_guard.get("issues") or []) if isinstance(item, dict)]
+    if issues:
+        lines.extend(["", "### Privacy Guard Issues", "", "| Code | Surface | Detail |", "| --- | --- | --- |"])
+        for issue in issues:
+            lines.append(f"| `{issue.get('code')}` | `{issue.get('surface')}` | {issue.get('message')} |")
+    else:
+        lines.extend(
+            [
+                "",
+                "No local absolute paths, temp directories, secret-like values, private URLs, or raw evidence dumps were detected.",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
             "## Reviewer Outcome",
             "",
             f"- Final reviewer decision: `{reviewer_outcome.get('decision')}`",
@@ -11565,6 +11615,141 @@ def format_release_review_decision_log_markdown(decision_log: dict[str, Any]) ->
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def check_release_review_decision_log_privacy(
+    decision_log: dict[str, Any],
+    markdown: str | None = None,
+) -> dict[str, Any]:
+    """Check that release decision logs stay reviewer-safe and path/secret-free."""
+
+    checks: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    surfaces = {
+        "json": json.dumps(decision_log, sort_keys=True, ensure_ascii=False),
+    }
+    if markdown is not None:
+        surfaces["markdown"] = markdown
+
+    key_issues = _release_review_privacy_key_issues(decision_log)
+    issues.extend(key_issues)
+    for check_id, pattern, message in _RELEASE_REVIEW_PRIVACY_PATTERNS:
+        matches = [
+            {"surface": surface, "code": check_id, "message": message}
+            for surface, text in surfaces.items()
+            if pattern.search(text)
+        ]
+        issues.extend(matches)
+        checks.append(
+            {
+                "id": check_id,
+                "status": "fail" if matches else "pass",
+                "message": message,
+                "surface_count": len(surfaces),
+                "match_count": len(matches),
+            }
+        )
+    checks.append(
+        {
+            "id": "raw_dump_keys",
+            "status": "fail" if key_issues else "pass",
+            "message": "Decision log does not include raw report, finding, secret, credential, source, or payload dump keys.",
+            "match_count": len(key_issues),
+        }
+    )
+    status = "fail" if issues else "pass"
+    return {
+        "schema_version": "repomori.release_review_privacy_guard.v1",
+        "status": status,
+        "checked_surfaces": sorted(surfaces),
+        "summary": {
+            "issue_count": len(issues),
+            "check_count": len(checks),
+            "json_bytes": len(surfaces["json"].encode("utf-8")),
+            "markdown_bytes": len(surfaces.get("markdown", "").encode("utf-8")) if markdown is not None else 0,
+        },
+        "checks": checks,
+        "issues": issues[:25],
+    }
+
+
+_RELEASE_REVIEW_PRIVACY_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    (
+        "local_absolute_path",
+        re.compile(r"(?i)\b[A-Z]:[\\/][^`\"'\s|)]+|file://|/(?:Users|home|tmp|var/tmp)/[^`\"'\s|)]+"),
+        "No local absolute paths or file URLs are present.",
+    ),
+    (
+        "temp_directory",
+        re.compile(r"(?i)(?:\b[A-Z]:[\\/](?:Temp|Tmp)[\\/]|[\\/](?:tmp|Temp)[\\/])"),
+        "No local temp directory paths are present.",
+    ),
+    (
+        "secret_like_value",
+        re.compile(
+            r"(?is)(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|secret|password|passwd)\b\s*[:=]\s*[\"']?[A-Za-z0-9_./+=-]{8,})"
+        ),
+        "No secret-like assignments, tokens, passwords, or private-key blocks are present.",
+    ),
+    (
+        "private_url",
+        re.compile(
+            r"(?i)\bhttps?://(?:localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|[^/\s`\"']*(?:internal|private|corp|intranet|\.local)(?:[:/\s`\"']|$))"
+        ),
+        "No localhost, private-network, internal, corp, intranet, or .local URLs are present.",
+    ),
+    (
+        "proprietary_marker",
+        re.compile(r"(?i)\b(?:proprietary source|internal implementation detail|confidential dataset|private dataset)\b"),
+        "No proprietary-material markers are present.",
+    ),
+)
+
+
+_RELEASE_REVIEW_PRIVACY_PROHIBITED_KEYS = {
+    "reports",
+    "findings",
+    "ignored_findings",
+    "raw_findings",
+    "source_text",
+    "source_bytes",
+    "source_content",
+    "content",
+    "payload",
+    "base64",
+    "environment",
+    "env",
+    "credentials",
+    "credential",
+    "private_key",
+    "secret",
+    "secrets",
+    "token",
+    "access_token",
+    "api_key",
+    "password",
+    "passwd",
+}
+
+
+def _release_review_privacy_key_issues(value: Any, path: str = "$") -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if str(key).lower() in _RELEASE_REVIEW_PRIVACY_PROHIBITED_KEYS:
+                issues.append(
+                    {
+                        "surface": "json",
+                        "code": "raw_dump_key",
+                        "message": f"Prohibited decision-log key `{key}` appears at `{child_path}`.",
+                    }
+                )
+            issues.extend(_release_review_privacy_key_issues(child, child_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            issues.extend(_release_review_privacy_key_issues(child, f"{path}[{index}]"))
+    return issues
 
 
 def _release_review_decision_artifacts(

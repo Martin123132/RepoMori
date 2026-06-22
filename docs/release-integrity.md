@@ -47,7 +47,10 @@ The release package workflow writes:
   `repomori.release_review_decision_log.v1` evidence trail recording generated
   artifacts reviewed, final completeness and handoff status, selected gate
   results, public-safety/privacy confirmations, and pending reviewer outcome
-  fields.
+  fields. The JSON includes a `repomori.release_review_privacy_guard.v1` result,
+  and workflows assert the JSON/Markdown pair contains no local absolute paths,
+  temp directories, secret-like values, private URLs, raw dump keys, or
+  proprietary-material markers before upload.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when

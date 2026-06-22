@@ -36,6 +36,7 @@ from repomori.codec import (
     check_compatibility,
     check_contract_fixture,
     check_release_candidate_review_bundle,
+    check_release_review_decision_log_privacy,
     check_snapshot_restore,
     archive_handoff_package,
     compare_packs,
@@ -1633,8 +1634,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_review_bundle.v1", workflow)
         self.assertIn("repomori.release_review_handoff.v1", workflow)
         self.assertIn("repomori.release_review_decision_log.v1", workflow)
+        self.assertIn("repomori.release_review_privacy_guard.v1", workflow)
         self.assertIn("build_release_candidate_reviewer_handoff", workflow)
         self.assertIn("build_release_review_decision_log", workflow)
+        self.assertIn("check_release_review_decision_log_privacy", workflow)
         self.assertIn("check_release_candidate_review_bundle", workflow)
         self.assertIn("format_release_candidate_artifact_index_markdown", workflow)
         self.assertIn("format_release_candidate_reviewer_handoff_markdown", workflow)
@@ -1644,6 +1647,8 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("bundle[\"status\"] == \"pass\"", workflow)
         self.assertIn("handoff[\"status\"] == \"pass\"", workflow)
         self.assertIn("decision_log[\"status\"] == \"pass\"", workflow)
+        self.assertIn("privacy_guard[\"status\"] == \"pass\"", workflow)
+        self.assertIn("decision_log[\"privacy_guard\"][\"status\"] == \"pass\"", workflow)
         self.assertIn("decision_log[\"reviewer_outcome\"][\"decision\"] == \"pending\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
@@ -1658,6 +1663,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("RepoMori Release Candidate Artifact Index", workflow)
         self.assertIn("Diagnostics References", workflow)
         self.assertIn("Public-Safety And Privacy Confirmations", workflow)
+        self.assertIn("Privacy Guard", workflow)
         self.assertIn("release-review-checklist.md", release_doc)
         self.assertIn("release-artifact-index.md", release_doc)
         self.assertIn("release-bundle-completeness.json", release_doc)
@@ -1665,6 +1671,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-review-decision-log.md", release_doc)
         self.assertIn("repomori.release_review_handoff.v1", release_doc)
         self.assertIn("repomori.release_review_decision_log.v1", release_doc)
+        self.assertIn("privacy guard", release_doc)
         self.assertIn("completeness feeds the handoff", release_doc)
         self.assertIn("final fail-fast completeness requires", release_doc)
         self.assertIn("Bundle Completeness Remediation", release_doc)
@@ -1740,8 +1747,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_review_bundle.v1", workflow)
         self.assertIn("repomori.release_review_handoff.v1", workflow)
         self.assertIn("repomori.release_review_decision_log.v1", workflow)
+        self.assertIn("repomori.release_review_privacy_guard.v1", workflow)
         self.assertIn("build_release_candidate_reviewer_handoff", workflow)
         self.assertIn("build_release_review_decision_log", workflow)
+        self.assertIn("check_release_review_decision_log_privacy", workflow)
         self.assertIn("check_release_candidate_review_bundle", workflow)
         self.assertIn("format_release_candidate_artifact_index_markdown", workflow)
         self.assertIn("format_release_candidate_reviewer_handoff_markdown", workflow)
@@ -1751,6 +1760,8 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("bundle[\"status\"] == \"pass\"", workflow)
         self.assertIn("handoff[\"status\"] == \"pass\"", workflow)
         self.assertIn("decision_log[\"status\"] == \"pass\"", workflow)
+        self.assertIn("privacy_guard[\"status\"] == \"pass\"", workflow)
+        self.assertIn("decision_log[\"privacy_guard\"][\"status\"] == \"pass\"", workflow)
         self.assertIn("decision_log[\"reviewer_outcome\"][\"decision\"] == \"pending\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
@@ -1765,6 +1776,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("RepoMori Release Candidate Artifact Index", workflow)
         self.assertIn("Diagnostics References", workflow)
         self.assertIn("Public-Safety And Privacy Confirmations", workflow)
+        self.assertIn("Privacy Guard", workflow)
         self.assertIn("release-candidate.json", workflow)
         self.assertIn("release-candidate.md", workflow)
         self.assertIn("include-hidden-files: true", workflow)
@@ -2310,6 +2322,9 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(decision_log["summary"]["completeness_status"], "pass")
             self.assertEqual(decision_log["summary"]["handoff_status"], "pass")
             self.assertEqual(decision_log["summary"]["public_safety_status"], "pass")
+            self.assertEqual(decision_log["summary"]["privacy_guard_status"], "pass")
+            self.assertEqual(decision_log["privacy_guard"]["schema_version"], "repomori.release_review_privacy_guard.v1")
+            self.assertEqual(decision_log["privacy_guard"]["status"], "pass")
             self.assertEqual(decision_log["reviewer_outcome"]["decision"], "pending")
             artifact_paths = {artifact["path"] for artifact in decision_log["reviewed_artifacts"]}
             self.assertIn("release-review-handoff.md", artifact_paths)
@@ -2327,9 +2342,74 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(confirmation_statuses["decision_log_generation"], "pass")
             self.assertIn("# RepoMori Release Review Decision Log", markdown)
             self.assertIn("Public-Safety And Privacy Confirmations", markdown)
+            self.assertIn("Privacy Guard", markdown)
+            self.assertIn("No local absolute paths, temp directories, secret-like values", markdown)
             self.assertIn("release-review-handoff.md", markdown)
             self.assertIn("release-bundle-completeness.json", markdown)
             self.assertIn("Final reviewer decision: `pending`", markdown)
+
+    def test_release_review_decision_log_privacy_guard_blocks_leaks(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        policy = repo_root / "tests/fixtures/release-policy-dev-unsigned.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._release_policy_package(Path(tmp), signed=False)
+            report = verify_release_package(root, policy=policy)
+            evidence = json.loads((root / "release-evidence.json").read_text(encoding="utf-8"))
+            (root / "release-verify-policy.json").write_text(
+                json.dumps(report, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "release-verify-policy.md").write_text(
+                format_release_verify_markdown(report),
+                encoding="utf-8",
+            )
+            (root / "release-review-checklist.md").write_text(
+                format_release_review_checklist_markdown(report, evidence),
+                encoding="utf-8",
+            )
+            (root / "release-artifact-index.md").write_text(
+                format_release_candidate_artifact_index_markdown(report, evidence),
+                encoding="utf-8",
+            )
+            provisional = check_release_candidate_review_bundle(root, require_handoff=False)
+            handoff = build_release_candidate_reviewer_handoff(report, evidence, provisional)
+            (root / "release-review-handoff.json").write_text(
+                json.dumps(handoff, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "release-review-handoff.md").write_text(
+                format_release_candidate_reviewer_handoff_markdown(handoff),
+                encoding="utf-8",
+            )
+            bundle = check_release_candidate_review_bundle(root)
+            clean = build_release_review_decision_log(report, evidence, bundle, handoff)
+            clean_markdown = format_release_review_decision_log_markdown(clean)
+
+            clean_guard = check_release_review_decision_log_privacy(clean, clean_markdown)
+
+            self.assertEqual(clean_guard["status"], "pass")
+            leaky = json.loads(json.dumps(clean))
+            fake_secret_value = "sk-" + "thisisnotrealbutlookslikesecret"
+            leaky["reviewed_artifacts"][0]["evidence_point"] = (
+                "C:\\Users\\ollet\\AppData\\Local\\Temp\\private.txt "
+                f"api_key={fake_secret_value}"
+            )
+            leaky["reports"] = {"release_check": {"findings": ["raw evidence dump"]}}
+            leaky_markdown = clean_markdown + "\nhttps://internal.example.local/private\n"
+
+            guard = check_release_review_decision_log_privacy(leaky, leaky_markdown)
+
+            self.assertEqual(guard["schema_version"], "repomori.release_review_privacy_guard.v1")
+            self.assertEqual(guard["status"], "fail")
+            codes = {issue["code"] for issue in guard["issues"]}
+            self.assertIn("local_absolute_path", codes)
+            self.assertIn("temp_directory", codes)
+            self.assertIn("secret_like_value", codes)
+            self.assertIn("private_url", codes)
+            self.assertIn("raw_dump_key", codes)
+            serialized_guard = json.dumps(guard)
+            self.assertNotIn(fake_secret_value, serialized_guard)
+            self.assertNotIn("C:\\Users\\ollet", serialized_guard)
 
     def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -4427,6 +4507,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_review_bundle.v1", schema_versions)
         self.assertIn("repomori.release_review_handoff.v1", schema_versions)
         self.assertIn("repomori.release_review_decision_log.v1", schema_versions)
+        self.assertIn("repomori.release_review_privacy_guard.v1", schema_versions)
         self.assertIn("repomori.health.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
@@ -4532,6 +4613,15 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(
             release_review_decision_log_schema["schema"]["producer"],
             "build_release_review_decision_log",
+        )
+        release_review_privacy_guard_schema = schema_catalog("repomori.release_review_privacy_guard.v1")
+        self.assertEqual(
+            release_review_privacy_guard_schema["selected"],
+            "repomori.release_review_privacy_guard.v1",
+        )
+        self.assertEqual(
+            release_review_privacy_guard_schema["schema"]["producer"],
+            "check_release_review_decision_log_privacy",
         )
 
         verify_schema = schema_catalog("repomori.verify.v1")

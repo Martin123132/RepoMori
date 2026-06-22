@@ -125,6 +125,11 @@ The workflow then writes `release-review-decision-log.json` and
 trail: it records which generated artifacts were reviewed, final completeness
 and handoff status, selected gate results, public-safety/privacy confirmations,
 and pending reviewer outcome fields without publishing a release.
+The decision log also embeds a privacy guard result using
+`repomori.release_review_privacy_guard.v1`, and the workflow scans both the JSON
+and Markdown before upload. The guard fails if the generated log contains local
+absolute paths, temp directories, secret-like values, private URLs, raw evidence
+dump keys, or proprietary-material markers.
 
 ## Bundle Completeness Remediation
 
@@ -141,6 +146,7 @@ workflow. Common failure groups are:
 | artifact index and diagnostics references | `release-artifact-index.md` is missing the policy report, checklist, matrix, diagnostics guide, or evidence references. | Regenerate the artifact index and confirm links to the selection guide, matrix, diagnostics guide, integrity guide, and evidence runbook. |
 | reviewer handoff | `release-review-handoff.json` or `.md` is missing, stale, or no longer matches the selected profile/policy outcome. | Regenerate the handoff after the policy report, evidence, artifact index, checklist, and provisional completeness report are current. |
 | reviewer decision log | `release-review-decision-log.json` or `.md` is missing from the uploaded artifacts. | Regenerate the decision log after final completeness and handoff artifacts are current; keep the final reviewer outcome pending until a maintainer fills it in. |
+| decision log privacy guard | `release-review-decision-log.json` reports a failed privacy guard or the workflow `privacy_guard` assertion fails. | Remove local paths, temp paths, secret-like values, private URLs, raw dump keys, or proprietary material from the generated decision log source fields, then regenerate it. |
 | selected profile | The policy report is present but `policy.profile` is empty. | Use one of the checked policy profiles or fix the policy JSON before approving the candidate. |
 
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and

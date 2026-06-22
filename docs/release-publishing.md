@@ -74,7 +74,11 @@ The draft release receives:
 - optional `repomori-release-public-key.asc` for reviewers
 
 The workflow also uploads a CI artifact bundle containing the same release
-package plus release-check JSON, Markdown, and drift telemetry.
+package plus release-check JSON, Markdown, and drift telemetry. The release
+review decision log includes a privacy guard, and the workflow asserts the JSON
+and Markdown do not contain local paths, temp directories, secret-like values,
+private URLs, raw dump keys, or proprietary-material markers before assets are
+attached to the draft.
 
 ## Signing Secrets
 
