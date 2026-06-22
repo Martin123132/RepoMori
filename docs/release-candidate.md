@@ -87,7 +87,12 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 
 The workflow validates that `release-verify-policy.json` contains a
 `policy.review.decision` of `reviewable` and that `release-verify-policy.md`
-renders the same reviewer guidance before the artifact bundle is uploaded.
+renders the same reviewer guidance before the artifact bundle is uploaded. The
+Markdown policy artifact also includes a profile preflight section linking to
+[release-policy-selection.md](release-policy-selection.md),
+[release-policy-matrix.md](release-policy-matrix.md), and
+[release-policy.md#policy-diagnostics](release-policy.md#policy-diagnostics)
+so reviewers can confirm the selected profile before approving the candidate.
 
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
 SBOM verification guidance. See [release-signing.md](release-signing.md) for

@@ -285,6 +285,10 @@ jobs:
           assert report["policy"]["review"]["profile"]
           assert "## Policy" in markdown
           assert "Review decision: `reviewable`" in markdown
+          assert "### Policy Profile Preflight" in markdown
+          assert "docs/release-policy-selection.md" in markdown
+          assert "docs/release-policy-matrix.md" in markdown
+          assert "docs/release-policy.md#policy-diagnostics" in markdown
           assert "### Reviewer Next Steps" in markdown
           print("release policy gate passed")
           PY

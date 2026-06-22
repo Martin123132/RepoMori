@@ -9850,6 +9850,13 @@ def format_release_verify_markdown(report: dict[str, Any]) -> str:
             f"`{summary.get('observed_warning_count', 0)}` / `{summary.get('observed_error_count', 0)}`"
         )
         lines.append(f"- Violations: `{summary.get('violation_count', 0)}`")
+        lines.extend(["", "### Policy Profile Preflight", ""])
+        lines.append("- Selection guide: [docs/release-policy-selection.md](docs/release-policy-selection.md)")
+        lines.append("- Expected outcomes: [docs/release-policy-matrix.md](docs/release-policy-matrix.md)")
+        lines.append("- Blocked diagnostics: [docs/release-policy.md#policy-diagnostics](docs/release-policy.md#policy-diagnostics)")
+        lines.append("- Safe default: start with `basic` or `dev_unsigned` for unsigned development candidates.")
+        lines.append("- Signed lane: use `enterprise_signed` only when detached signatures and public key are present.")
+        lines.append("- Strict lane: use `strict_no_warnings` only when any warning should block approval.")
         next_steps = review.get("next_steps") if isinstance(review.get("next_steps"), list) else []
         if next_steps:
             lines.extend(["", "### Reviewer Next Steps", ""])
