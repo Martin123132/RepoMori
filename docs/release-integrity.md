@@ -33,7 +33,9 @@ The release package workflow writes:
   artifacts, selected profile, policy outcome, and diagnostics references.
 - `release-bundle-completeness.json`: `repomori.release_review_bundle.v1`
   report proving expected reviewer artifacts and guidance are present before
-  upload.
+  upload. Failed reports include reviewer-facing remediation grouped by missing
+  policy report, evidence, checksum/provenance/SBOM material, checklist,
+  artifact index, selected profile, and diagnostics-reference failures.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when

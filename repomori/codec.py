@@ -10792,6 +10792,103 @@ def format_release_candidate_artifact_index_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _release_review_bundle_remediation(check_id: str, path: str | None = None) -> dict[str, Any]:
+    """Return reviewer-facing remediation guidance for a bundle check."""
+
+    policy_report_ids = {
+        "artifact:release-verify-policy.json",
+        "artifact:release-verify-policy.md",
+        "json:release-verify-policy.json",
+        "schema:policy_report",
+        "content:policy_markdown",
+    }
+    evidence_ids = {
+        "artifact:release-evidence.json",
+        "artifact:release-evidence.md",
+        "json:release-evidence.json",
+        "schema:evidence",
+    }
+    integrity_ids = {
+        "artifact:checksums.txt",
+        "artifact:release-provenance.json",
+        "artifact:sbom.spdx.json",
+        "artifact:release-candidate.json",
+        "artifact:release-candidate.md",
+        "json:release-candidate.json",
+        "json:release-provenance.json",
+        "schema:release_candidate",
+        "schema:provenance",
+        "content:checksums",
+    }
+    checklist_ids = {"artifact:release-review-checklist.md", "content:review_checklist"}
+    index_ids = {"artifact:release-artifact-index.md", "content:artifact_index"}
+    dist_ids = {"artifact:dist_wheel", "artifact:dist_source_archive"}
+
+    if check_id == "release_review_root_missing":
+        return {
+            "category": "candidate package root",
+            "next_step": "Point the check at the release candidate package directory that contains release-candidate.json.",
+            "docs": ["docs/release-candidate.md"],
+        }
+    if check_id in policy_report_ids:
+        return {
+            "category": "policy report",
+            "next_step": "Re-run the release policy gate with verify-release --policy so release-verify-policy.json and release-verify-policy.md are regenerated.",
+            "docs": ["docs/release-policy.md", "docs/release-candidate.md#bundle-completeness-remediation"],
+        }
+    if check_id == "content:selected_profile":
+        return {
+            "category": "selected profile",
+            "next_step": "Use a checked release policy profile and confirm release-verify-policy.json includes policy.profile before approving the candidate.",
+            "docs": ["docs/release-policy-selection.md", "docs/release-policy-matrix.md"],
+        }
+    if check_id in evidence_ids:
+        return {
+            "category": "release evidence",
+            "next_step": "Re-run python -m repomori release-evidence for the candidate package after release-check and verify-release artifacts exist.",
+            "docs": ["docs/release-evidence.md", "docs/release-candidate.md#bundle-completeness-remediation"],
+        }
+    if check_id in integrity_ids:
+        return {
+            "category": "checksums, provenance, and SBOM",
+            "next_step": "Regenerate the release package artifacts so checksums.txt, release-provenance.json, sbom.spdx.json, and release-candidate.json agree with the dist files.",
+            "docs": ["docs/release-integrity.md", "docs/release-candidate.md#bundle-completeness-remediation"],
+        }
+    if check_id in checklist_ids:
+        return {
+            "category": "reviewer checklist",
+            "next_step": "Regenerate release-review-checklist.md after the policy report and release evidence are present.",
+            "docs": ["docs/release-candidate.md#bundle-completeness-remediation"],
+        }
+    if check_id in index_ids:
+        return {
+            "category": "artifact index and diagnostics references",
+            "next_step": "Regenerate release-artifact-index.md and confirm it links the selected profile, policy report, checklist, matrix, diagnostics guide, and release evidence.",
+            "docs": [
+                "docs/release-policy-selection.md",
+                "docs/release-policy-matrix.md",
+                "docs/release-policy.md#policy-diagnostics",
+            ],
+        }
+    if check_id in dist_ids:
+        return {
+            "category": "build artifacts",
+            "next_step": "Re-run the candidate build step so dist contains a wheel and source archive before integrity artifacts are written.",
+            "docs": ["docs/release-candidate.md"],
+        }
+    if check_id.startswith("json:"):
+        return {
+            "category": "parseable JSON",
+            "next_step": f"Inspect {path or check_id.removeprefix('json:')} and regenerate it from the workflow step that produced it.",
+            "docs": ["docs/release-candidate.md#bundle-completeness-remediation"],
+        }
+    return {
+        "category": "release reviewer bundle",
+        "next_step": "Review the failing check, regenerate the corresponding release candidate artifact, and rerun the candidate workflow.",
+        "docs": ["docs/release-candidate.md#bundle-completeness-remediation"],
+    }
+
+
 def check_release_candidate_review_bundle(root: Path | str) -> dict[str, Any]:
     """Verify that a release candidate contains the reviewer-facing bundle."""
 
@@ -10800,16 +10897,17 @@ def check_release_candidate_review_bundle(root: Path | str) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
 
     def add_check(check_id: str, status: str, message: str, **details: Any) -> None:
-        checks.append(
-            {
-                "id": check_id,
-                "status": status,
-                "message": message,
-                "details": details,
-            }
-        )
+        check = {
+            "id": check_id,
+            "status": status,
+            "message": message,
+            "details": details,
+        }
         if status == "fail":
-            errors.append({"code": check_id, "message": message, **details})
+            remediation = _release_review_bundle_remediation(check_id, details.get("path"))
+            check["remediation"] = remediation
+            errors.append({"code": check_id, "message": message, "remediation": remediation, **details})
+        checks.append(check)
 
     if not root_path.is_dir():
         add_check(
@@ -10896,6 +10994,13 @@ def check_release_candidate_review_bundle(root: Path | str) -> dict[str, Any]:
         expected="repomori.release_evidence.v1",
         actual=evidence_report.get("schema_version") if isinstance(evidence_report, dict) else None,
     )
+    policy = policy_report.get("policy") if isinstance(policy_report, dict) and isinstance(policy_report.get("policy"), dict) else {}
+    add_check(
+        "content:selected_profile",
+        "pass" if policy.get("profile") else "fail",
+        "release-verify-policy.json includes the selected policy profile.",
+        path="release-verify-policy.json",
+    )
 
     checksums_text = _release_review_bundle_read_text(root_path / "checksums.txt")
     add_check(
@@ -10960,6 +11065,17 @@ def _release_review_bundle_report(
     policy = policy_report.get("policy") if isinstance(policy_report, dict) and isinstance(policy_report.get("policy"), dict) else {}
     diagnostics = policy.get("diagnostics") if isinstance(policy.get("diagnostics"), dict) else {}
     review = policy.get("review") if isinstance(policy.get("review"), dict) else {}
+    remediation: list[dict[str, Any]] = []
+    seen_remediation: set[tuple[str, str]] = set()
+    for error in errors:
+        item = error.get("remediation")
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("category") or ""), str(item.get("next_step") or ""))
+        if key in seen_remediation:
+            continue
+        seen_remediation.add(key)
+        remediation.append(item)
     status = "pass" if not errors else "fail"
     return {
         "schema_version": "repomori.release_review_bundle.v1",
@@ -10973,9 +11089,11 @@ def _release_review_bundle_report(
             "policy_outcome": diagnostics.get("outcome") if diagnostics else None,
             "review_decision": review.get("decision") if review else None,
             "release_evidence_status": evidence_report.get("status") if isinstance(evidence_report, dict) else None,
+            "remediation_count": len(remediation),
         },
         "checks": checks,
         "errors": errors,
+        "remediation": remediation,
     }
 
 
@@ -10989,15 +11107,24 @@ def _release_review_bundle_load_json(
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
+        remediation = _release_review_bundle_remediation(f"json:{name}", name)
         checks.append(
             {
                 "id": f"json:{name}",
                 "status": "fail",
                 "message": f"{name} is missing or not parseable JSON.",
                 "details": {"path": name, "error": str(exc)},
+                "remediation": remediation,
             }
         )
-        errors.append({"code": f"json:{name}", "message": f"{name} is missing or not parseable JSON.", "path": name})
+        errors.append(
+            {
+                "code": f"json:{name}",
+                "message": f"{name} is missing or not parseable JSON.",
+                "path": name,
+                "remediation": remediation,
+            }
+        )
         return None
     checks.append(
         {
@@ -11036,12 +11163,15 @@ def _release_review_bundle_text_check(
         }
     )
     if missing:
+        remediation = _release_review_bundle_remediation(check_id, name)
+        checks[-1]["remediation"] = remediation
         errors.append(
             {
                 "code": check_id,
                 "message": f"{name} is missing expected reviewer guidance.",
                 "path": name,
                 "missing": missing,
+                "remediation": remediation,
             }
         )
 

@@ -1640,6 +1640,10 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-review-checklist.md", release_doc)
         self.assertIn("release-artifact-index.md", release_doc)
         self.assertIn("release-bundle-completeness.json", release_doc)
+        self.assertIn("Bundle Completeness Remediation", release_doc)
+        self.assertIn("failed completeness reports include remediation guidance", readme)
+        self.assertIn("selected profile", release_doc)
+        self.assertIn("diagnostics references", release_doc)
         self.assertIn("fill-in reviewer decision log", release_doc)
         self.assertIn("first-stop reviewer map", release_doc)
         self.assertIn("Sign release integrity artifacts", workflow)
@@ -2070,14 +2074,40 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(complete["status"], "pass")
             self.assertEqual(complete["summary"]["selected_profile"], "dev_unsigned")
             self.assertEqual(complete["summary"]["policy_outcome"], "policy_passed")
+            self.assertEqual(complete["summary"]["remediation_count"], 0)
             self.assertEqual(complete["errors"], [])
+            self.assertEqual(complete["remediation"], [])
 
             (root / "release-artifact-index.md").unlink()
             failed = check_release_candidate_review_bundle(root)
 
             self.assertEqual(failed["status"], "fail")
             self.assertGreater(failed["summary"]["error_count"], 0)
-            self.assertIn("artifact:release-artifact-index.md", {item["code"] for item in failed["errors"]})
+            artifact_error = next(item for item in failed["errors"] if item["code"] == "artifact:release-artifact-index.md")
+            self.assertEqual(artifact_error["remediation"]["category"], "artifact index and diagnostics references")
+            self.assertIn("Regenerate release-artifact-index.md", artifact_error["remediation"]["next_step"])
+            self.assertGreater(failed["summary"]["remediation_count"], 0)
+
+            (root / "release-artifact-index.md").write_text("# RepoMori Release Candidate Artifact Index\n", encoding="utf-8")
+            diagnostics_failed = check_release_candidate_review_bundle(root)
+            diagnostics_error = next(item for item in diagnostics_failed["errors"] if item["code"] == "content:artifact_index")
+            self.assertEqual(
+                diagnostics_error["remediation"]["category"],
+                "artifact index and diagnostics references",
+            )
+            self.assertIn("docs/release-policy.md#policy-diagnostics", diagnostics_error["remediation"]["docs"])
+
+            (root / "release-artifact-index.md").write_text(
+                format_release_candidate_artifact_index_markdown(report, evidence),
+                encoding="utf-8",
+            )
+            policy_payload = json.loads((root / "release-verify-policy.json").read_text(encoding="utf-8"))
+            policy_payload["policy"].pop("profile", None)
+            (root / "release-verify-policy.json").write_text(json.dumps(policy_payload, indent=2) + "\n", encoding="utf-8")
+            profile_failed = check_release_candidate_review_bundle(root)
+            profile_error = next(item for item in profile_failed["errors"] if item["code"] == "content:selected_profile")
+            self.assertEqual(profile_error["remediation"]["category"], "selected profile")
+            self.assertIn("release-policy-selection.md", profile_error["remediation"]["docs"][0])
 
     def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
