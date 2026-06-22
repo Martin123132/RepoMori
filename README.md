@@ -84,6 +84,10 @@ Generated outputs should stay under `D:\Temp` or hidden `.repomori-*` folders
 inside the repo, so public release checks do not trip on visible artifact
 directories. `pip install .` may leave `build/` and `repomori.egg-info/` in
 the checkout; remove those generated folders before running `release-check`.
+RepoMori docs and workflows use `D:\...` for generated packs, smoke outputs,
+rehearsals, and release artifacts; boot-drive path strings are limited to
+privacy-scan fixtures that demonstrate what should be detected, not where to
+save files.
 
 ## Local Validation
 

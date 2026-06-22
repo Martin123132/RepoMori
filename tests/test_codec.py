@@ -3033,6 +3033,50 @@ class RepoMoriCodecTests(unittest.TestCase):
         ):
             self.assertIn(pattern, gitignore)
 
+    def test_docs_and_workflows_keep_generated_paths_on_d_drive(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        checked_paths = [
+            repo_root / "README.md",
+            *sorted((repo_root / "docs").glob("*.md")),
+            *sorted((repo_root / ".github/workflows").glob("*.yml")),
+        ]
+        allowed_fragments = {
+            "docs/baseline-drift-watchlist.md": (
+                "`D:\\Temp` vs `C:\\Temp`",
+            ),
+            "docs/public-safety-scan.md": (
+                "local path traces such as `C:\\Users\\...`, OneDrive paths, and `D:\\Temp\\...`",
+            ),
+            ".github/workflows/tests.yml": (
+                '"C:\\\\Users\\\\reviewer",',
+            ),
+        }
+        forbidden_markers = (
+            "C:\\path",
+            "C:/path",
+            "C:\\Dev",
+            "C:/Dev",
+            "C:\\Temp",
+            "C:/Temp",
+            "C:\\Users\\",
+            "C:/Users/",
+            "OneDrive",
+        )
+
+        violations: list[str] = []
+        for path in checked_paths:
+            rel = path.relative_to(repo_root).as_posix()
+            text = path.read_text(encoding="utf-8")
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if any(fragment in line for fragment in allowed_fragments.get(rel, ())):
+                    continue
+                normalized_line = line.replace("\\\\", "\\")
+                for marker in forbidden_markers:
+                    if marker in normalized_line:
+                        violations.append(f"{rel}:{line_no}: avoid C-drive generated-output examples ({marker})")
+
+        self.assertEqual([], violations)
+
     def test_run_release_health_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release-health"

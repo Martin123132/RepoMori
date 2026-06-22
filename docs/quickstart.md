@@ -9,6 +9,9 @@ python -m repomori demo --out D:\Temp\repomori-demo --force --json
 ```
 
 That command creates a tiny demo repository, builds `demo.repomori`, verifies the pack, writes inspection and context reports, runs a memory cycle, and checks the MCP tool bridge.
+Generated packs, reports, rehearsals, and smoke outputs should use `D:\...`
+paths or hidden `.repomori-*` folders inside the repo. Boot-drive path strings
+in RepoMori docs are privacy-scan examples, not save locations.
 
 Inspect the output:
 
