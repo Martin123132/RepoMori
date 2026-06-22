@@ -433,6 +433,21 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "status", "checked_surfaces", "summary", "checks", "issues"],
     },
     {
+        "schema_version": "repomori.release_review_privacy_guard_demo.v1",
+        "kind": "report",
+        "title": "Synthetic release review privacy guard dry-run",
+        "producer": "build_release_review_privacy_guard_demo",
+        "required_fields": [
+            "schema_version",
+            "status",
+            "mode",
+            "expected_guard_status",
+            "privacy_guard",
+            "summary",
+            "synthetic_inputs",
+        ],
+    },
+    {
         "schema_version": "repomori.release_evidence.v1",
         "kind": "report",
         "title": "Release evidence bundle",
@@ -11683,6 +11698,251 @@ def check_release_review_decision_log_privacy(
         },
         "checks": checks,
         "issues": issues[:25],
+    }
+
+
+def build_release_review_privacy_guard_demo(*, mode: str = "clean") -> dict[str, Any]:
+    """Run a synthetic release-review privacy guard demo without publishing anything."""
+
+    if mode not in {"clean", "fail"}:
+        raise ValueError("mode must be 'clean' or 'fail'")
+
+    decision_log = _synthetic_release_review_privacy_guard_demo_log()
+    markdown = format_release_review_decision_log_markdown(decision_log)
+    synthetic_inputs = [
+        {
+            "category": "clean_decision_log",
+            "placeholder": "SYNTHETIC_REVIEW_DECISION_LOG",
+            "included_in_mode": "clean,fail",
+        }
+    ]
+    expected_guard_status = "pass"
+
+    if mode == "fail":
+        expected_guard_status = "fail"
+        leaky = json.loads(json.dumps(decision_log))
+        local_path = "C:" + "\\" + "Users" + "\\" + "reviewer" + "\\" + "Temp" + "\\" + "SYNTHETIC_PATH.txt"
+        secret_assignment = "api" + "_key=" + "s" + "k-" + "syntheticplaceholdernotreal"
+        private_url = "https://" + "internal" + ".example" + ".local/synthetic"
+        proprietary_marker = "proprietary" + " source"
+        leaky["reviewed_artifacts"][0]["evidence_point"] = local_path + " " + secret_assignment
+        leaky["public_safety"]["confirmations"][0]["detail"] = proprietary_marker
+        leaky["reports"] = {"release_check": {"findings": ["SYNTHETIC_RAW_DUMP_PLACEHOLDER"]}}
+        markdown = markdown + "\n" + private_url + "\n"
+        decision_log = leaky
+        synthetic_inputs = [
+            {
+                "category": "local_absolute_path",
+                "placeholder": "LOCAL_ABSOLUTE_PATH_PLACEHOLDER",
+                "included_in_mode": "fail",
+            },
+            {
+                "category": "temp_directory",
+                "placeholder": "TEMP_DIRECTORY_PLACEHOLDER",
+                "included_in_mode": "fail",
+            },
+            {
+                "category": "secret_like_value",
+                "placeholder": "SECRET_ASSIGNMENT_PLACEHOLDER",
+                "included_in_mode": "fail",
+            },
+            {
+                "category": "private_url",
+                "placeholder": "PRIVATE_URL_PLACEHOLDER",
+                "included_in_mode": "fail",
+            },
+            {
+                "category": "proprietary_marker",
+                "placeholder": "PROPRIETARY_MARKER_PLACEHOLDER",
+                "included_in_mode": "fail",
+            },
+            {
+                "category": "raw_dump_key",
+                "placeholder": "RAW_DUMP_KEY_PLACEHOLDER",
+                "included_in_mode": "fail",
+            },
+        ]
+
+    privacy_guard = check_release_review_decision_log_privacy(decision_log, markdown)
+    demo_status = "pass" if privacy_guard.get("status") == expected_guard_status else "fail"
+    guard_summary = privacy_guard.get("summary") if isinstance(privacy_guard.get("summary"), dict) else {}
+    return {
+        "schema_version": "repomori.release_review_privacy_guard_demo.v1",
+        "status": demo_status,
+        "mode": mode,
+        "expected_guard_status": expected_guard_status,
+        "privacy_guard": privacy_guard,
+        "summary": {
+            "demo_status": demo_status,
+            "guard_status": privacy_guard.get("status"),
+            "expected_guard_status": expected_guard_status,
+            "issue_count": guard_summary.get("issue_count", 0),
+            "failed_check_count": guard_summary.get("failed_check_count", 0),
+            "issue_counts_by_code": guard_summary.get("issue_counts_by_code", {}),
+            "redaction_model": "categories_and_counts_only",
+        },
+        "synthetic_inputs": synthetic_inputs,
+        "reviewer_guidance": [
+            "Use this dry-run before release-candidate review to confirm the privacy guard path is understandable.",
+            "The failing mode uses synthetic runtime placeholders and should report categories/counts without echoing matched values.",
+            "This command does not tag, publish, upload release assets, call a network, or inspect private release material.",
+        ],
+    }
+
+
+def format_release_review_privacy_guard_demo_markdown(report: dict[str, Any]) -> str:
+    """Render a synthetic release-review privacy guard demo report."""
+
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    privacy_guard = report.get("privacy_guard") if isinstance(report.get("privacy_guard"), dict) else {}
+    privacy_summary = privacy_guard.get("summary") if isinstance(privacy_guard.get("summary"), dict) else {}
+    issue_counts = (
+        privacy_summary.get("issue_counts_by_code")
+        if isinstance(privacy_summary.get("issue_counts_by_code"), dict)
+        else {}
+    )
+    lines = [
+        "# RepoMori Release Review Privacy Guard Demo",
+        "",
+        "This synthetic dry-run exercises the release-review decision-log privacy guard without publishing anything.",
+        "",
+        "## Result",
+        "",
+        f"- Demo status: `{report.get('status')}`",
+        f"- Mode: `{report.get('mode')}`",
+        f"- Expected guard status: `{report.get('expected_guard_status')}`",
+        f"- Observed guard status: `{privacy_guard.get('status')}`",
+        f"- Redaction model: `{summary.get('redaction_model')}`",
+        "",
+        "## Guard Summary",
+        "",
+        f"- Issue count: `{privacy_summary.get('issue_count', 0)}`",
+        f"- Failed check count: `{privacy_summary.get('failed_check_count', 0)}`",
+        f"- Checked surfaces: `{', '.join(privacy_guard.get('checked_surfaces', []))}`",
+    ]
+    if issue_counts:
+        lines.extend(["", "### Issue Counts By Category", "", "| Category | Count |", "| --- | ---: |"])
+        for code, count in sorted(issue_counts.items()):
+            lines.append(f"| `{code}` | {count} |")
+    else:
+        lines.extend(["", "No privacy guard issues were detected in this synthetic clean demo."])
+
+    lines.extend(["", "## Synthetic Inputs", "", "| Category | Placeholder | Mode |", "| --- | --- | --- |"])
+    for item in report.get("synthetic_inputs", []):
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            f"| `{item.get('category')}` | `{item.get('placeholder')}` | `{item.get('included_in_mode')}` |"
+        )
+
+    lines.extend(["", "## Reviewer Notes", ""])
+    for note in report.get("reviewer_guidance", []):
+        lines.append(f"- {note}")
+    lines.extend(
+        [
+            "",
+            "The failing mode is expected to show a failed embedded guard while the dry-run report itself remains `pass` when that failure was detected and redacted correctly.",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _synthetic_release_review_privacy_guard_demo_log() -> dict[str, Any]:
+    privacy_guard = {
+        "schema_version": "repomori.release_review_privacy_guard.v1",
+        "status": "pass",
+        "checked_surfaces": ["json", "markdown"],
+        "summary": {
+            "issue_count": 0,
+            "failed_check_count": 0,
+            "issue_counts_by_code": {},
+            "check_count": len(_RELEASE_REVIEW_PRIVACY_PATTERNS) + 1,
+            "json_bytes": 0,
+            "markdown_bytes": 0,
+        },
+        "checks": [],
+        "issues": [],
+    }
+    return {
+        "schema_version": "repomori.release_review_decision_log.v1",
+        "status": "pass",
+        "summary": {
+            "selected_profile": "synthetic_clean",
+            "policy_status": "pass",
+            "policy_outcome": "policy_passed",
+            "policy_review_decision": "reviewable",
+            "release_verify_status": "pass",
+            "release_evidence_status": "pass",
+            "release_check_status": "pass",
+            "completeness_status": "pass",
+            "handoff_status": "pass",
+            "public_safety_status": "pass",
+            "privacy_guard_status": "pass",
+            "reviewed_artifact_count": 3,
+            "gate_count": 3,
+            "failed_gate_count": 0,
+            "warning_gate_count": 0,
+            "reviewer_decision": "pending",
+        },
+        "reviewed_artifacts": [
+            {
+                "path": "release-review-decision-log.json",
+                "evidence_point": "Synthetic decision-log JSON artifact.",
+                "gate_status": "pass",
+                "reviewer_status": "pending",
+                "present_in_evidence": True,
+            },
+            {
+                "path": "release-review-decision-log.md",
+                "evidence_point": "Synthetic decision-log Markdown artifact.",
+                "gate_status": "pass",
+                "reviewer_status": "pending",
+                "present_in_evidence": True,
+            },
+            {
+                "path": "release-bundle-completeness.json",
+                "evidence_point": "Synthetic final completeness artifact.",
+                "gate_status": "pass",
+                "reviewer_status": "pending",
+                "present_in_evidence": True,
+            },
+        ],
+        "gate_results": [
+            {
+                "id": "release_policy",
+                "status": "pass",
+                "detail": "Synthetic policy gate passed.",
+            },
+            {
+                "id": "bundle_completeness",
+                "status": "pass",
+                "detail": "Synthetic bundle completeness gate passed.",
+            },
+            {
+                "id": "public_safety_privacy",
+                "status": "pass",
+                "detail": "Synthetic public-safety and privacy gate passed.",
+            },
+        ],
+        "public_safety": {
+            "status": "pass",
+            "confirmations": [
+                {
+                    "id": "decision_log_generation",
+                    "label": "Decision log generation",
+                    "status": "pass",
+                    "detail": "Synthetic decision log generated from sanitized fixture values.",
+                }
+            ],
+        },
+        "privacy_guard": privacy_guard,
+        "reviewer_outcome": {
+            "decision": "pending",
+            "reviewer": "",
+            "reviewed_at": "",
+            "notes": "",
+            "approval_warning": "Synthetic dry-run only; do not treat this as release approval.",
+        },
     }
 
 

@@ -185,6 +185,22 @@ If a failure summary includes the actual matched value instead of a category and
 count, treat that as a release blocker and fix the guard before reviewing the
 candidate.
 
+### Local Privacy Guard Dry-Run
+
+Maintainers can exercise the guard before a real release-candidate run with
+synthetic clean and failing inputs:
+
+```powershell
+python -m repomori privacy-guard-demo --mode clean --json
+python -m repomori privacy-guard-demo --mode fail --format markdown `
+  --out D:\Dev\RepoMori\.repomori-release-candidate\privacy-guard-demo.md
+```
+
+The failing mode is expected to show an embedded privacy-guard `fail` while the
+dry-run report itself stays `pass` when the synthetic failure was detected and
+redacted correctly. It uses placeholders only, does not tag, publish, upload
+release assets, call a network, or inspect private release material.
+
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
 SBOM verification guidance. See [release-signing.md](release-signing.md) for
 signing setup and key rotation.

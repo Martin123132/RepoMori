@@ -323,6 +323,10 @@ directories, secret-like values, private URLs, raw evidence dump keys, and
 proprietary-material markers before uploading the candidate artifact bundle.
 Failed guard summaries report redacted categories and counts only. The workflow
 also validates the policy JSON/Markdown reviewer guidance.
+Use `python -m repomori privacy-guard-demo --mode fail --json` to exercise the
+synthetic failure path locally before a real candidate run; it reports
+categories/counts only and does not tag, publish, upload assets, or inspect
+private release material.
 `--policy` adds a deterministic `repomori.release_policy.v1` gate for required
 release evidence, schema versions, signatures, and warning/error thresholds.
 The policy report includes the checked profile name and a reviewer decision:

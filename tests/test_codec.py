@@ -31,6 +31,7 @@ from repomori.codec import (
     build_pack,
     build_release_candidate_reviewer_handoff,
     build_release_evidence,
+    build_release_review_privacy_guard_demo,
     build_release_review_decision_log,
     check_handoff_package,
     check_compatibility,
@@ -65,6 +66,7 @@ from repomori.codec import (
     format_release_candidate_artifact_index_markdown,
     format_release_candidate_reviewer_handoff_markdown,
     format_release_evidence_markdown,
+    format_release_review_privacy_guard_demo_markdown,
     format_release_review_decision_log_markdown,
     format_release_review_checklist_markdown,
     format_release_verify_markdown,
@@ -2440,6 +2442,100 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertNotIn(local_path, redacted_markdown)
             self.assertNotIn(private_url, redacted_markdown)
 
+    def test_release_review_privacy_guard_demo_reports_clean_and_redacted_failure(self) -> None:
+        clean = build_release_review_privacy_guard_demo(mode="clean")
+
+        self.assertEqual(clean["schema_version"], "repomori.release_review_privacy_guard_demo.v1")
+        self.assertEqual(clean["status"], "pass")
+        self.assertEqual(clean["expected_guard_status"], "pass")
+        self.assertEqual(clean["privacy_guard"]["status"], "pass")
+        self.assertEqual(clean["summary"]["issue_counts_by_code"], {})
+        clean_markdown = format_release_review_privacy_guard_demo_markdown(clean)
+        self.assertIn("# RepoMori Release Review Privacy Guard Demo", clean_markdown)
+        self.assertIn("Mode: `clean`", clean_markdown)
+
+        failing = build_release_review_privacy_guard_demo(mode="fail")
+
+        self.assertEqual(failing["status"], "pass")
+        self.assertEqual(failing["expected_guard_status"], "fail")
+        self.assertEqual(failing["privacy_guard"]["status"], "fail")
+        counts = failing["summary"]["issue_counts_by_code"]
+        self.assertGreaterEqual(counts["local_absolute_path"], 1)
+        self.assertGreaterEqual(counts["temp_directory"], 1)
+        self.assertGreaterEqual(counts["secret_like_value"], 1)
+        self.assertGreaterEqual(counts["private_url"], 1)
+        self.assertGreaterEqual(counts["proprietary_marker"], 1)
+        self.assertGreaterEqual(counts["raw_dump_key"], 1)
+        failing_markdown = format_release_review_privacy_guard_demo_markdown(failing)
+        self.assertIn("Mode: `fail`", failing_markdown)
+        self.assertIn("Issue Counts By Category", failing_markdown)
+        self.assertIn("`secret_like_value`", failing_markdown)
+        self.assertIn("`raw_dump_key`", failing_markdown)
+
+        serialized = json.dumps(failing, sort_keys=True)
+        raw_values = [
+            "C:" + "\\" + "Users" + "\\" + "reviewer" + "\\" + "Temp" + "\\" + "SYNTHETIC_PATH.txt",
+            "api" + "_key=" + "s" + "k-" + "syntheticplaceholdernotreal",
+            "https://" + "internal" + ".example" + ".local/synthetic",
+            "proprietary" + " source",
+            "SYNTHETIC_RAW_DUMP_PLACEHOLDER",
+        ]
+        for raw_value in raw_values:
+            self.assertNotIn(raw_value, serialized)
+            self.assertNotIn(raw_value, failing_markdown)
+
+    def test_cli_privacy_guard_demo_json_and_markdown_are_safe(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        output = subprocess.check_output(
+            [
+                sys.executable,
+                "-m",
+                "repomori",
+                "privacy-guard-demo",
+                "--mode",
+                "fail",
+                "--json",
+            ],
+            cwd=repo,
+            text=True,
+        )
+        payload = json.loads(output)
+        self.assertEqual(payload["schema_version"], "repomori.release_review_privacy_guard_demo.v1")
+        self.assertEqual(payload["status"], "pass")
+        self.assertEqual(payload["privacy_guard"]["status"], "fail")
+        self.assertGreaterEqual(payload["summary"]["issue_counts_by_code"]["secret_like_value"], 1)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "privacy-guard-demo.md"
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "privacy-guard-demo",
+                    "--mode",
+                    "fail",
+                    "--format",
+                    "markdown",
+                    "--out",
+                    str(out),
+                ],
+                cwd=repo,
+            )
+            markdown = out.read_text(encoding="utf-8")
+
+        self.assertIn("# RepoMori Release Review Privacy Guard Demo", markdown)
+        self.assertIn("Observed guard status: `fail`", markdown)
+        secret_assignment = "api" + "_key=" + "s" + "k-" + "syntheticplaceholdernotreal"
+        private_url = "https://" + "internal" + ".example" + ".local/synthetic"
+        local_path = "C:" + "\\" + "Users" + "\\" + "reviewer" + "\\" + "Temp" + "\\" + "SYNTHETIC_PATH.txt"
+        self.assertNotIn(secret_assignment, output)
+        self.assertNotIn(secret_assignment, markdown)
+        self.assertNotIn(private_url, output)
+        self.assertNotIn(private_url, markdown)
+        self.assertNotIn(local_path, output)
+        self.assertNotIn(local_path, markdown)
+
     def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         policy = repo_root / "tests/fixtures/release-policy-enterprise-signed.json"
@@ -4537,6 +4633,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_review_handoff.v1", schema_versions)
         self.assertIn("repomori.release_review_decision_log.v1", schema_versions)
         self.assertIn("repomori.release_review_privacy_guard.v1", schema_versions)
+        self.assertIn("repomori.release_review_privacy_guard_demo.v1", schema_versions)
         self.assertIn("repomori.health.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
@@ -4651,6 +4748,15 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertEqual(
             release_review_privacy_guard_schema["schema"]["producer"],
             "check_release_review_decision_log_privacy",
+        )
+        release_review_privacy_guard_demo_schema = schema_catalog("repomori.release_review_privacy_guard_demo.v1")
+        self.assertEqual(
+            release_review_privacy_guard_demo_schema["selected"],
+            "repomori.release_review_privacy_guard_demo.v1",
+        )
+        self.assertEqual(
+            release_review_privacy_guard_demo_schema["schema"]["producer"],
+            "build_release_review_privacy_guard_demo",
         )
 
         verify_schema = schema_catalog("repomori.verify.v1")
@@ -6880,6 +6986,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("memory", command_names)
         self.assertIn("release-health", command_names)
         self.assertIn("verify-release", command_names)
+        self.assertIn("privacy-guard-demo", command_names)
         self.assertIn("contract-check", command_names)
         self.assertEqual(parser.prog, inventory["prog"])
 
@@ -6891,6 +6998,15 @@ class RepoMoriCodecTests(unittest.TestCase):
         }
         self.assertIn("--anchor-freshness", memory_options)
         self.assertIn("--diff-context", memory_options)
+
+        privacy_demo = next(command for command in inventory["commands"] if command["name"] == "privacy-guard-demo")
+        privacy_demo_options = {
+            option
+            for argument in privacy_demo["arguments"]
+            for option in argument.get("option_strings", [])
+        }
+        self.assertIn("--mode", privacy_demo_options)
+        self.assertIn("--format", privacy_demo_options)
 
     def test_cli_commands_json_is_parseable(self) -> None:
         output = subprocess.check_output(

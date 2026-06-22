@@ -59,6 +59,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.release_review_handoff.v1`: concise release candidate reviewer handoff summary.
 - `repomori.release_review_decision_log.v1`: release candidate reviewer evidence trail with generated artifacts, gate results, public-safety/privacy confirmations, and pending outcome fields.
 - `repomori.release_review_privacy_guard.v1`: release-review decision log privacy guard for local paths, temp directories, secret-like values, private URLs, and raw dump keys, with redacted issue categories/counts.
+- `repomori.release_review_privacy_guard_demo.v1`: synthetic clean/failing privacy-guard dry-run report for exercising redacted categories/counts before release review.
 - `repomori.release_evidence.v1`: reviewer-facing release evidence bundle with verification, release-check, artifact, and signature status.
 - `repomori.health.v1`: release-health aggregate bundle.
 - `repomori.compat.v1`: pack, handoff, schema, agent, and MCP compatibility report.

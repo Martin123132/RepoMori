@@ -32,6 +32,7 @@ from .codec import (
     evaluate_handoff_quality,
     evaluate_pack,
     build_release_evidence,
+    build_release_review_privacy_guard_demo,
     format_agent_brief_markdown,
     format_brief_markdown,
     format_compare_markdown,
@@ -52,6 +53,7 @@ from .codec import (
     format_pack_inspect_markdown,
     format_release_verify_markdown,
     format_release_evidence_markdown,
+    format_release_review_privacy_guard_demo_markdown,
     format_restore_check_markdown,
     format_snapshot_chain_markdown,
     format_snapshot_anchor_markdown,
@@ -240,6 +242,20 @@ def build_parser() -> argparse.ArgumentParser:
     release_evidence.add_argument("--format", choices=("markdown", "json"), default="markdown")
     release_evidence.add_argument("--out", type=Path, help="Write the selected evidence report format to this file.")
     release_evidence.add_argument("--json", action="store_true", help="Print release evidence JSON.")
+
+    privacy_guard_demo = sub.add_parser(
+        "privacy-guard-demo",
+        help="Run a synthetic release-review privacy guard dry-run.",
+    )
+    privacy_guard_demo.add_argument(
+        "--mode",
+        choices=("clean", "fail"),
+        default="clean",
+        help="Synthetic path to exercise: clean passes; fail reports redacted categories/counts.",
+    )
+    privacy_guard_demo.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    privacy_guard_demo.add_argument("--out", type=Path, help="Write the selected dry-run report to this file.")
+    privacy_guard_demo.add_argument("--json", action="store_true", help="Print dry-run JSON.")
 
     init = sub.add_parser("init", help="Write a RepoMori config file.")
     init.add_argument("repo", type=Path, help="Repository folder to remember.")
@@ -842,6 +858,20 @@ def main(argv: list[str] | None = None) -> int:
         elif args.json or args.out_dir is None:
             print(output, end="" if output.endswith("\n") else "\n")
         return 0 if report["status"] != "fail" else 1
+    if args.command == "privacy-guard-demo":
+        report = build_release_review_privacy_guard_demo(mode=args.mode)
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_release_review_privacy_guard_demo_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] == "pass" else 1
     if args.command == "compat":
         report = check_compatibility(
             args.pack,

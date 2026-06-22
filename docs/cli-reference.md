@@ -3,7 +3,7 @@
 Generated from the live `argparse` command surface.
 
 - Schema: `repomori.cli_commands.v1`
-- Commands: `51`
+- Commands: `52`
 
 ## Commands
 
@@ -162,6 +162,21 @@ repomori release-evidence [--repo REPO] [--release-check RELEASE_CHECK] [--relea
 | --format | option | no | markdown, json | markdown |  |
 | --out | option | no |  |  | Write the selected evidence report format to this file. |
 | --json | option | no |  | False | Print release evidence JSON. |
+
+### `privacy-guard-demo`
+
+Run a synthetic release-review privacy guard dry-run.
+
+```text
+repomori privacy-guard-demo [--mode {clean,fail}] [--format {markdown,json}] [--out OUT] [--json]
+```
+
+| Name | Kind | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- | --- |
+| --mode | option | no | clean, fail | clean | Synthetic path to exercise: clean passes; fail reports redacted categories/counts. |
+| --format | option | no | markdown, json | markdown |  |
+| --out | option | no |  |  | Write the selected dry-run report to this file. |
+| --json | option | no |  | False | Print dry-run JSON. |
 
 ### `init`
 

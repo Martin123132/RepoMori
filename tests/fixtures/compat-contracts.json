@@ -48,6 +48,7 @@
     "repomori.release_review_decision_log.v1",
     "repomori.release_review_handoff.v1",
     "repomori.release_review_privacy_guard.v1",
+    "repomori.release_review_privacy_guard_demo.v1",
     "repomori.release_verify.v1",
     "repomori.restore_check.v1",
     "repomori.scan.baseline.v1",
