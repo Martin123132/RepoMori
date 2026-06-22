@@ -55,6 +55,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.release_provenance.v1`: release artifact provenance with hashes and workflow metadata.
 - `repomori.release_verify.v1`: local verification report for release package checksums, provenance, SBOM, and artifacts.
 - `repomori.release_policy.v1`: optional release verification policy consumed by `verify-release --policy`.
+- `repomori.release_review_bundle.v1`: release candidate reviewer artifact completeness report.
 - `repomori.release_evidence.v1`: reviewer-facing release evidence bundle with verification, release-check, artifact, and signature status.
 - `repomori.health.v1`: release-health aggregate bundle.
 - `repomori.compat.v1`: pack, handoff, schema, agent, and MCP compatibility report.

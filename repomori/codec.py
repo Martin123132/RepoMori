@@ -396,6 +396,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version"],
     },
     {
+        "schema_version": "repomori.release_review_bundle.v1",
+        "kind": "report",
+        "title": "Release candidate reviewer bundle completeness",
+        "producer": "check_release_candidate_review_bundle",
+        "required_fields": ["schema_version", "status", "root", "summary", "checks", "errors"],
+    },
+    {
         "schema_version": "repomori.release_evidence.v1",
         "kind": "report",
         "title": "Release evidence bundle",
@@ -10783,6 +10790,260 @@ def format_release_candidate_artifact_index_markdown(
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def check_release_candidate_review_bundle(root: Path | str) -> dict[str, Any]:
+    """Verify that a release candidate contains the reviewer-facing bundle."""
+
+    root_path = Path(root)
+    checks: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+
+    def add_check(check_id: str, status: str, message: str, **details: Any) -> None:
+        checks.append(
+            {
+                "id": check_id,
+                "status": status,
+                "message": message,
+                "details": details,
+            }
+        )
+        if status == "fail":
+            errors.append({"code": check_id, "message": message, **details})
+
+    if not root_path.is_dir():
+        add_check(
+            "release_review_root_missing",
+            "fail",
+            "Release candidate package directory is missing.",
+            path=str(root_path),
+        )
+        return _release_review_bundle_report(root_path, checks, errors, None, None)
+
+    required_artifacts = (
+        "release-candidate.json",
+        "release-candidate.md",
+        "checksums.txt",
+        "release-provenance.json",
+        "sbom.spdx.json",
+        "release-verify.json",
+        "release-verify.md",
+        "release-verify-policy.json",
+        "release-verify-policy.md",
+        "release-review-checklist.md",
+        "release-artifact-index.md",
+        "release-evidence.json",
+        "release-evidence.md",
+    )
+    for name in required_artifacts:
+        path = root_path / name
+        add_check(
+            f"artifact:{name}",
+            "pass" if path.is_file() and path.stat().st_size > 0 else "fail",
+            f"Required reviewer artifact is present: {name}",
+            path=name,
+        )
+
+    wheel_files = sorted((root_path / "dist").glob("*.whl")) if (root_path / "dist").is_dir() else []
+    source_files = sorted((root_path / "dist").glob("*-source.zip")) if (root_path / "dist").is_dir() else []
+    add_check(
+        "artifact:dist_wheel",
+        "pass" if wheel_files else "fail",
+        "Release bundle contains at least one wheel artifact.",
+        count=len(wheel_files),
+    )
+    add_check(
+        "artifact:dist_source_archive",
+        "pass" if source_files else "fail",
+        "Release bundle contains at least one source archive.",
+        count=len(source_files),
+    )
+
+    manifest = _release_review_bundle_load_json(root_path, "release-candidate.json", checks, errors)
+    provenance = _release_review_bundle_load_json(root_path, "release-provenance.json", checks, errors)
+    policy_report = _release_review_bundle_load_json(root_path, "release-verify-policy.json", checks, errors)
+    evidence_report = _release_review_bundle_load_json(root_path, "release-evidence.json", checks, errors)
+
+    add_check(
+        "schema:release_candidate",
+        "pass" if isinstance(manifest, dict) and manifest.get("schema_version") == "repomori.release_candidate.v1" else "fail",
+        "release-candidate.json has the expected schema.",
+        expected="repomori.release_candidate.v1",
+        actual=manifest.get("schema_version") if isinstance(manifest, dict) else None,
+    )
+    add_check(
+        "schema:provenance",
+        "pass" if isinstance(provenance, dict) and provenance.get("schema_version") == "repomori.release_provenance.v1" else "fail",
+        "release-provenance.json has the expected schema.",
+        expected="repomori.release_provenance.v1",
+        actual=provenance.get("schema_version") if isinstance(provenance, dict) else None,
+    )
+    add_check(
+        "schema:policy_report",
+        "pass"
+        if isinstance(policy_report, dict)
+        and policy_report.get("schema_version") == "repomori.release_verify.v1"
+        and isinstance(policy_report.get("policy"), dict)
+        and policy_report["policy"].get("schema_version") == "repomori.release_policy.v1"
+        else "fail",
+        "release-verify-policy.json has release verification and policy schemas.",
+        expected="repomori.release_verify.v1 + repomori.release_policy.v1",
+    )
+    add_check(
+        "schema:evidence",
+        "pass" if isinstance(evidence_report, dict) and evidence_report.get("schema_version") == "repomori.release_evidence.v1" else "fail",
+        "release-evidence.json has the expected schema.",
+        expected="repomori.release_evidence.v1",
+        actual=evidence_report.get("schema_version") if isinstance(evidence_report, dict) else None,
+    )
+
+    checksums_text = _release_review_bundle_read_text(root_path / "checksums.txt")
+    add_check(
+        "content:checksums",
+        "pass" if checksums_text and "  " in checksums_text else "fail",
+        "checksums.txt contains SHA-256 digest lines.",
+        path="checksums.txt",
+    )
+
+    _release_review_bundle_text_check(
+        root_path,
+        checks,
+        errors,
+        "release-verify-policy.md",
+        "content:policy_markdown",
+        (
+            "## Policy",
+            "### Policy Profile Preflight",
+            "docs/release-policy-selection.md",
+            "docs/release-policy-matrix.md",
+            "docs/release-policy.md#policy-diagnostics",
+        ),
+    )
+    _release_review_bundle_text_check(
+        root_path,
+        checks,
+        errors,
+        "release-review-checklist.md",
+        "content:review_checklist",
+        (
+            "Selected profile:",
+            "Policy outcome:",
+            "Artifact Hash And Provenance Checks",
+            "Final reviewer decision: `pending`",
+        ),
+    )
+    _release_review_bundle_text_check(
+        root_path,
+        checks,
+        errors,
+        "release-artifact-index.md",
+        "content:artifact_index",
+        (
+            "RepoMori Release Candidate Artifact Index",
+            "Selected policy profile:",
+            "release-verify-policy.md",
+            "release-review-checklist.md",
+            "Diagnostics References",
+        ),
+    )
+
+    return _release_review_bundle_report(root_path, checks, errors, policy_report, evidence_report)
+
+
+def _release_review_bundle_report(
+    root: Path,
+    checks: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    policy_report: dict[str, Any] | None,
+    evidence_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    policy = policy_report.get("policy") if isinstance(policy_report, dict) and isinstance(policy_report.get("policy"), dict) else {}
+    diagnostics = policy.get("diagnostics") if isinstance(policy.get("diagnostics"), dict) else {}
+    review = policy.get("review") if isinstance(policy.get("review"), dict) else {}
+    status = "pass" if not errors else "fail"
+    return {
+        "schema_version": "repomori.release_review_bundle.v1",
+        "status": status,
+        "root": str(root),
+        "summary": {
+            "check_count": len(checks),
+            "error_count": len(errors),
+            "selected_profile": policy.get("profile"),
+            "policy_status": policy.get("status") if policy else None,
+            "policy_outcome": diagnostics.get("outcome") if diagnostics else None,
+            "review_decision": review.get("decision") if review else None,
+            "release_evidence_status": evidence_report.get("status") if isinstance(evidence_report, dict) else None,
+        },
+        "checks": checks,
+        "errors": errors,
+    }
+
+
+def _release_review_bundle_load_json(
+    root: Path,
+    name: str,
+    checks: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    path = root / name
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        checks.append(
+            {
+                "id": f"json:{name}",
+                "status": "fail",
+                "message": f"{name} is missing or not parseable JSON.",
+                "details": {"path": name, "error": str(exc)},
+            }
+        )
+        errors.append({"code": f"json:{name}", "message": f"{name} is missing or not parseable JSON.", "path": name})
+        return None
+    checks.append(
+        {
+            "id": f"json:{name}",
+            "status": "pass",
+            "message": f"{name} is parseable JSON.",
+            "details": {"path": name},
+        }
+    )
+    return payload if isinstance(payload, dict) else None
+
+
+def _release_review_bundle_read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _release_review_bundle_text_check(
+    root: Path,
+    checks: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    name: str,
+    check_id: str,
+    required_text: tuple[str, ...],
+) -> None:
+    text = _release_review_bundle_read_text(root / name)
+    missing = [item for item in required_text if item not in text]
+    checks.append(
+        {
+            "id": check_id,
+            "status": "pass" if not missing else "fail",
+            "message": f"{name} contains expected reviewer guidance.",
+            "details": {"path": name, "missing": missing},
+        }
+    )
+    if missing:
+        errors.append(
+            {
+                "code": check_id,
+                "message": f"{name} is missing expected reviewer guidance.",
+                "path": name,
+                "missing": missing,
+            }
+        )
 
 
 def _release_review_check_status(report: dict[str, Any], check_id: str) -> str:

@@ -31,6 +31,9 @@ The release package workflow writes:
   reviewer decision.
 - `release-artifact-index.md`: compact reviewer index for expected candidate
   artifacts, selected profile, policy outcome, and diagnostics references.
+- `release-bundle-completeness.json`: `repomori.release_review_bundle.v1`
+  report proving expected reviewer artifacts and guidance are present before
+  upload.
 - `release-evidence.json` / `release-evidence.md`: combined reviewer evidence
   bundle from `release-evidence`.
 - `*.asc`: optional GPG detached signatures for integrity artifacts when

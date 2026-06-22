@@ -33,6 +33,7 @@ from repomori.codec import (
     check_handoff_package,
     check_compatibility,
     check_contract_fixture,
+    check_release_candidate_review_bundle,
     check_snapshot_restore,
     archive_handoff_package,
     compare_packs,
@@ -1617,9 +1618,13 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-verify-policy.md", workflow)
         self.assertIn("release-review-checklist.md", workflow)
         self.assertIn("release-artifact-index.md", workflow)
+        self.assertIn("release-bundle-completeness.json", workflow)
         self.assertIn("repomori.release_policy.v1", workflow)
+        self.assertIn("repomori.release_review_bundle.v1", workflow)
+        self.assertIn("check_release_candidate_review_bundle", workflow)
         self.assertIn("format_release_candidate_artifact_index_markdown", workflow)
         self.assertIn("format_release_review_checklist_markdown", workflow)
+        self.assertIn("bundle[\"status\"] == \"pass\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
         self.assertIn("Review decision: `reviewable`", workflow)
@@ -1634,6 +1639,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("Diagnostics References", workflow)
         self.assertIn("release-review-checklist.md", release_doc)
         self.assertIn("release-artifact-index.md", release_doc)
+        self.assertIn("release-bundle-completeness.json", release_doc)
         self.assertIn("fill-in reviewer decision log", release_doc)
         self.assertIn("first-stop reviewer map", release_doc)
         self.assertIn("Sign release integrity artifacts", workflow)
@@ -1694,9 +1700,13 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-verify-policy.*", workflow)
         self.assertIn("release-review-checklist.md", workflow)
         self.assertIn("release-artifact-index", workflow)
+        self.assertIn("release-bundle-completeness", workflow)
         self.assertIn("repomori.release_policy.v1", workflow)
+        self.assertIn("repomori.release_review_bundle.v1", workflow)
+        self.assertIn("check_release_candidate_review_bundle", workflow)
         self.assertIn("format_release_candidate_artifact_index_markdown", workflow)
         self.assertIn("format_release_review_checklist_markdown", workflow)
+        self.assertIn("bundle[\"status\"] == \"pass\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"decision\"] == \"reviewable\"", workflow)
         self.assertIn("report[\"policy\"][\"review\"][\"profile\"]", workflow)
         self.assertIn("Review decision: `reviewable`", workflow)
@@ -1713,6 +1723,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("release-candidate.md", workflow)
         self.assertIn("include-hidden-files: true", workflow)
         self.assertIn("Draft Release Assets", publish_doc)
+        self.assertIn("release-bundle-completeness.json", publish_doc)
         self.assertIn("Existing published releases are never overwritten.", publish_doc)
         self.assertIn("REPOMORI_RELEASE_GPG_PRIVATE_KEY", publish_doc)
         self.assertIn("REPOMORI_RELEASE_GPG_PUBLIC_KEY", publish_doc)
@@ -2028,6 +2039,45 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertIn("docs/release-policy-selection.md", markdown)
             self.assertIn("docs/release-policy-matrix.md", markdown)
             self.assertIn("docs/release-policy.md#policy-diagnostics", markdown)
+
+    def test_release_candidate_review_bundle_completeness_passes_and_fails_fast(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        policy = repo_root / "tests/fixtures/release-policy-dev-unsigned.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._release_policy_package(Path(tmp), signed=False)
+            report = verify_release_package(root, policy=policy)
+            evidence = json.loads((root / "release-evidence.json").read_text(encoding="utf-8"))
+            (root / "release-verify-policy.json").write_text(
+                json.dumps(report, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "release-verify-policy.md").write_text(
+                format_release_verify_markdown(report),
+                encoding="utf-8",
+            )
+            (root / "release-review-checklist.md").write_text(
+                format_release_review_checklist_markdown(report, evidence),
+                encoding="utf-8",
+            )
+            (root / "release-artifact-index.md").write_text(
+                format_release_candidate_artifact_index_markdown(report, evidence),
+                encoding="utf-8",
+            )
+
+            complete = check_release_candidate_review_bundle(root)
+
+            self.assertEqual(complete["schema_version"], "repomori.release_review_bundle.v1")
+            self.assertEqual(complete["status"], "pass")
+            self.assertEqual(complete["summary"]["selected_profile"], "dev_unsigned")
+            self.assertEqual(complete["summary"]["policy_outcome"], "policy_passed")
+            self.assertEqual(complete["errors"], [])
+
+            (root / "release-artifact-index.md").unlink()
+            failed = check_release_candidate_review_bundle(root)
+
+            self.assertEqual(failed["status"], "fail")
+            self.assertGreater(failed["summary"]["error_count"], 0)
+            self.assertIn("artifact:release-artifact-index.md", {item["code"] for item in failed["errors"]})
 
     def test_release_policy_enterprise_signed_example_requires_and_accepts_signatures(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -4122,6 +4172,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.release_provenance.v1", schema_versions)
         self.assertIn("repomori.release_evidence.v1", schema_versions)
         self.assertIn("repomori.release_policy.v1", schema_versions)
+        self.assertIn("repomori.release_review_bundle.v1", schema_versions)
         self.assertIn("repomori.health.v1", schema_versions)
         self.assertIn("repomori.agent.response.v1", schema_versions)
         self.assertIn("repomori.agent_brief.v1", schema_versions)
@@ -4204,6 +4255,13 @@ class RepoMoriCodecTests(unittest.TestCase):
         inspect_diff_schema = schema_catalog("repomori.inspect_diff.v1")
         self.assertEqual(inspect_diff_schema["selected"], "repomori.inspect_diff.v1")
         self.assertEqual(inspect_diff_schema["schema"]["producer"], "inspect_pack_diff")
+
+        release_review_bundle_schema = schema_catalog("repomori.release_review_bundle.v1")
+        self.assertEqual(release_review_bundle_schema["selected"], "repomori.release_review_bundle.v1")
+        self.assertEqual(
+            release_review_bundle_schema["schema"]["producer"],
+            "check_release_candidate_review_bundle",
+        )
 
         verify_schema = schema_catalog("repomori.verify.v1")
         self.assertEqual(verify_schema["selected"], "repomori.verify.v1")

@@ -61,6 +61,7 @@ The draft release receives:
 - `release-verify-policy.md`
 - `release-review-checklist.md`
 - `release-artifact-index.md`
+- `release-bundle-completeness.json`
 - `release-evidence.json`
 - `release-evidence.md`
 - `release-candidate.json`

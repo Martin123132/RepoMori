@@ -78,6 +78,7 @@ not publish a GitHub release by itself; it uploads reviewable artifacts:
 - `release-verify-policy.md`
 - `release-review-checklist.md`
 - `release-artifact-index.md`
+- `release-bundle-completeness.json`
 - `release-evidence.json`
 - `release-evidence.md`
 - `release-candidate.json`
@@ -101,6 +102,9 @@ artifact hash/provenance checks, and final reviewer decision.
 The companion `release-artifact-index.md` is a first-stop reviewer map of the
 expected candidate artifacts, selected policy profile, policy outcome, and
 diagnostics references.
+Before upload, the workflow writes `release-bundle-completeness.json` and fails
+if reviewer artifacts, selected profile, checksum/provenance material, or
+diagnostics references are missing.
 
 See [release-integrity.md](release-integrity.md) for checksum, provenance, and
 SBOM verification guidance. See [release-signing.md](release-signing.md) for
