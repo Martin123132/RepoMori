@@ -3119,6 +3119,47 @@ class RepoMoriCodecTests(unittest.TestCase):
 
         self.assertEqual([], violations)
 
+    def test_first_tester_path_documents_license_storage_and_core_flow(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        readme = (repo_root / "README.md").read_text(encoding="utf-8")
+        quickstart = (repo_root / "docs" / "quickstart.md").read_text(encoding="utf-8")
+        release_candidate = (repo_root / "docs" / "release-candidate.md").read_text(encoding="utf-8")
+        first_tester = (repo_root / "docs" / "first-tester.md").read_text(encoding="utf-8")
+        pyproject = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+
+        self.assertIn("docs/first-tester.md", readme)
+        self.assertIn("first-tester.md", quickstart)
+        self.assertIn("## Try This First", release_candidate)
+        self.assertIn("first-tester.md", release_candidate)
+        self.assertIn("release-rehearsal", release_candidate)
+        self.assertIn("D-drive", release_candidate)
+        self.assertIn(".repomori-*", release_candidate)
+        self.assertIn("source-available software", first_tester)
+        self.assertIn("personal and non-commercial testing", first_tester)
+        self.assertIn("PolyForm Noncommercial License 1.0.0", first_tester)
+        self.assertIn("TWO HANDS NETWORK LTD", first_tester)
+        self.assertIn("License :: Other/Proprietary License", pyproject)
+        self.assertNotIn("License :: OSI Approved", pyproject)
+        self.assertNotIn("MIT License", pyproject)
+        self.assertNotIn("Apache Software License", pyproject)
+
+        for command in (
+            "python -m repomori demo",
+            "python -m repomori build",
+            "python -m repomori query",
+            "python -m repomori context",
+            "python -m repomori handoff",
+            "python -m repomori release-rehearsal",
+        ):
+            self.assertIn(command, first_tester)
+
+        self.assertIn("D:\\Dev", first_tester)
+        self.assertIn(".repomori-first-test", first_tester)
+        self.assertIn(".repomori-packs", first_tester)
+        self.assertIn(".repomori-release-rehearsal", first_tester)
+        self.assertIn("does not tag, publish, upload", first_tester)
+        self.assertNotIn("open-source software", first_tester)
+
     def test_run_release_health_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release-health"

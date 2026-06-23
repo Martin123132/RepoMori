@@ -8,6 +8,17 @@ The `0.2.0` release line used validated candidate `0.2.0rc1` before the final
 `0.2.0` release. Treat those as historical release records; use this runbook
 for the next candidate by substituting the version, tag, and notes paths.
 
+## Try This First
+
+New testers should start with [First Tester Path](first-tester.md) to install
+or run from checkout, build a pack, query/context/handoff it, and run the local
+rehearsal.
+
+Release reviewers should run the no-upload `release-rehearsal` before a real
+candidate upload. It uses sanitized fixture data, writes only local D-drive
+`.repomori-*` artifacts, and gives reviewers one short evidence bundle to
+inspect before moving to the full local gate below.
+
 ## Local Gate
 
 Run these from a clean checkout:

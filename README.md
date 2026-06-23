@@ -69,7 +69,9 @@ python -m repomori demo --out D:\Temp\repomori-demo --force --json
 
 That creates a tiny demo repository, builds and verifies a `.repomori` pack,
 writes pack inspection and source-backed context, runs a memory cycle, and checks the MCP tool
-bridge. See [docs/quickstart.md](docs/quickstart.md) for the guided path.
+bridge. See [docs/first-tester.md](docs/first-tester.md) for the shortest
+tester route, or [docs/quickstart.md](docs/quickstart.md) for the full guided
+path.
 
 ## Install From Checkout
 

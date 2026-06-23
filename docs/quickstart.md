@@ -2,6 +2,9 @@
 
 RepoMori creates compact, source-backed repository memory for local agents and tools.
 
+For the shortest install/demo/build/query/context/handoff/rehearsal route, see
+[First Tester Path](first-tester.md).
+
 ## Try It In 60 Seconds
 
 ```powershell
