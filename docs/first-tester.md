@@ -9,6 +9,10 @@ Use `D:\...` paths for local test outputs. Generated packs, reports, rehearsal
 artifacts, and logs should go under hidden `.repomori-*` folders or another
 D-drive scratch location.
 
+Use [First Tester Feedback Checklist](tester-feedback.md) to report back the
+expected statuses, generated files, confusing output, and licensing/storage
+assumptions without sharing secrets or private source.
+
 ## Option A: Install The Release
 
 ```powershell

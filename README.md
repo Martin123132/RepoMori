@@ -74,7 +74,8 @@ That creates a tiny demo repository, builds and verifies a `.repomori` pack,
 writes pack inspection and source-backed context, runs a memory cycle, and checks the MCP tool
 bridge. See [docs/first-tester.md](docs/first-tester.md) for the shortest
 tester route, or [docs/quickstart.md](docs/quickstart.md) for the full guided
-path.
+path. First testers can report results with
+[docs/tester-feedback.md](docs/tester-feedback.md).
 
 ## Install From Checkout
 

@@ -12,7 +12,9 @@ for the next candidate by substituting the version, tag, and notes paths.
 
 New testers should start with [First Tester Path](first-tester.md) to install
 or run from checkout, build a pack, query/context/handoff it, and run the local
-rehearsal.
+rehearsal. Use [First Tester Feedback Checklist](tester-feedback.md) to capture
+expected statuses, generated files, confusing output, and storage/licensing
+assumptions.
 
 Release reviewers should run the no-upload `release-rehearsal` before a real
 candidate upload. It uses sanitized fixture data, writes only local D-drive
