@@ -3,6 +3,7 @@
 RepoMori is source-available software for personal and non-commercial testing
 under the PolyForm Noncommercial License 1.0.0. Commercial use requires a
 separate written license from TWO HANDS NETWORK LTD.
+To discuss commercial licensing, contact the COO of TWO HANDS NETWORK LTD.
 
 Use `D:\...` paths for local test outputs. Generated packs, reports, rehearsal
 artifacts, and logs should go under hidden `.repomori-*` folders or another

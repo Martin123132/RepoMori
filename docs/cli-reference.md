@@ -3,7 +3,7 @@
 Generated from the live `argparse` command surface.
 
 - Schema: `repomori.cli_commands.v1`
-- Commands: `53`
+- Commands: `54`
 
 ## Commands
 
@@ -61,6 +61,21 @@ repomori scan [--max-file-bytes MAX_FILE_BYTES] [--include-hidden] [--public-rel
 | --write-baseline | option | no |  |  | Write current active findings to a baseline JSON file. |
 | --fail-on | option | no | info, low, medium, high | high |  |
 | --json | option | no |  | False | Print scan JSON. |
+
+### `license-check`
+
+Check repository licensing and commercial-contact wording.
+
+```text
+repomori license-check [--format {markdown,json}] [--out OUT] [--json] [repo]
+```
+
+| Name | Kind | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- | --- |
+| repo | argument | no |  |  | Repository folder to check. |
+| --format | option | no | markdown, json | markdown |  |
+| --out | option | no |  |  | Write the license policy report to this path. |
+| --json | option | no |  | False | Print license policy JSON. |
 
 ### `release-check`
 

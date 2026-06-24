@@ -21,6 +21,8 @@ from TWO HANDS NETWORK LTD is required for paid products, hosted services,
 managed services, enterprise developer tools, commercial AI coding or agent
 products, and commercial AI training or evaluation pipelines.
 
+To discuss commercial licensing, contact the COO of TWO HANDS NETWORK LTD.
+
 Commercial support, private evaluation, redistribution, warranty, service-level,
 or integration terms must be agreed in writing.
 

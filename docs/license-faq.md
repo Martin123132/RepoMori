@@ -6,6 +6,8 @@ RepoMori is source-available software. It is not open-source software.
 
 Yes. Personal, hobby, research, educational, and other non-commercial uses are allowed under the PolyForm Noncommercial License 1.0.0.
 
+To discuss commercial licensing, contact the COO of TWO HANDS NETWORK LTD.
+
 ## Can I Use It At Work?
 
 It depends. Internal evaluation, learning, or non-commercial research may be allowed, but commercial product use is not included in the public license. Ask before using RepoMori in a business workflow that supports a paid product or service.
@@ -13,6 +15,8 @@ It depends. Internal evaluation, learning, or non-commercial research may be all
 ## Can A Company Put RepoMori Into A Paid AI Product?
 
 No, not under the public license. Commercial AI coding tools, hosted agents, SaaS services, repository-analysis products, commercial model training/evaluation pipelines, and managed services require a separate written commercial license from TWO HANDS NETWORK LTD.
+
+To discuss commercial licensing, contact the COO of TWO HANDS NETWORK LTD.
 
 ## Can I Fork It?
 

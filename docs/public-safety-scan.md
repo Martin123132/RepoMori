@@ -7,6 +7,7 @@ It does not call a network service, an AI model, or a secret-scanning API.
 python -m repomori scan D:\Dev\RepoMori --public-release --json
 python -m repomori scan D:\Dev\RepoMori --fail-on high
 python -m repomori scan D:\Dev\RepoMori --fail-on medium --json
+python -m repomori license-check D:\Dev\RepoMori --json
 python -m repomori scan D:\Dev\RepoMori --write-baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
 python -m repomori scan D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --fail-on low --json
 ```
@@ -43,6 +44,11 @@ python -m repomori scan D:\Dev\RepoMori --public-release --fail-on medium --json
 The JSON report uses schema `repomori.scan.v1` and includes the repository path,
 settings, summary counts, public-release checklist details, and every finding
 with severity, code, path, optional line number, and redacted match text.
+
+Use `license-check` alongside `scan` when preparing a public release. It emits
+`repomori.license_policy.v1` and verifies the company-wide licensing posture:
+personal/non-commercial public use, separate written commercial licensing,
+TWO HANDS NETWORK LTD ownership, and COO contact wording.
 
 ## Baselines And Ignores
 

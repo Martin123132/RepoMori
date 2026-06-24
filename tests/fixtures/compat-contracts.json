@@ -35,6 +35,7 @@
     "repomori.health.v1",
     "repomori.inspect.v1",
     "repomori.inspect_diff.v1",
+    "repomori.license_policy.v1",
     "repomori.mcp.tools.v1",
     "repomori.memory.v1",
     "repomori.pack.v1",

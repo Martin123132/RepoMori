@@ -6,6 +6,9 @@ creates or refreshes a GitHub draft release.
 
 It does not publish a public release automatically. A maintainer must review the
 draft, assets, notes, and license posture before publishing.
+License posture includes the personal/non-commercial public grant, the separate
+written commercial license requirement, and COO commercial licensing contact
+wording for TWO HANDS NETWORK LTD.
 
 ## Workflow
 
@@ -36,6 +39,7 @@ examples are available as `release-policy-dev-unsigned.json`,
 
 - The workflow requires `pyproject.toml` to match the requested version.
 - `release-check` must pass.
+- `license-check` must pass through the public-release `release-check` gate.
 - The built wheel must install in a clean workflow environment.
 - `verify-release` must return `repomori.release_verify.v1` with status `pass`.
 - If a release policy is used, `verify-release --policy <file>` must also

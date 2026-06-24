@@ -6,6 +6,7 @@ Use this before changing the GitHub repository visibility to public.
 
 - Confirm `LICENSE.md`, `NOTICE.md`, `COMMERCIAL-LICENSE.md`, and `CONTRIBUTING.md` match the intended permissions.
 - Confirm the copyright holder name is correct: `TWO HANDS NETWORK LTD`.
+- Confirm commercial licensing requests say to contact the COO of TWO HANDS NETWORK LTD.
 - Confirm internal records or written assignment show that TWO HANDS NETWORK LTD owns or is licensed to enforce the RepoMori IP.
 - Do not describe RepoMori as "open source"; use "source-available" and "free for personal and non-commercial use".
 - Consider a lawyer review before public release if commercial enforcement matters.
@@ -17,6 +18,7 @@ Use this before changing the GitHub repository visibility to public.
 
 ```powershell
 python -m unittest discover -s tests
+python -m repomori license-check D:\Dev\RepoMori --json
 python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --fail-on low --json
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
 ```

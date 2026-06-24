@@ -24,9 +24,15 @@ product.
 - JSON schema catalog for supported reports and bridge contracts.
 - Agent JSON-lines bridge and dependency-free MCP stdio bridge.
 - Source-available license posture with commercial use reserved.
+- Deterministic license policy checks for personal/non-commercial use,
+  written commercial licensing, and COO commercial contact wording.
 - CI coverage across Python 3.10, 3.11, and 3.12.
 
 ## Governance
+
+RepoMori is free for personal and non-commercial use. Commercial use requires a
+separate written commercial license, and commercial licensing discussions should
+go through the COO of TWO HANDS NETWORK LTD.
 
 - License: [LICENSE.md](../LICENSE.md)
 - Commercial use: [commercial-use.md](commercial-use.md)
@@ -48,6 +54,7 @@ product.
 Before using RepoMori in a company setting:
 
 - confirm the intended use is covered by a written commercial license;
+- contact the COO of TWO HANDS NETWORK LTD to discuss commercial licensing;
 - run from a pinned release tag or reviewed commit;
 - run `verify-release` before using a downloaded release artifact bundle;
 - run `verify-release --policy` when a release must meet written internal

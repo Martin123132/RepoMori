@@ -361,6 +361,13 @@ SCHEMA_DEFINITIONS = (
         "required_fields": ["schema_version", "source_schema_version", "repo_path", "created_at", "ignore"],
     },
     {
+        "schema_version": "repomori.license_policy.v1",
+        "kind": "report",
+        "title": "Repository license policy consistency report",
+        "producer": "check_license_policy",
+        "required_fields": ["schema_version", "status", "repo_path", "summary", "checks", "errors"],
+    },
+    {
         "schema_version": "repomori.release_check.v1",
         "kind": "report",
         "title": "Local release readiness check",
@@ -1537,6 +1544,231 @@ def _evaluate_drift_policy(drift: dict[str, Any], policy: dict[str, Any] | None)
     }
 
 
+def check_license_policy(repo: Path | str) -> dict[str, Any]:
+    """Check that public licensing surfaces carry the company-wide posture."""
+
+    started = time.time()
+    repo_path = Path(repo).resolve()
+    if not repo_path.is_dir():
+        raise ValueError(f"Repository folder not found: {repo_path}")
+
+    required_files = [
+        "LICENSE.md",
+        "NOTICE.md",
+        "COMMERCIAL-LICENSE.md",
+        "README.md",
+    ]
+    public_surfaces = [
+        *required_files,
+        "SUPPORT.md",
+        "docs/commercial-use.md",
+        "docs/license-faq.md",
+    ]
+    required_concepts = [
+        {
+            "id": "owner",
+            "label": "TWO HANDS NETWORK LTD",
+            "patterns": (r"\bTWO\s+HANDS\s+NETWORK\s+LTD\b",),
+            "required_paths": public_surfaces,
+        },
+        {
+            "id": "personal_noncommercial",
+            "label": "free personal/non-commercial use",
+            "patterns": (r"\bpersonal\b", r"\bnon[- ]commercial\b"),
+            "required_paths": public_surfaces,
+        },
+        {
+            "id": "commercial_license_required",
+            "label": "commercial use requires written license",
+            "patterns": (r"\bcommercial use\b", r"\bseparate written\b", r"\blicen[cs](?:e|ing|ed|es)?\b"),
+            "required_paths": public_surfaces,
+        },
+        {
+            "id": "coo_contact",
+            "label": "contact COO for commercial licensing",
+            "patterns": (r"\bCOO\b", r"\blicen[cs](?:e|ing|ed|es)?\b"),
+            "required_paths": public_surfaces,
+        },
+    ]
+    optional_surfaces = [
+        "docs/first-tester.md",
+        "docs/enterprise-readiness.md",
+        "docs/release-publishing.md",
+        "repomori/codec.py",
+    ]
+
+    checks: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    surface_results: list[dict[str, Any]] = []
+
+    for relative in required_files:
+        path = repo_path / relative
+        ok = path.is_file()
+        checks.append(
+            {
+                "id": f"required_file:{relative}",
+                "status": "pass" if ok else "fail",
+                "path": relative,
+                "message": "Required licensing surface exists.",
+            }
+        )
+        if not ok:
+            errors.append(
+                {
+                    "code": "license_policy_required_file_missing",
+                    "path": relative,
+                    "message": "Required licensing surface is missing.",
+                }
+            )
+
+    for relative in [*public_surfaces, *optional_surfaces]:
+        path = repo_path / relative
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        text_checks: list[dict[str, Any]] = []
+        for concept in required_concepts:
+            required_here = relative in concept["required_paths"]
+            present = all(re.search(pattern, text, flags=re.IGNORECASE) for pattern in concept["patterns"])
+            if required_here or present:
+                status = "pass" if present else "fail"
+                text_checks.append(
+                    {
+                        "id": concept["id"],
+                        "status": status,
+                        "label": concept["label"],
+                        "required": required_here,
+                    }
+                )
+                checks.append(
+                    {
+                        "id": f"{concept['id']}:{relative}",
+                        "status": status,
+                        "path": relative,
+                        "message": concept["label"],
+                        "required": required_here,
+                    }
+                )
+            if required_here and not present:
+                errors.append(
+                    {
+                        "code": "license_policy_text_missing",
+                        "path": relative,
+                        "concept": concept["id"],
+                        "message": f"Licensing surface is missing required wording: {concept['label']}.",
+                    }
+                )
+        surface_results.append(
+            {
+                "path": relative,
+                "status": "fail" if any(item["status"] == "fail" for item in text_checks) else "pass",
+                "checks": text_checks,
+            }
+        )
+
+    pyproject = repo_path / "pyproject.toml"
+    metadata_checks: list[dict[str, Any]]
+    if pyproject.is_file():
+        pyproject_text = pyproject.read_text(encoding="utf-8", errors="replace")
+        metadata_checks = [
+            {
+                "id": "pyproject_license_file",
+                "status": "pass" if 'license = { file = "LICENSE.md" }' in pyproject_text else "fail",
+                "path": "pyproject.toml",
+                "message": "Python package metadata points at LICENSE.md.",
+            },
+            {
+                "id": "pyproject_license_classifier",
+                "status": "pass" if "License :: Other/Proprietary License" in pyproject_text else "fail",
+                "path": "pyproject.toml",
+                "message": "Python package classifier avoids permissive/open-source license claims.",
+            },
+        ]
+    else:
+        metadata_checks = [
+            {
+                "id": "pyproject_metadata",
+                "status": "skipped",
+                "path": "pyproject.toml",
+                "message": "Python package metadata was not present.",
+            }
+        ]
+    checks.extend(metadata_checks)
+    for check in metadata_checks:
+        if check["status"] == "fail":
+            errors.append(
+                {
+                    "code": "license_policy_metadata_mismatch",
+                    "path": check["path"],
+                    "message": check["message"],
+                }
+            )
+
+    status = "fail" if errors else "warn" if warnings else "pass"
+    return {
+        "schema_version": "repomori.license_policy.v1",
+        "status": status,
+        "repo_path": str(repo_path),
+        "summary": {
+            "elapsed_seconds": round(time.time() - started, 4),
+            "surface_count": len(surface_results),
+            "check_count": len(checks),
+            "error_count": len(errors),
+            "warning_count": len(warnings),
+            "required_file_count": len(required_files),
+            "coo_contact_required": True,
+        },
+        "policy": {
+            "owner": "TWO HANDS NETWORK LTD",
+            "public_grant": "personal and non-commercial use",
+            "commercial_requirement": "separate written commercial license",
+            "commercial_contact": "COO of TWO HANDS NETWORK LTD",
+        },
+        "checks": checks,
+        "surfaces": surface_results,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def format_license_policy_markdown(report: dict[str, Any]) -> str:
+    """Render a compact license policy consistency report."""
+
+    summary = report.get("summary", {})
+    policy = report.get("policy", {})
+    lines = [
+        "# RepoMori License Policy Check",
+        "",
+        f"- Status: `{report.get('status')}`",
+        f"- Repository: `{report.get('repo_path')}`",
+        f"- Owner: `{policy.get('owner')}`",
+        f"- Public grant: `{policy.get('public_grant')}`",
+        f"- Commercial requirement: `{policy.get('commercial_requirement')}`",
+        f"- Commercial contact: `{policy.get('commercial_contact')}`",
+        f"- Checks: `{summary.get('check_count', 0)}`",
+        f"- Errors: `{summary.get('error_count', 0)}`",
+        f"- Warnings: `{summary.get('warning_count', 0)}`",
+        "",
+        "## Surfaces",
+        "",
+    ]
+    for surface in report.get("surfaces", []):
+        lines.append(f"- `{surface.get('path')}` status=`{surface.get('status')}`")
+    if report.get("errors"):
+        lines.extend(["", "## Errors", ""])
+        for error in report["errors"]:
+            concept = f" `{error.get('concept')}`" if error.get("concept") else ""
+            path = f" `{error.get('path')}`" if error.get("path") else ""
+            lines.append(f"- `{error.get('code')}`{path}{concept} {error.get('message')}")
+    if report.get("warnings"):
+        lines.extend(["", "## Warnings", ""])
+        for warning in report["warnings"]:
+            path = f" `{warning.get('path')}`" if warning.get("path") else ""
+            lines.append(f"- `{warning.get('code')}`{path} {warning.get('message')}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _release_check_summary_status(
     checks: dict[str, dict[str, Any]],
     *,
@@ -1589,6 +1821,21 @@ def run_release_check(
     workspace_check = _release_check_workspace_health_check(repo_path, allowed_paths=allowed_workspace_paths)
 
     schema_check = _release_schema_check()
+    license_policy_report = check_license_policy(repo_path) if public_release else None
+    license_policy_check = (
+        {
+            "name": "license_policy",
+            "ok": license_policy_report.get("status") != "fail",
+            "status": license_policy_report.get("status"),
+            "summary": license_policy_report.get("summary", {}),
+            "report": license_policy_report,
+            "status_reason": "license policy consistency check failed"
+            if license_policy_report.get("status") == "fail"
+            else None,
+        }
+        if license_policy_report is not None
+        else _release_skipped_check("license_policy")
+    )
     scan = scan_repository(
         repo_path,
         public_release=public_release,
@@ -1635,6 +1882,7 @@ def run_release_check(
             "count": workspace_check["count"],
         },
         "schema": schema_check,
+        "license_policy": license_policy_check,
         "scan": {
             "name": "scan",
             "ok": scan_ok,
@@ -1696,6 +1944,8 @@ def run_release_check(
             "failed_checks": failed,
             "scan_findings": scan.get("summary", {}).get("findings"),
             "scan_ignored_findings": scan.get("summary", {}).get("ignored_findings"),
+            "license_policy_status": license_policy_check.get("status"),
+            "license_policy_error_count": license_policy_check.get("summary", {}).get("error_count", 0),
             "tests_returncode": tests_check.get("returncode"),
             "demo_status": demo_check.get("demo_status"),
             "privacy_guard_demo_status": privacy_guard_demo_check.get("status"),
@@ -2439,6 +2689,13 @@ def format_release_check_markdown(report: dict[str, Any]) -> str:
                     message = issue.get("message")
                     if message:
                         lines.append(f"  - {message}")
+            elif name == "license_policy":
+                license_summary = check.get("summary", {})
+                line = line[:-1] + (
+                    " "
+                    f"surfaces={license_summary.get('surface_count', 0)} "
+                    f"errors={license_summary.get('error_count', 0)}`"
+                )
             elif name == "privacy_guard_demo":
                 demo_summary = check.get("summary", {})
                 line = line[:-1] + (
@@ -9482,7 +9739,7 @@ def _release_sbom_document(
         "hasExtractedLicensingInfos": [
             {
                 "licenseId": "LicenseRef-PolyForm-Noncommercial-1.0.0",
-                "extractedText": "RepoMori is source-available for personal and non-commercial use. Commercial use requires a separate written license from TWO HANDS NETWORK LTD.",
+                "extractedText": "RepoMori is source-available for personal and non-commercial use. Commercial use requires a separate written license from TWO HANDS NETWORK LTD. To discuss commercial licensing, contact the COO of TWO HANDS NETWORK LTD.",
                 "name": "PolyForm Noncommercial License 1.0.0 with RepoMori required notice",
             }
         ],

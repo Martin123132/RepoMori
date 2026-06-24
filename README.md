@@ -33,6 +33,8 @@ RepoMori into paid products, hosted services, managed services, enterprise
 developer tools, commercial AI coding or agent products, and commercial AI
 training/evaluation pipelines.
 
+To discuss commercial licensing, contact the COO of TWO HANDS NETWORK LTD.
+
 See [LICENSE.md](LICENSE.md), [NOTICE.md](NOTICE.md),
 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md), and
 [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -60,6 +62,7 @@ D:\Dev\repomori-venv\Scripts\python -m repomori demo --out D:\Dev\repomori-demo 
 
 This install path is for personal and non-commercial use under the project
 license. Commercial use needs written permission from TWO HANDS NETWORK LTD.
+To discuss commercial licensing, contact the COO of TWO HANDS NETWORK LTD.
 
 ## Try It In 60 Seconds
 
@@ -112,6 +115,7 @@ python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.rep
 ```powershell
 python -m repomori demo --out D:\Temp\repomori-demo --force --json
 python -m repomori scan D:\Dev\RepoMori --public-release --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --json
+python -m repomori license-check D:\Dev\RepoMori --json
 python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.jsonl --json
 python -m repomori release-health D:\Dev\RepoMori --snapshot-dir D:\Dev\RepoMori\.repomori-packs --baseline D:\Dev\RepoMori\.repomori-scan-baseline.json --drift-log D:\Temp\repomori-drift.jsonl --json
 python -m repomori drift-summary D:\Temp\repomori-drift.jsonl --limit 20 --json
@@ -179,6 +183,7 @@ exactness matters.
 repomori build <repo> <pack> [--base pack] [--force] [--json]
 repomori demo --out <dir> [--force] [--json]
 repomori scan <repo> [--public-release] [--baseline file] [--ignore-code code] [--write-baseline file] [--fail-on high] [--json]
+repomori license-check [repo] [--format markdown|json] [--out file] [--json]
 repomori release-check [repo] [--baseline file] [--fail-on low] [--drift-policy file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--drift-log file] [--json]
 repomori release-health [repo] [--snapshot-dir dir] [--baseline file] [--fail-on low] [--drift-policy file] [--drift-summary-limit n] [--timeline-limit n] [--doctor-verify-packs] [--compat-handoff dir] [--compat-verify-pack] [--contract-fixture file] [--artifacts-dir dir] [--skip-tests] [--skip-demo] [--json]
 repomori verify-release <release-package-dir> [--policy file] [--format markdown|json] [--out file] [--json]
@@ -263,6 +268,11 @@ traces, and license/public-release guardrail gaps. It is local-only and
 dependency-free. Use `--fail-on high` for secret-style failures only, or make it
 stricter with `--fail-on medium` or `--fail-on low`.
 
+`license-check` verifies the repository's public licensing surfaces carry the
+company-wide posture: TWO HANDS NETWORK LTD ownership, personal/non-commercial
+public use, separate written commercial licensing, and COO contact wording for
+commercial licensing.
+
 Baseline matching is drift-aware: strict `code + path + severity + line + match`,
 then semi-strict `code + path + severity + match` when the line moved, then a
 conservative fallback `code + path + severity + message` when unique.
@@ -270,9 +280,10 @@ Use `--baseline` for exact known findings and `--ignore-code` only for broad
 local policy choices.
 
 `release-check` is the local pre-push/public-release gate. It runs schema
-catalog sanity checks, strict `scan`, `python -m unittest discover -s tests`,
-the privacy-guard demo preflight, and a quickstart `demo` smoke, then returns
-one `repomori.release_check.v1` report. Add `--drift-log` to persist
+catalog sanity checks, license policy consistency, strict `scan`,
+`python -m unittest discover -s tests`, the privacy-guard demo preflight, and a
+quickstart `demo` smoke, then returns one `repomori.release_check.v1` report.
+Add `--drift-log` to persist
 baseline-match drift telemetry and use `drift-summary <log> --json` to review
 trend deltas in CI or nightly scripts.
 `release-check` is intentionally strict about generated snapshot artifacts (such as

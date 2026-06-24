@@ -36,6 +36,7 @@ from repomori.codec import (
     check_handoff_package,
     check_compatibility,
     check_contract_fixture,
+    check_license_policy,
     check_release_candidate_review_bundle,
     check_release_review_decision_log_privacy,
     check_snapshot_restore,
@@ -61,6 +62,7 @@ from repomori.codec import (
     format_handoff_archive_markdown,
     format_handoff_health_markdown,
     format_handoff_health_summary_markdown,
+    format_license_policy_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_release_candidate_artifact_index_markdown,
@@ -1441,6 +1443,56 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(len(temp_ignored), 0)
             self.assertFalse(any(item.get("baseline_match") == "fallback" for item in result["ignored_findings"]))
 
+    def test_check_license_policy_reports_company_commercial_posture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "license-ready"
+            self._public_ready_repo(repo)
+
+            report = check_license_policy(repo)
+            markdown = format_license_policy_markdown(report)
+
+            self.assertEqual(report["schema_version"], "repomori.license_policy.v1")
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["summary"]["error_count"], 0)
+            self.assertEqual(report["policy"]["owner"], "TWO HANDS NETWORK LTD")
+            self.assertEqual(report["policy"]["commercial_contact"], "COO of TWO HANDS NETWORK LTD")
+            self.assertIn("Commercial contact", markdown)
+
+    def test_check_license_policy_fails_when_coo_contact_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "license-drift"
+            self._public_ready_repo(repo)
+            readme = repo / "README.md"
+            readme.write_text(
+                readme.read_text(encoding="utf-8").replace(
+                    "contact the COO of TWO HANDS NETWORK LTD",
+                    "contact TWO HANDS NETWORK LTD",
+                ),
+                encoding="utf-8",
+            )
+
+            report = check_license_policy(repo)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertTrue(
+                any(
+                    error.get("path") == "README.md" and error.get("concept") == "coo_contact"
+                    for error in report["errors"]
+                )
+            )
+
+    def test_check_license_policy_skips_python_metadata_when_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "license-non-python"
+            self._public_ready_repo(repo)
+            (repo / "pyproject.toml").unlink()
+
+            report = check_license_policy(repo)
+
+            self.assertEqual(report["status"], "pass")
+            metadata = [check for check in report["checks"] if check.get("id") == "pyproject_metadata"]
+            self.assertEqual(metadata[0]["status"], "skipped")
+
     def test_run_release_check_schema_scan_and_demo(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release"
@@ -1457,6 +1509,8 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["schema_version"], "repomori.release_check.v1")
             self.assertEqual(report["status"], "pass")
             self.assertTrue(report["checks"]["schema"]["ok"])
+            self.assertTrue(report["checks"]["license_policy"]["ok"])
+            self.assertEqual(report["summary"]["license_policy_status"], "pass")
             self.assertTrue(report["checks"]["scan"]["ok"])
             self.assertEqual(report["checks"]["tests"]["status"], "skipped")
             self.assertEqual(report["checks"]["demo"]["demo_status"], "pass")
@@ -4944,6 +4998,7 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("repomori.memory.v1", schema_versions)
         self.assertIn("repomori.scan.v1", schema_versions)
         self.assertIn("repomori.scan.baseline.v1", schema_versions)
+        self.assertIn("repomori.license_policy.v1", schema_versions)
         self.assertIn("repomori.release_check.v1", schema_versions)
         self.assertIn("repomori.release_candidate.v1", schema_versions)
         self.assertIn("repomori.release_provenance.v1", schema_versions)
@@ -7525,6 +7580,32 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(ignore_code_result.returncode, 0, ignore_code_result.stderr)
             self.assertEqual(json.loads(ignore_code_result.stdout)["summary"]["ignored_findings"], 1)
 
+    def test_cli_license_check_json_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "license-check-cli"
+            self._public_ready_repo(repo)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "repomori",
+                    "license-check",
+                    str(repo),
+                    "--json",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "repomori.license_policy.v1")
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["policy"]["commercial_contact"], "COO of TWO HANDS NETWORK LTD")
+
     def test_cli_release_check_json_is_parseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "release-check-cli"
@@ -7551,6 +7632,7 @@ class RepoMoriCodecTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["schema_version"], "repomori.release_check.v1")
             self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["checks"]["license_policy"]["status"], "pass")
             self.assertEqual(payload["checks"]["tests"]["status"], "skipped")
             self.assertEqual(payload["checks"]["demo"]["status"], "skipped")
             self.assertEqual(payload["checks"]["privacy_guard_demo"]["status"], "pass")
@@ -8379,14 +8461,34 @@ class RepoMoriCodecTests(unittest.TestCase):
 
     def _public_ready_repo(self, repo: Path) -> None:
         repo.mkdir()
-        (repo / "README.md").write_text("# Ready\n\nSource-available demo.\n", encoding="utf-8")
-        (repo / "LICENSE.md").write_text("PolyForm Noncommercial License 1.0.0\n", encoding="utf-8")
-        (repo / "NOTICE.md").write_text("Copyright TWO HANDS NETWORK LTD\n", encoding="utf-8")
-        (repo / "COMMERCIAL-LICENSE.md").write_text("Commercial use requires written permission.\n", encoding="utf-8")
+        license_posture = (
+            "RepoMori is source-available for personal and non-commercial use. "
+            "Commercial use requires a separate written license from TWO HANDS NETWORK LTD. "
+            "To discuss commercial licensing, contact the COO of TWO HANDS NETWORK LTD.\n"
+        )
+        (repo / "README.md").write_text(f"# Ready\n\n{license_posture}", encoding="utf-8")
+        (repo / "LICENSE.md").write_text(
+            "Required Notice: Copyright (c) 2026 TWO HANDS NETWORK LTD.\n"
+            f"Required Notice: {license_posture}",
+            encoding="utf-8",
+        )
+        (repo / "NOTICE.md").write_text(
+            "Copyright TWO HANDS NETWORK LTD\n" + license_posture,
+            encoding="utf-8",
+        )
+        (repo / "COMMERCIAL-LICENSE.md").write_text(
+            "# Commercial Licensing\n\n" + license_posture,
+            encoding="utf-8",
+        )
         (repo / "CONTRIBUTING.md").write_text("Contributions are accepted under project terms.\n", encoding="utf-8")
         (repo / "PUBLIC_RELEASE_CHECKLIST.md").write_text("- Confirm public release posture.\n", encoding="utf-8")
         (repo / "pyproject.toml").write_text(
-            "[project]\nname = \"ready\"\nlicense = { file = \"LICENSE.md\" }\n",
+            "[project]\n"
+            "name = \"ready\"\n"
+            "license = { file = \"LICENSE.md\" }\n"
+            "classifiers = [\n"
+            "    \"License :: Other/Proprietary License\",\n"
+            "]\n",
             encoding="utf-8",
         )
         (repo / "app.py").write_text("def ok():\n    return True\n", encoding="utf-8")

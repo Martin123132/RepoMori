@@ -25,6 +25,7 @@ from .codec import (
     check_compatibility,
     check_snapshot_restore,
     check_contract_fixture,
+    check_license_policy,
     compare_packs,
     diagnose_query,
     doctor_snapshot_dir,
@@ -50,6 +51,7 @@ from .codec import (
     format_handoff_archive_markdown,
     format_handoff_health_markdown,
     format_handoff_health_summary_markdown,
+    format_license_policy_markdown,
     format_pack_inspect_diff_markdown,
     format_pack_inspect_markdown,
     format_release_verify_markdown,
@@ -143,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--write-baseline", type=Path, help="Write current active findings to a baseline JSON file.")
     scan.add_argument("--fail-on", choices=("info", "low", "medium", "high"), default="high")
     scan.add_argument("--json", action="store_true", help="Print scan JSON.")
+
+    license_check = sub.add_parser("license-check", help="Check repository licensing and commercial-contact wording.")
+    license_check.add_argument("repo", type=Path, nargs="?", default=Path.cwd(), help="Repository folder to check.")
+    license_check.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    license_check.add_argument("--out", type=Path, help="Write the license policy report to this path.")
+    license_check.add_argument("--json", action="store_true", help="Print license policy JSON.")
 
     release_check = sub.add_parser("release-check", help="Run local release readiness checks.")
     release_check.add_argument("repo", type=Path, nargs="?", default=Path.cwd(), help="Repository folder to check.")
@@ -789,6 +797,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.write_baseline:
             return 0
         return 1 if _scan_has_threshold(report, args.fail_on) else 0
+    if args.command == "license-check":
+        report = check_license_policy(args.repo)
+        output_format = "json" if args.json else args.format
+        output = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else format_license_policy_markdown(report)
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(output, encoding="utf-8")
+            if report.get("status") != "pass" and not args.json:
+                _print_report_status_hint(report, "license-check")
+        else:
+            print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if report["status"] != "fail" else 1
     if args.command == "release-check":
         artifacts_dir = args.artifacts_dir
         if args.json and artifacts_dir is None:

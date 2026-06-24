@@ -50,6 +50,7 @@ python -m repomori schema repomori.memory.v1 --json
 - `repomori.demo.v1`: local quickstart demo report.
 - `repomori.scan.v1`: local public-safety repository scan report.
 - `repomori.scan.baseline.v1`: acknowledged public-safety scan findings.
+- `repomori.license_policy.v1`: repository licensing and commercial-contact consistency report.
 - `repomori.release_check.v1`: local release readiness report.
 - `repomori.release_candidate.v1`: release package workflow artifact manifest.
 - `repomori.release_provenance.v1`: release artifact provenance with hashes and workflow metadata.

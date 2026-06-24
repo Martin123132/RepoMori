@@ -4,6 +4,8 @@ RepoMori is available for personal and non-commercial use under the PolyForm Non
 
 Commercial use is not included in the public license. A separate written commercial license from TWO HANDS NETWORK LTD is required before using RepoMori in a paid product, hosted service, managed service, enterprise product, commercial developer tool, commercial AI system, or commercial AI training/evaluation pipeline.
 
+To discuss commercial licensing, contact the COO of TWO HANDS NETWORK LTD.
+
 Examples that require a commercial license:
 
 - adding RepoMori features to a paid coding assistant or AI agent product;

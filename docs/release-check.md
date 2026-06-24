@@ -12,6 +12,8 @@ python -m repomori release-check D:\Dev\RepoMori --baseline D:\Dev\RepoMori\.rep
 It runs:
 
 - schema catalog sanity checks
+- license policy consistency checks for ownership, personal/non-commercial use,
+  written commercial licensing, and COO commercial contact wording
 - strict public-safety scan, using the baseline when supplied
 - `python -m unittest discover -s tests`
 - quickstart `demo` smoke in a temporary sibling directory
@@ -23,6 +25,7 @@ explicit privacy-scan fixtures allowed to mention boot-drive path strings.
 
 The report uses schema `repomori.release_check.v1` and includes a pass/fail
 status, settings, summary, and nested check reports.
+The license-policy nested report uses schema `repomori.license_policy.v1`.
 
 The privacy-guard demo preflight runs the same synthetic clean/fail paths as
 `python -m repomori privacy-guard-demo`. It expects the clean demo to pass with
