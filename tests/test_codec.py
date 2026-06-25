@@ -1458,6 +1458,16 @@ class RepoMoriCodecTests(unittest.TestCase):
             self.assertEqual(report["policy"]["commercial_contact"], "COO of TWO HANDS NETWORK LTD")
             self.assertIn("Commercial contact", markdown)
 
+    def test_license_file_keeps_public_contact_footer(self) -> None:
+        license_text = (Path(__file__).resolve().parents[1] / "LICENSE.md").read_text(encoding="utf-8")
+
+        self.assertTrue(license_text.rstrip().endswith("Glyn : glyn@twohandsnetwork.co.uk"))
+        self.assertIn("## Contact us", license_text)
+        self.assertIn(
+            "For collaboration, information on existing products, or other enquiries, please contact (via Email):",
+            license_text,
+        )
+
     def test_check_license_policy_fails_when_coo_contact_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "license-drift"
