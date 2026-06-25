@@ -85,3 +85,9 @@ Control means ownership of substantially all the assets of an entity, or the pow
 Your licenses are all the licenses granted to you for the software under these terms.
 
 Use means anything you do with the software requiring one of your licenses.
+
+## Contact Us
+
+For collaboration, information on existing products, or other enquiries, please contact (via Email):
+
+Glyn: glyn@twohandsnetwork.co.uk
