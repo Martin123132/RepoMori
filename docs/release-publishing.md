@@ -28,6 +28,9 @@ gh workflow run publish-release.yml `
 
 If `tag` is omitted, the workflow uses `v<version>`. If `notes_file` is omitted,
 it uses `docs/releases/<version>.md`.
+For the next maintenance release, do not run the workflow with `version=0.2.1`
+until `pyproject.toml`, `CHANGELOG.md`, and `docs/releases/0.2.1.md` have been
+updated from draft/release-candidate wording to the final release state.
 If `release_policy` is omitted, the workflow uses
 `tests/fixtures/release-policy-basic.json`; point it at a stricter internal
 policy file when signature/public-key requirements are mandatory. Checked

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1 - Unreleased
+
+Maintenance candidate focused on public trust, release polish, and operational
+readiness after the first public `0.2.0` release.
+
+- Added license policy release gates for the company-wide source-available
+  posture, commercial-use restriction, and COO commercial licensing contact
+  wording.
+- Added release integrity/reviewer surfaces around checksums, provenance, SBOM,
+  policy verification, release evidence, rehearsal, and draft-first publishing.
+- Added first-tester feedback guidance for validating the public install,
+  demo, context, handoff, and release rehearsal paths.
+- Hardened CI visibility around release-health, memory anchors, workflow
+  contracts, generated-artifact preflights, and release package review bundles.
+- Refined public docs around D-drive/hidden artifact outputs, non-commercial
+  licensing, and the next maintenance release path.
+
 ## 0.2.0 - 2026-06-18
 
 First public `0.2.0` release.

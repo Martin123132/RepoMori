@@ -30,6 +30,20 @@ code-shaped identifiers, apply small low-weight aliases such as storage/store an
 connection/connect, and anchor source snippets on matching symbols, headings, or
 imports before falling back to plain text hits.
 
+## Command Ladder
+
+Use this short path before reaching for the full command list:
+
+- `demo`: prove the installed package works end to end.
+- `build`, `query`, `context`: make one source-backed machine-readable pack and
+  ask it a question.
+- `init`, `memory`, `brief`: keep a recurring local repo timeline and agent
+  start file.
+- `license-check`, `release-check`, `release-health`: check a public/release
+  checkout before pushing or tagging.
+- `verify-release`: verify a release package after the candidate or publishing
+  workflow produces one.
+
 ## Use Your Own Repository
 
 ```powershell

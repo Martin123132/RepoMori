@@ -22,6 +22,9 @@ The first version is deliberately local and dependency-light:
 Release record: [`v0.2.0`](https://github.com/Martin123132/RepoMori/releases/tag/v0.2.0).
 See [docs/releases/0.2.0-validation.md](docs/releases/0.2.0-validation.md)
 for the post-release install validation record.
+Next maintenance candidate notes are tracked in
+[docs/releases/0.2.1.md](docs/releases/0.2.1.md); the published install
+command stays on `v0.2.0` until `0.2.1` is packaged and validated.
 
 ## License
 
@@ -76,6 +79,16 @@ bridge. See [docs/first-tester.md](docs/first-tester.md) for the shortest
 tester route, or [docs/quickstart.md](docs/quickstart.md) for the full guided
 path. First testers can report results with
 [docs/tester-feedback.md](docs/tester-feedback.md).
+
+## Which Command Should I Run?
+
+- First smoke: `demo`.
+- Turn a repo into machine-readable state: `build`, then `query` or `context`.
+- End a work session with local memory: `init`, then `memory`, then `brief`.
+- Check a public/release checkout: `license-check`, `release-check`, and
+  `release-health`.
+- Review a downloaded release bundle: `verify-release`, then
+  `release-evidence` when reviewer/procurement proof is needed.
 
 ## Install From Checkout
 
@@ -647,6 +660,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Release signing](docs/release-signing.md)
 - [Release candidate process](docs/release-candidate.md)
 - [Release publishing](docs/release-publishing.md)
+- [0.2.1 maintenance notes](docs/releases/0.2.1.md)
 - [0.2.0 release notes](docs/releases/0.2.0.md)
 - [0.2.0 validation](docs/releases/0.2.0-validation.md)
 - [0.2.0rc1 validation](docs/releases/0.2.0rc1-validation.md)

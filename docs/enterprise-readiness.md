@@ -40,6 +40,7 @@ go through the COO of TWO HANDS NETWORK LTD.
 - Support: [../SUPPORT.md](../SUPPORT.md)
 - Security reporting: [../SECURITY.md](../SECURITY.md)
 - Release validation: [releases/0.2.0-validation.md](releases/0.2.0-validation.md)
+- Next maintenance notes: [releases/0.2.1.md](releases/0.2.1.md)
 - Release integrity: [release-integrity.md](release-integrity.md)
 - Release evidence: [release-evidence.md](release-evidence.md)
 - Release policy: [release-policy.md](release-policy.md)

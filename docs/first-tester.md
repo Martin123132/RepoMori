@@ -30,6 +30,10 @@ python -m pip install .
 python -m repomori --help
 ```
 
+Use the checkout route when validating unreleased maintenance-candidate work.
+The published release install remains the cleanest outside-in test once the
+candidate is packaged.
+
 ## Smoke Test
 
 ```powershell
