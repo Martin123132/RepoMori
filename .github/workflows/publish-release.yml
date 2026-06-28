@@ -6,7 +6,7 @@ on:
       version:
         description: Release version that must match pyproject.toml.
         required: true
-        default: 0.2.0
+        default: 0.2.1
       ref:
         description: Branch, tag, or SHA to build and publish from.
         required: true

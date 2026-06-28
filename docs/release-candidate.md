@@ -108,11 +108,9 @@ then rerun `release-rehearsal`.
 
 ## GitHub Candidate Workflow
 
-The `release-candidate` workflow builds the same proof bundle in CI. It can be
-run manually while preparing the candidate. Before running it with `0.2.1`,
-update `pyproject.toml`, `CHANGELOG.md`, and `docs/releases/0.2.1.md` from
-draft wording to the candidate/final release state so the workflow version gate
-does not fail.
+The `release-candidate` workflow builds the same proof bundle in CI. The
+checked-in package metadata is prepared for `0.2.1`, so the workflow version
+gate should accept the default candidate input once the local gate is green.
 
 ```powershell
 gh workflow run release-candidate.yml `

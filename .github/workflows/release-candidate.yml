@@ -6,7 +6,7 @@ on:
       version:
         description: Expected release or pre-release version.
         required: true
-        default: 0.2.0
+        default: 0.2.1
       ref:
         description: Branch, tag, or SHA to build.
         required: true

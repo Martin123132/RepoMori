@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.1 - Unreleased
+## 0.2.1 - Release Candidate
 
 Maintenance candidate focused on public trust, release polish, and operational
 readiness after the first public `0.2.0` release.

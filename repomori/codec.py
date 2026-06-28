@@ -36,7 +36,7 @@ DEFAULT_EVAL_QUESTIONS = (
     "What tests cover the project behavior?",
 )
 MCP_PROTOCOL_VERSION = "2025-11-25"
-MCP_SERVER_VERSION = "0.2.0"
+MCP_SERVER_VERSION = "0.2.1"
 SNAPSHOT_CHAIN_VERSION = "repomori.snapshot_chain.v1"
 SNAPSHOT_CHAIN_ALGORITHM = "sha256-canonical-json"
 SNAPSHOT_CHAIN_FIELDS = {

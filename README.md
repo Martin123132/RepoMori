@@ -23,8 +23,9 @@ Release record: [`v0.2.0`](https://github.com/Martin123132/RepoMori/releases/tag
 See [docs/releases/0.2.0-validation.md](docs/releases/0.2.0-validation.md)
 for the post-release install validation record.
 Next maintenance candidate notes are tracked in
-[docs/releases/0.2.1.md](docs/releases/0.2.1.md); the published install
-command stays on `v0.2.0` until `0.2.1` is packaged and validated.
+[docs/releases/0.2.1.md](docs/releases/0.2.1.md). Source metadata is prepared
+for `0.2.1`; the published install command stays on `v0.2.0` until `0.2.1` is
+tagged, packaged, and validated.
 
 ## License
 
