@@ -662,6 +662,7 @@ eval, handoff, check-handoff, then writes `bench.json` and `bench.md`.
 - [Release candidate process](docs/release-candidate.md)
 - [Release publishing](docs/release-publishing.md)
 - [0.2.1 maintenance notes](docs/releases/0.2.1.md)
+- [0.2.1 draft validation](docs/releases/0.2.1-validation.md)
 - [0.2.0 release notes](docs/releases/0.2.0.md)
 - [0.2.0 validation](docs/releases/0.2.0-validation.md)
 - [0.2.0rc1 validation](docs/releases/0.2.0rc1-validation.md)
