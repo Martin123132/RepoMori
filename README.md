@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/Martin123132/RepoMori/actions/workflows/tests.yml/badge.svg)](https://github.com/Martin123132/RepoMori/actions/workflows/tests.yml)
 [![memory-anchor](https://github.com/Martin123132/RepoMori/actions/workflows/memory-anchor.yml/badge.svg)](https://github.com/Martin123132/RepoMori/actions/workflows/memory-anchor.yml)
-[![release](https://img.shields.io/github/v/release/Martin123132/RepoMori?include_prereleases=false)](https://github.com/Martin123132/RepoMori/releases/tag/v0.2.0)
+[![release](https://img.shields.io/github/v/release/Martin123132/RepoMori?include_prereleases=false)](https://github.com/Martin123132/RepoMori/releases/tag/v0.2.1)
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE.md)
 [![source available](https://img.shields.io/badge/source--available-non--commercial-informational)](NOTICE.md)
@@ -19,13 +19,9 @@ The first version is deliberately local and dependency-light:
 - Language, import, symbol, heading, and top-term indexes.
 - Exact source recovery when the machine summary is not enough.
 
-Release record: [`v0.2.0`](https://github.com/Martin123132/RepoMori/releases/tag/v0.2.0).
-See [docs/releases/0.2.0-validation.md](docs/releases/0.2.0-validation.md)
-for the post-release install validation record.
-Next maintenance candidate notes are tracked in
-[docs/releases/0.2.1.md](docs/releases/0.2.1.md). Source metadata is prepared
-for `0.2.1`; the published install command stays on `v0.2.0` until `0.2.1` is
-tagged, packaged, and validated.
+Release record: [`v0.2.1`](https://github.com/Martin123132/RepoMori/releases/tag/v0.2.1).
+See [docs/releases/0.2.1-validation.md](docs/releases/0.2.1-validation.md)
+for the release package validation record.
 
 ## License
 
@@ -59,7 +55,7 @@ Install the latest validated release wheel directly from GitHub:
 ```powershell
 python -m venv D:\Dev\repomori-venv
 D:\Dev\repomori-venv\Scripts\python -m pip install `
-  https://github.com/Martin123132/RepoMori/releases/download/v0.2.0/repomori-0.2.0-py3-none-any.whl
+  https://github.com/Martin123132/RepoMori/releases/download/v0.2.1/repomori-0.2.1-py3-none-any.whl
 D:\Dev\repomori-venv\Scripts\python -m repomori --help
 D:\Dev\repomori-venv\Scripts\python -m repomori demo --out D:\Dev\repomori-demo --force --json
 ```

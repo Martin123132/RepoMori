@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.1 - Release Candidate
+## 0.2.1 - 2026-07-01
 
 Maintenance candidate focused on public trust, release polish, and operational
 readiness after the first public `0.2.0` release.

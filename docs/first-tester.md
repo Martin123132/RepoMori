@@ -18,7 +18,7 @@ assumptions without sharing secrets or private source.
 ```powershell
 python -m venv D:\Dev\repomori-test-venv
 D:\Dev\repomori-test-venv\Scripts\python -m pip install `
-  https://github.com/Martin123132/RepoMori/releases/download/v0.2.0/repomori-0.2.0-py3-none-any.whl
+  https://github.com/Martin123132/RepoMori/releases/download/v0.2.1/repomori-0.2.1-py3-none-any.whl
 D:\Dev\repomori-test-venv\Scripts\python -m repomori --help
 ```
 
@@ -30,9 +30,8 @@ python -m pip install .
 python -m repomori --help
 ```
 
-Use the checkout route when validating unreleased maintenance-candidate work.
-The published release install remains the cleanest outside-in test once the
-candidate is packaged.
+Use the checkout route when validating unreleased work. The published release
+install remains the cleanest outside-in test for released packages.
 
 ## Smoke Test
 
