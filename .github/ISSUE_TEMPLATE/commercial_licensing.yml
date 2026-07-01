@@ -1,0 +1,50 @@
+name: Commercial licensing enquiry
+description: Ask how to discuss a written commercial license with TWO HANDS NETWORK LTD.
+title: "[Commercial licensing]: "
+labels: ["licensing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        RepoMori is source-available for personal and non-commercial use. Commercial use requires a separate written commercial license from TWO HANDS NETWORK LTD.
+
+        For collaboration, information on existing products, or other enquiries, please contact Glyn via email: glyn@twohandsnetwork.co.uk.
+
+        Keep this public issue non-confidential. Do not include procurement secrets, customer data, private source, generated `.repomori` packs, private URLs, credentials, or proprietary implementation details.
+  - type: input
+    id: organisation
+    attributes:
+      label: Organisation
+      description: Optional. Use a public organisation name only.
+    validations:
+      required: false
+  - type: dropdown
+    id: enquiry_type
+    attributes:
+      label: Enquiry type
+      options:
+        - Commercial product use
+        - Hosted service or managed service
+        - Enterprise evaluation
+        - Commercial AI coding or agent product
+        - Commercial AI training or evaluation pipeline
+        - Collaboration or existing product information
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: public_summary
+    attributes:
+      label: Public summary
+      description: Provide a high-level, non-confidential summary only.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I understand commercial use requires a separate written commercial license from TWO HANDS NETWORK LTD.
+          required: true
+        - label: I have not included confidential business details, secrets, credentials, private URLs, private source, generated packs, or proprietary implementation details.
+          required: true

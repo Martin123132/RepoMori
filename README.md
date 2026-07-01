@@ -75,7 +75,8 @@ writes pack inspection and source-backed context, runs a memory cycle, and check
 bridge. See [docs/first-tester.md](docs/first-tester.md) for the shortest
 tester route, or [docs/quickstart.md](docs/quickstart.md) for the full guided
 path. First testers can report results with
-[docs/tester-feedback.md](docs/tester-feedback.md).
+[docs/tester-feedback.md](docs/tester-feedback.md) or the GitHub first-tester
+feedback issue template.
 
 ## Which Command Should I Run?
 

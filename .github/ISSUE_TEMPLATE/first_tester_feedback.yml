@@ -1,0 +1,76 @@
+name: First tester feedback
+description: Share results from the first-tester path without private source or generated packs.
+title: "[First tester]: "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing RepoMori. RepoMori is source-available for personal and non-commercial use. Commercial use requires a separate written commercial license from TWO HANDS NETWORK LTD.
+
+        Please do not attach private repositories, secrets, customer data, generated `.repomori` packs, handoff directories from private source, or raw proprietary source dumps.
+  - type: input
+    id: version
+    attributes:
+      label: RepoMori version
+      placeholder: "0.2.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: install_path
+    attributes:
+      label: Install path tested
+      options:
+        - GitHub release wheel
+        - Local checkout
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11"
+    validations:
+      required: true
+  - type: checkboxes
+    id: commands
+    attributes:
+      label: Commands completed
+      options:
+        - label: "`demo` returned `status: \"pass\"` and created `demo.repomori`."
+        - label: "`query` ranked `app.py` first for `sqlite connect Store`."
+        - label: "`context` wrote `context.md` with source snippets and line numbers."
+        - label: "`handoff` returned `status: \"complete\"` and wrote the expected handoff files."
+        - label: "`release-rehearsal` returned `status: \"pass\"` with privacy and storage-path checks passing."
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Feedback
+      description: What was confusing, slow, missing, or surprisingly good?
+    validations:
+      required: true
+  - type: textarea
+    id: safe_output
+    attributes:
+      label: Safe output snippets
+      description: Optional. Paste only redacted, non-sensitive command output.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I have not included secrets, private source, private `.repomori` packs, private handoff artifacts, customer data, or raw proprietary source.
+          required: true
+        - label: I kept generated outputs on a D-drive or hidden `.repomori-*` path when testing locally.
+          required: true

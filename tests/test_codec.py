@@ -3125,6 +3125,27 @@ class RepoMoriCodecTests(unittest.TestCase):
         self.assertIn("  - .repomori-release-health", workflow)
         self.assertIn("  - .repomori-health", workflow)
 
+    def test_issue_templates_cover_tester_and_commercial_intake(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        first_tester = (repo_root / ".github/ISSUE_TEMPLATE/first_tester_feedback.yml").read_text(encoding="utf-8")
+        commercial = (repo_root / ".github/ISSUE_TEMPLATE/commercial_licensing.yml").read_text(encoding="utf-8")
+        config = (repo_root / ".github/ISSUE_TEMPLATE/config.yml").read_text(encoding="utf-8")
+        readme = (repo_root / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("First tester feedback", first_tester)
+        self.assertIn("source-available for personal and non-commercial use", first_tester)
+        self.assertIn("Commercial use requires a separate written commercial license", first_tester)
+        self.assertIn("private `.repomori` packs", first_tester)
+        self.assertIn("D-drive or hidden `.repomori-*` path", first_tester)
+        self.assertIn("GitHub first-tester", readme)
+
+        self.assertIn("Commercial licensing enquiry", commercial)
+        self.assertIn("TWO HANDS NETWORK LTD", commercial)
+        self.assertIn("glyn@twohandsnetwork.co.uk", commercial)
+        self.assertIn("Commercial AI coding or agent product", commercial)
+        self.assertIn("confidential business details", commercial)
+        self.assertIn("LICENSE.md#contact-us", config)
+
     def test_gitignore_covers_documented_hidden_outputs(self) -> None:
         gitignore = (Path(__file__).resolve().parents[1] / ".gitignore").read_text(encoding="utf-8")
 
